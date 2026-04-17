@@ -11,8 +11,8 @@ The key distinction: the LLM *pulls* context via ECA's built-in tools (filesyste
 Safe by default. Approval required for tool calls unless trust is explicitly enabled.
 
 Trust can be enabled via:
-- `--trust` CLI flag at startup
-- `trust: true` in ECA config (persists across sessions)
+- `--trust` CLI flag at startup *(implemented)*
+- `trust: true` in ECA config (persists across sessions) *(MVP-1)*
 
 When trusted: tool calls execute without interruption. Status still shown — the user can see what ran.
 
@@ -26,7 +26,7 @@ Inherits from existing ECA editor plugins for consistency across the ecosystem.
 - `✅` called successfully
 - `❌` error
 
-**Expandable tool blocks:**
+**Expandable tool blocks** *(MVP-1)*:
 - `⏵` / `⏷` toggle open/close
 - Auto-expand when approval needed
 - Auto-collapse after completion
@@ -36,7 +36,7 @@ Inherits from existing ECA editor plugins for consistency across the ecosystem.
 - `⏳ ` LLM active
 - `🚧 ` waiting for approval
 
-**Status bar** (bottom): workspace, model, elapsed time, usage, trust indicator.
+**Status bar** (bottom): workspace, model, usage, trust indicator *(implemented)*; elapsed time *(MVP-1)*.
 
 **Separator** between chat history and input: `---`
 

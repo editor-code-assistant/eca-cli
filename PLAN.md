@@ -8,7 +8,7 @@ Terminal-first AI coding assistant that talks the ECA protocol over stdin/stdout
 
 ## Status
 
-Steps 1-3 complete. MVP-0 implemented.
+**MVP-0 complete and shipped.** Full chat loop working: spawn → initialize → stream → approve → shutdown. Code review pass done. Live on `main`.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ reader thread → LinkedBlockingQueue → program/cmd (drain batch) → update �
 - `view.clj` — pure rendering: chat lines, tools, approval, status bar
 - `core.clj` — entry point, arg parsing, charm.clj program/run
 
-## MVP-0 Scope
+## MVP-0 (complete)
 
 - Spawn + initialize + shutdown
 - Single chat with streaming text
@@ -30,6 +30,8 @@ reader thread → LinkedBlockingQueue → program/cmd (drain batch) → update �
 - Trust mode (`--trust` flag, safe by default)
 - Prompt stop (Esc)
 - Graceful shutdown + terminal cleanup on crash
+- ECA stderr → `~/.cache/eca/eca-bb.log` (no terminal bleed)
+- Manual line-slice scroll (up/down/k/j)
 
 ## MVP-1 (follow-up)
 
