@@ -5,25 +5,42 @@
            [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (defn find-eca-binary
-  "Finds the ECA binary. Checks PATH first, then common cache locations."
+  "Finds the ECA binary. Checks PATH first, then known plugin cache locations."
   []
-  (or (some-> (proc/process ["which" "eca"] {:err :string :out :string})
-              deref :out clojure.string/trim
-              not-empty)
-      (let [cache-path (str (System/getProperty "user.home") "/.cache/nvim/eca/eca")]
-        (when (.exists (java.io.File. cache-path))
-          cache-path))))
+  (let [home (System/getProperty "user.home")]
+    (or (some-> (proc/process ["which" "eca"] {:err :string :out :string})
+                deref :out clojure.string/trim
+                not-empty)
+        (some (fn [path]
+                (when (.exists (java.io.File. path)) path))
+              [(str home "/.cache/nvim/eca/eca")
+               (str home "/Library/Caches/nvim/eca/eca")
+               (str home "/.emacs.d/eca/eca")]))))
+
+(defn- default-log-file []
+  (let [dir (java.io.File. (str (System/getProperty "user.home") "/.cache/eca"))]
+    (.mkdirs dir)
+    (when (.isDirectory dir)
+      (java.io.File. dir "eca-bb.log"))))
 
 (defn spawn!
   "Spawns the ECA server process. Returns a map with :process, :reader, :writer, :queue."
-  ([] (spawn! nil))
-  ([eca-path]
-   (let [binary (or eca-path (find-eca-binary))
-         _ (when-not binary
-             (throw (ex-info "ECA binary not found. Install ECA or set path." {})))
-         p (proc/process [binary "server"]
-                         {:err :inherit
-                          :shutdown proc/destroy-tree})
+  ([] (spawn! {}))
+  ([{:keys [path log-file]}]
+   (let [binary (or path (find-eca-binary))
+         _      (when-not binary
+                  (throw (ex-info
+                           (str "ECA binary not found.\n"
+                                "Install via a supported editor plugin or download from:\n"
+                                "  https://github.com/editor-code-assistant/eca/releases\n"
+                                "Or specify path with --eca <path>")
+                           {})))
+         log    (or log-file (default-log-file))
+         err    (or log
+                    (do (.println System/err "eca-bb: warning: could not create ~/.cache/eca/ — ECA logs will appear in terminal")
+                        :inherit))
+         p      (proc/process [binary "server"]
+                              {:err err :shutdown proc/destroy-tree})
          reader (BufferedReader. (InputStreamReader. (:out p) "UTF-8"))
          writer (BufferedWriter. (OutputStreamWriter. (:in p) "UTF-8"))
          queue (LinkedBlockingQueue.)]

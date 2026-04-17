@@ -37,7 +37,7 @@
 
 ;; --- Commands ---
 
-(defn drain-queue-cmd [queue]
+(defn- drain-queue-cmd [queue]
   (program/cmd
     (fn []
       {:type :eca-tick
@@ -189,9 +189,9 @@
 
 (defn make-init [opts]
   (fn []
-    (let [srv       (-> (server/spawn! (:eca opts))
+    (let [srv       (-> (server/spawn! {:path (:eca opts)})
                         (assoc :pending-requests protocol/pending-requests))
-          workspace (or (:workspace opts) (System/getProperty "user.dir"))]
+          workspace (:workspace opts)]
       (server/start-reader! srv)
       [(initial-state srv opts)
        (init-cmd srv workspace)])))
@@ -232,14 +232,13 @@
            (= :ready (:mode state)))
       (let [text (str/trim (ti/value (:input state)))]
         (if (seq text)
-          (do
+          (let [new-state (-> state
+                              (update :items conj {:type :user :text text})
+                              (assoc :mode :chatting)
+                              (update :input #(-> % ti/reset ti/blur))
+                              rebuild-lines)]
             (send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
-            [(-> state
-                 (update :items conj {:type :user :text text})
-                 (assoc :mode :chatting)
-                 (update :input #(-> % ti/reset ti/blur))
-                 rebuild-lines)
-             nil])
+            [new-state nil])
           [state nil]))
 
       (and (msg/key-press? msg)
