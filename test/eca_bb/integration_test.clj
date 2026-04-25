@@ -70,6 +70,39 @@
       (is (str/includes? (screen) "SAFE")))
     (finally (kill!))))
 
+;; ---------------------------------------------------------------------------
+;; Phase 1a — additional criteria
+;; ---------------------------------------------------------------------------
+
+(deftest phase1a-init-spinner-test
+  (new-session! "bb run")
+  (try
+    (testing "11: ⏳ spinner visible before config/updated arrives"
+      (let [s (wait-for! (has "⏳") 10000)]
+        (is (str/includes? s "⏳"))))
+    (testing "11: spinner clears once init tasks complete"
+      (let [s (wait-for! #(and (str/includes? % "SAFE") (re-find #"\w+/\w+" %)) 15000)]
+        (is (not (str/includes? s "⏳")))))
+    (finally (kill!))))
+
+(deftest phase1a-model-in-status-bar-test
+  (start! "bb run")
+  (try
+    (testing "13: model from config/updated shown in status bar"
+      (is (re-find #"\w+/\w+" (screen))))
+    (finally (kill!))))
+
+(deftest phase1a-escape-chatting-test
+  (start! "bb run")
+  (try
+    (testing "14: Escape during :chatting returns to :ready"
+      (keys! "Hello" "Enter")
+      (Thread/sleep 500)
+      (keys! "Escape")
+      (let [s (wait-for! (has "SAFE") 8000)]
+        (is (str/includes? s "SAFE"))))
+    (finally (kill!))))
+
 ;; Phase 1b login criteria (7, 8, 9, 10, 11) remain manual.
 ;; The providers/login flow requires ECA to return status:"login" on a
 ;; chat/prompt, which only fires when a provider is in a specific
@@ -102,7 +135,8 @@
     (testing "12: Enter selects highlighted model, picker closes, :ready restored"
       (keys! "Enter")
       (let [s (wait-for! (lacks "Select model") 5000)]
-        (is (str/includes? s "SAFE"))))
+        (is (str/includes? s "SAFE"))
+        (is (re-find #"\w+/\w+" s))))
 
     (finally (kill!))))
 
@@ -135,3 +169,7 @@
           (is (str/includes? s "SAFE")))))
 
     (finally (kill!))))
+
+;; Phase 2 criterion 17 (single-model picker) is not automated —
+;; requires controlling ECA's returned model list to a single entry,
+;; which cannot be done via CLI flags alone.
