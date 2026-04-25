@@ -125,17 +125,26 @@
   (let [content (:content params)]
     (case (:type content)
       "text"
-      (-> state
-          (update :current-text str (:text content))
-          rebuild-lines)
+      (let [pending-echo (:pending-echo state)
+            text         (:text content)]
+        (if (and pending-echo (empty? (:current-text state)) (= text pending-echo))
+          ;; ECA echoes the user message as the first text chunk — swallow it
+          (assoc state :pending-echo nil :skip-next-finish true)
+          (-> state
+              (dissoc :pending-echo)
+              (update :current-text str text)
+              rebuild-lines)))
 
       "progress"
       (if (= "finished" (:state content))
-        (-> state
-            flush-current-text
-            (assoc :mode :ready)
-            (update :input ti/focus)
-            rebuild-lines)
+        (if (:skip-next-finish state)
+          ;; swallow the progress/finished that closes the echo "turn"
+          (dissoc state :skip-next-finish)
+          (-> state
+              flush-current-text
+              (assoc :mode :ready)
+              (update :input ti/focus)
+              rebuild-lines))
         state)
 
       "toolCallPrepare"
@@ -349,7 +358,9 @@
    :width                 80
    :height                24
    :model                 nil
-   :usage                 nil})
+   :usage                 nil
+   :pending-echo          nil
+   :skip-next-finish      false})
 
 (defn make-init [opts]
   (fn []
@@ -454,7 +465,8 @@
           (seq text)
           (let [new-state (-> state
                               (update :items conj {:type :user :text text})
-                              (assoc :mode :chatting :pending-message text)
+                              (assoc :mode :chatting :pending-message text
+                                     :pending-echo text)
                               (update :input #(-> % ti/reset ti/blur))
                               rebuild-lines)]
             (send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
