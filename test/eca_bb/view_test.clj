@@ -140,16 +140,11 @@
                                       :limit         {:context 1000 :output 4096}}))]
         (is (clojure.string/includes? bar "50%"))))
 
-    (testing "selected-model as map uses :id"
+    (testing "selected-model overrides :model field"
       (let [bar (render-status-bar
-                  (assoc base :selected-model {:id "anthropic/claude-opus-4-7"}))]
+                  (assoc base :selected-model "anthropic/claude-opus-4-7"))]
         (is (clojure.string/includes? bar "anthropic/claude-opus-4-7"))
         (is (not (clojure.string/includes? bar "claude-sonnet-4-6")))))
-
-    (testing "selected-model as string (ECA sends this) used directly"
-      (let [bar (render-status-bar
-                  (assoc base :selected-model "anthropic/claude-sonnet-4-6"))]
-        (is (clojure.string/includes? bar "anthropic/claude-sonnet-4-6"))))
 
     (testing "init tasks running — shows loading indicator"
       (let [bar (render-status-bar

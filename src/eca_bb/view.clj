@@ -63,10 +63,7 @@
   (let [workspace (-> (get-in state [:opts :workspace] ".")
                       java.io.File.
                       .getName)
-        model     (or (let [sm (:selected-model state)]
-                        (if (map? sm) (:id sm) sm))
-                      (:model state)
-                      "…")
+        model     (or (:selected-model state) (:model state) "…")
         usage     (:usage state)
         tokens    (some-> usage :sessionTokens (str "tok"))
         cost      (some-> usage :sessionCost)

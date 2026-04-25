@@ -1,6 +1,7 @@
 (ns eca-bb.state-test
   (:require [clojure.test :refer [deftest is testing]]
             [charm.components.text-input :as ti]
+            [charm.message :as msg]
             [eca-bb.protocol :as protocol]
             [eca-bb.state :as state]))
 
@@ -24,8 +25,10 @@
    :init-tasks            {}
    :available-models      []
    :available-agents      []
+   :available-variants    []
    :selected-model        nil
    :selected-agent        nil
+   :selected-variant      nil
    :input                 (ti/text-input)
    :chat-lines            []
    :scroll-offset         0
@@ -225,7 +228,7 @@
 
 (deftest handle-config-updated-test
   (testing "stores models list"
-    (let [models [{:id "anthropic/claude-sonnet-4-6"}]
+    (let [models ["anthropic/claude-sonnet-4-6" "anthropic/claude-opus-4-7"]
           [s _]  (handle-eca-notification
                    (base-state)
                    {:method "config/updated"
@@ -233,7 +236,7 @@
       (is (= models (:available-models s)))))
 
   (testing "stores agents list"
-    (let [agents [{:id "my-agent" :name "My Agent"}]
+    (let [agents ["code" "plan"]
           [s _]  (handle-eca-notification
                    (base-state)
                    {:method "config/updated"
@@ -241,15 +244,14 @@
       (is (= agents (:available-agents s)))))
 
   (testing "selectModel forces model selection"
-    (let [model {:id "anthropic/claude-opus-4-7"}
-          [s _] (handle-eca-notification
+    (let [[s _] (handle-eca-notification
                   (base-state)
                   {:method "config/updated"
-                   :params {:chat {:selectModel model}}})]
-      (is (= model (:selected-model s)))))
+                   :params {:chat {:selectModel "anthropic/claude-opus-4-7"}}})]
+      (is (= "anthropic/claude-opus-4-7" (:selected-model s)))))
 
   (testing "selectModel nil clears selection"
-    (let [s0    (assoc (base-state) :selected-model {:id "some-model"})
+    (let [s0    (assoc (base-state) :selected-model "anthropic/claude-sonnet-4-6")
           [s _] (handle-eca-notification
                   s0
                   {:method "config/updated"
@@ -257,7 +259,7 @@
       (is (nil? (:selected-model s)))))
 
   (testing "selectAgent nil clears selection"
-    (let [s0    (assoc (base-state) :selected-agent {:id "some-agent"})
+    (let [s0    (assoc (base-state) :selected-agent "code")
           [s _] (handle-eca-notification
                   s0
                   {:method "config/updated"
@@ -275,14 +277,14 @@
 
   (testing "absent fields do not overwrite existing state"
     (let [s0    (assoc (base-state)
-                       :available-models [{:id "existing"}]
-                       :available-agents [{:id "existing-agent"}])
+                       :available-models ["anthropic/claude-sonnet-4-6"]
+                       :available-agents ["code"])
           [s _] (handle-eca-notification
                   s0
                   {:method "config/updated"
-                   :params {:chat {:models [{:id "new-model"}]}}})]
-      (is (= [{:id "new-model"}] (:available-models s)))
-      (is (= [{:id "existing-agent"}] (:available-agents s)))))
+                   :params {:chat {:models ["anthropic/claude-opus-4-7"]}}})]
+      (is (= ["anthropic/claude-opus-4-7"] (:available-models s)))
+      (is (= ["code"] (:available-agents s)))))
 
   (testing "nil chat field is a no-op"
     (let [base  (base-state)
@@ -392,3 +394,78 @@
                            :pending-message "hi"})]
       (is (= :login (:mode new-state)))
       (is (= "github" (get-in new-state [:login :provider]))))))
+
+;; --- Phase 1b: login hardening ---
+
+(deftest login-timeout-test
+  (testing "nil action → :ready, error item contains 'timed out', :login cleared"
+    (let [[s _] (state/update-state
+                  (assoc (base-state) :mode :chatting)
+                  {:type :eca-login-action
+                   :provider "anthropic"
+                   :action nil
+                   :pending-message "original"})]
+      (is (= :ready (:mode s)))
+      (is (nil? (:login s)))
+      (is (some #(and (= :system (:type %))
+                      (clojure.string/includes? (:text %) "timed out"))
+               (:items s))))))
+
+(deftest login-cancel-cleans-state-test
+  (testing "Escape in :login mode → :ready, :login nil, :pending-message nil"
+    (let [login-state {:provider "anthropic"
+                       :action {:action "device-code"
+                                :url "https://example.com"
+                                :code "ABCD"
+                                :message "Enter code"}
+                       :field-idx 0 :collected {}
+                       :pending-message "original question"}
+          s0 (assoc (base-state) :mode :login :login login-state
+                                 :pending-message "original question")
+          [s _] (state/update-state s0 (msg/key-press :escape))]
+      (is (= :ready (:mode s)))
+      (is (nil? (:login s)))
+      (is (nil? (:pending-message s))))))
+
+(deftest login-re-trigger-test
+  (testing "second login status on established session starts fresh login cmd"
+    (let [s0       (assoc (base-state)
+                          :chat-id "existing-chat"
+                          :pending-message "second question")
+          [s cmd]  (handle-eca-tick s0 [{:type :eca-prompt-response
+                                         :chat-id "existing-chat"
+                                         :model "claude-sonnet-4-6"
+                                         :status "login"}])]
+      (is (= "existing-chat" (:chat-id s)))
+      (is (some? cmd)))))
+
+(deftest providers-updated-wrong-mode-test
+  (testing "providers/updated in :chatting mode is a no-op — state identical"
+    (let [s0    (assoc (base-state) :mode :chatting)
+          [s _] (handle-eca-notification
+                  s0
+                  {:method "providers/updated"
+                   :params {:id "anthropic" :auth {:status "authenticated"}}})]
+      (is (= :chatting (:mode s)))
+      (is (= s0 s)))))
+
+(deftest submit-login-multi-field-test
+  (testing "multi-field input: first enter advances field-idx and collects value"
+    (let [login-state {:provider "anthropic"
+                       :action {:action "input"
+                                :fields [{:key "api-key" :label "API Key" :type "secret"}
+                                         {:key "org-id"  :label "Org ID"  :type "text"}]}
+                       :field-idx 0 :collected {}
+                       :pending-message "hi"}
+          s0 (-> (base-state)
+                 (assoc :mode :login :login login-state)
+                 (assoc :input (ti/set-value (ti/text-input) "sk-abc123")))
+          [s1 cmd1] (state/update-state s0 (msg/key-press :enter))]
+      (is (nil? cmd1))
+      (is (= 1 (get-in s1 [:login :field-idx])))
+      (is (= "sk-abc123" (get-in s1 [:login :collected "api-key"])))
+
+      (testing "second enter submits and returns non-nil cmd"
+        (let [s1' (assoc s1 :input (ti/set-value (:input s1) "my-org"))
+              [_ cmd2] (state/update-state s1' (msg/key-press :enter))]
+          (is (some? cmd2)))))))

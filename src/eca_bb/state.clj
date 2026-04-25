@@ -104,6 +104,14 @@
 
 ;; --- Protocol send helpers ---
 
+(defn- effective-opts
+  "Merge CLI opts with runtime-selected model/agent from state.
+   Selected values (from picker) take precedence over CLI flags."
+  [state]
+  (cond-> (:opts state)
+    (:selected-model state) (assoc :model (:selected-model state))
+    (:selected-agent state)  (assoc :agent (:selected-agent state))))
+
 (defn- send-chat-prompt! [srv chat-id text opts]
   (protocol/chat-prompt!
     srv
@@ -201,7 +209,7 @@
              (= provider-id (get-in state [:login :provider])))
       (let [pending   (:pending-message state)
             srv       (:server state)
-            opts      (:opts state)
+            opts      (effective-opts state)
             new-state (-> state
                           (assoc :mode :chatting)
                           (dissoc :login)
@@ -296,8 +304,10 @@
    :init-tasks            {}
    :available-models      []
    :available-agents      []
+   :available-variants    []
    :selected-model        nil
    :selected-agent        nil
+   :selected-variant      nil
    :input                 (ti/text-input :placeholder "Send a message...")
    :chat-lines            []
    :scroll-offset         0
@@ -361,7 +371,7 @@
           (= "done" (:action action))
           (do
             (when pending
-              (send-chat-prompt! (:server state) nil pending (:opts state)))
+              (send-chat-prompt! (:server state) nil pending (effective-opts state)))
             [(-> state (assoc :mode :chatting) (dissoc :login) (update :input ti/blur)) nil])
 
           :else
@@ -382,7 +392,7 @@
       (= :eca-login-complete (:type msg))
       (let [pending (:pending-message msg)]
         (when pending
-          (send-chat-prompt! (:server state) nil pending (:opts state)))
+          (send-chat-prompt! (:server state) nil pending (effective-opts state)))
         [(-> state (assoc :mode :chatting) (dissoc :login) (update :input ti/blur)) nil])
 
       (or (msg/quit? msg)
@@ -399,7 +409,7 @@
                               (assoc :mode :chatting :pending-message text)
                               (update :input #(-> % ti/reset ti/blur))
                               rebuild-lines)]
-            (send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
+            (send-chat-prompt! (:server state) (:chat-id state) text (effective-opts state))
             [new-state nil])
           [state nil]))
 
@@ -456,7 +466,7 @@
            (= :login (:mode state)))
       [(-> state
            (assoc :mode :ready)
-           (dissoc :login)
+           (dissoc :login :pending-message)
            (update :input ti/focus))
        nil]
 
@@ -487,13 +497,13 @@
 
       (and (msg/key-press? msg)
            (or (msg/key-match? msg :up) (msg/key-match? msg "k"))
-           (not= :approving (:mode state)))
+           (not (#{:approving :picking} (:mode state))))
       (let [max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 3)))]
         [(update state :scroll-offset #(min max-offset (inc %))) nil])
 
       (and (msg/key-press? msg)
            (or (msg/key-match? msg :down) (msg/key-match? msg "j"))
-           (not= :approving (:mode state)))
+           (not (#{:approving :picking} (:mode state))))
       [(update state :scroll-offset #(max 0 (dec %))) nil]
 
       :else
