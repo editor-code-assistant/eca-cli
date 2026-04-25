@@ -14,4 +14,10 @@
                                 (clojure.test/run-tests 'eca-bb.protocol-test
                                                         'eca-bb.view-test
                                                         'eca-bb.state-test)]
+                            (System/exit (if (pos? (+ fail error)) 1 0))))}
+         itest {:doc "Run integration tests (requires tmux + ECA on PATH)"
+                :task (do (require '[clojure.test])
+                          (require '[eca-bb.integration-test])
+                          (let [{:keys [fail error]}
+                                (clojure.test/run-tests 'eca-bb.integration-test)]
                             (System/exit (if (pos? (+ fail error)) 1 0))))}}}

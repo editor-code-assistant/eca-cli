@@ -105,14 +105,6 @@
 
 ;; --- Protocol send helpers ---
 
-(defn- effective-opts
-  "Merge CLI opts with runtime-selected model/agent from state.
-   Selected values (from picker) take precedence over CLI flags."
-  [state]
-  (cond-> (:opts state)
-    (:selected-model state) (assoc :model (:selected-model state))
-    (:selected-agent state)  (assoc :agent (:selected-agent state))))
-
 (defn- send-chat-prompt! [srv chat-id text opts]
   (protocol/chat-prompt!
     srv
@@ -210,7 +202,7 @@
              (= provider-id (get-in state [:login :provider])))
       (let [pending   (:pending-message state)
             srv       (:server state)
-            opts      (effective-opts state)
+            opts      (:opts state)
             new-state (-> state
                           (assoc :mode :chatting)
                           (dissoc :login)
@@ -414,7 +406,7 @@
           (= "done" (:action action))
           (do
             (when pending
-              (send-chat-prompt! (:server state) nil pending (effective-opts state)))
+              (send-chat-prompt! (:server state) nil pending (:opts state)))
             [(-> state (assoc :mode :chatting) (dissoc :login) (update :input ti/blur)) nil])
 
           :else
@@ -435,7 +427,7 @@
       (= :eca-login-complete (:type msg))
       (let [pending (:pending-message msg)]
         (when pending
-          (send-chat-prompt! (:server state) nil pending (effective-opts state)))
+          (send-chat-prompt! (:server state) nil pending (:opts state)))
         [(-> state (assoc :mode :chatting) (dissoc :login) (update :input ti/blur)) nil])
 
       (or (msg/quit? msg)
@@ -465,7 +457,7 @@
                               (assoc :mode :chatting :pending-message text)
                               (update :input #(-> % ti/reset ti/blur))
                               rebuild-lines)]
-            (send-chat-prompt! (:server state) (:chat-id state) text (effective-opts state))
+            (send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
             [new-state nil])
 
           :else [state nil]))
@@ -567,6 +559,7 @@
                  (assoc :mode :ready)
                  (assoc (if (= :model kind) :selected-model :selected-agent) selected)
                  (cond-> (= :model kind) (assoc :selected-variant nil))
+                 (assoc-in [:opts (if (= :model kind) :model :agent)] selected)
                  (dissoc :picker)
                  (update :input ti/focus))
              nil])
