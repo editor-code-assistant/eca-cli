@@ -115,15 +115,20 @@
   (let [t (Thread.
            (fn []
              (try
-               (while @alive?
-                 (when-let [msg (read-message! reader)]
-                   (if (and (:id msg) (not (:method msg)))
-                     ;; Response — invoke pending callback
-                     (when-let [cb (get @pending-requests (:id msg))]
-                       (swap! pending-requests dissoc (:id msg))
-                       (cb msg))
-                     ;; Notification — queue for charm.clj
-                     (.put queue msg))))
+               (loop []
+                 (when @alive?
+                   (if-let [msg (read-message! reader)]
+                     (do (if (and (:id msg) (not (:method msg)))
+                           ;; Response — invoke pending callback
+                           (when-let [cb (get @pending-requests (:id msg))]
+                             (swap! pending-requests dissoc (:id msg))
+                             (cb msg))
+                           ;; Notification — queue for charm.clj
+                           (.put queue msg))
+                         (recur))
+                     ;; nil = EOF: ECA process died unexpectedly
+                     (when @alive?
+                       (.put queue {:type :reader-error :error "ECA process disconnected"})))))
                (catch Exception e
                  (when @alive?
                    (.put queue {:type :reader-error :error (str e)}))))))]

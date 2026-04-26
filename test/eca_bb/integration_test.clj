@@ -103,6 +103,32 @@
         (is (str/includes? s "SAFE"))))
     (finally (kill!))))
 
+(deftest phase1a-no-echo-test
+  (start! "bb run")
+  (try
+    (testing "user message not echoed as AI output after response completes"
+      (let [msg "ping-echo-xyzzy"]
+        (keys! msg "Enter")
+        ;; Sleep to ensure :chatting has begun before polling for SAFE return
+        (Thread/sleep 1500)
+        ;; Wait for response to complete — app returns to :ready
+        (let [s (wait-for! (has "SAFE") 30000)]
+          ;; Message text must NOT appear as AI output (◆ prefix = echoed)
+          (is (not (str/includes? s (str "◆ " msg))))
+          ;; Text appears exactly once in the visible screen (user item only)
+          (is (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote msg)) s)))))))
+    (finally (kill!))))
+
+(deftest phase1a-reader-error-test
+  (start! "bb run")
+  (try
+    (testing "16: ECA process killed → disconnect message appears in chat"
+      ;; Kill the eca subprocess — reader thread detects broken pipe and emits :reader-error
+      (sh "pkill" "-x" "eca")
+      (let [s (wait-for! (has "⚠") 10000)]
+        (is (str/includes? s "⚠"))))
+    (finally (kill!))))
+
 ;; Phase 1b login criteria (7, 8, 9, 10, 11) remain manual.
 ;; The providers/login flow requires ECA to return status:"login" on a
 ;; chat/prompt, which only fires when a provider is in a specific
@@ -140,6 +166,20 @@
 
     (finally (kill!))))
 
+(deftest phase2-selected-model-in-status-bar-test
+  (start! "bb run")
+  (try
+    (testing "12: model selected in picker appears in status bar"
+      (keys! "C-l")
+      (let [ps (wait-for! (has "Select model") 5000)
+            ;; Highlighted item rendered with "> " prefix by charm list component
+            selected (second (re-find #"> (\S+)" ps))]
+        (keys! "Enter")
+        (let [s (wait-for! (lacks "Select model") 5000)]
+          (is (some? selected) "picker must have a highlighted item")
+          (is (str/includes? s selected)))))
+    (finally (kill!))))
+
 (deftest phase2-agent-picker-test
   (start! "bb run")
   (try
@@ -153,6 +193,19 @@
       (let [s (wait-for! (lacks "Select agent") 5000)]
         (is (str/includes? s "SAFE"))))
 
+    (finally (kill!))))
+
+(deftest phase2-selected-agent-in-status-bar-test
+  (start! "bb run")
+  (try
+    (testing "15: agent selected in picker appears in status bar"
+      (keys! "/agent" "Enter")
+      (let [ps (wait-for! (has "Select agent") 5000)
+            selected (second (re-find #"> (\S+)" ps))]
+        (keys! "Enter")
+        (let [s (wait-for! (lacks "Select agent") 5000)]
+          (is (some? selected) "picker must have a highlighted item")
+          (is (str/includes? s selected)))))
     (finally (kill!))))
 
 (deftest phase2-escape-picker-test

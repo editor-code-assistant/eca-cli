@@ -86,7 +86,14 @@
   (testing "non-finished — state unchanged"
     (let [base (assoc (base-state) :mode :chatting)
           s    (handle-content base {:content {:type "progress" :state "running"}})]
-      (is (= :chatting (:mode s))))))
+      (is (= :chatting (:mode s)))))
+
+  (testing "finished with echo-buf not matching echo-pending — flushed as content, mode :ready"
+    (let [s (handle-content
+              (assoc (base-state) :current-text "something else")
+              {:content {:type "progress" :state "finished"}})]
+      (is (= :ready (:mode s)))
+      (is (some #(= "something else" (:text %)) (:items s))))))
 
 (deftest handle-content-tool-call-prepare-test
   (let [s (handle-content (base-state)

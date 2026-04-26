@@ -125,26 +125,17 @@
   (let [content (:content params)]
     (case (:type content)
       "text"
-      (let [pending-echo (:pending-echo state)
-            text         (:text content)]
-        (if (and pending-echo (empty? (:current-text state)) (= text pending-echo))
-          ;; ECA echoes the user message as the first text chunk — swallow it
-          (assoc state :pending-echo nil :skip-next-finish true)
-          (-> state
-              (dissoc :pending-echo)
-              (update :current-text str text)
-              rebuild-lines)))
+      (-> state
+          (update :current-text str (:text content))
+          rebuild-lines)
 
       "progress"
       (if (= "finished" (:state content))
-        (if (:skip-next-finish state)
-          ;; swallow the progress/finished that closes the echo "turn"
-          (dissoc state :skip-next-finish)
-          (-> state
-              flush-current-text
-              (assoc :mode :ready)
-              (update :input ti/focus)
-              rebuild-lines))
+        (-> state
+            flush-current-text
+            (assoc :mode :ready)
+            (update :input ti/focus)
+            rebuild-lines)
         state)
 
       "toolCallPrepare"
@@ -225,7 +216,14 @@
 (defn- handle-eca-notification [state notification]
   (case (:method notification)
     "chat/contentReceived"
-    [(handle-content state (:params notification)) nil]
+    ;; ECA echoes the user's message back into the stream (role:"user") so editor
+    ;; plugins that don't track sent messages can display it. We render user messages
+    ;; immediately on send, so skip role:"user" content to avoid duplication.
+    ;; If ECA ever sends meaningful role:"user" content (e.g. injected context,
+    ;; steer messages) this will silently drop it — revisit if that happens.
+    (if (= "user" (:role (:params notification)))
+      [state nil]
+      [(handle-content state (:params notification)) nil])
 
     "providers/updated"
     (handle-providers-updated state (:params notification))
@@ -358,9 +356,7 @@
    :width                 80
    :height                24
    :model                 nil
-   :usage                 nil
-   :pending-echo          nil
-   :skip-next-finish      false})
+   :usage                 nil})
 
 (defn make-init [opts]
   (fn []
@@ -465,8 +461,7 @@
           (seq text)
           (let [new-state (-> state
                               (update :items conj {:type :user :text text})
-                              (assoc :mode :chatting :pending-message text
-                                     :pending-echo text)
+                              (assoc :mode :chatting :pending-message text)
                               (update :input #(-> % ti/reset ti/blur))
                               rebuild-lines)]
             (send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
