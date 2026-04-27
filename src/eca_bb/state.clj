@@ -648,6 +648,16 @@
       (let [page (max 1 (- (:height state) 5))]
         [(update state :scroll-offset #(max 0 (- % page))) nil])
 
+      ;; Mouse wheel scroll (3 lines per tick)
+      (and (msg/wheel-up? msg)
+           (not (#{:approving :picking} (:mode state))))
+      (let [max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 5)))]
+        [(update state :scroll-offset #(min max-offset (+ % 3))) nil])
+
+      (and (msg/wheel-down? msg)
+           (not (#{:approving :picking} (:mode state))))
+      [(update state :scroll-offset #(max 0 (- % 3))) nil]
+
       :else
       (let [[new-input cmd] (ti/text-input-update (:input state) msg)]
         [(assoc state :input new-input) cmd]))))

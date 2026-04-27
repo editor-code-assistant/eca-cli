@@ -36,4 +36,5 @@
                   :update     state/update-state
                   :view       view/view
                   :alt-screen true
+                  :mouse      :normal
                   :fps        20})))
