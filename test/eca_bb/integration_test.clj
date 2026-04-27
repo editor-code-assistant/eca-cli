@@ -226,3 +226,58 @@
 ;; Phase 2 criterion 17 (single-model picker) is not automated —
 ;; requires controlling ECA's returned model list to a single entry,
 ;; which cannot be done via CLI flags alone.
+
+;; ---------------------------------------------------------------------------
+;; Phase 3 — input history and scroll
+;; ---------------------------------------------------------------------------
+
+(deftest phase3-history-recalls-last-test
+  (start! "bb run")
+  (try
+    (testing "up arrow in :ready recalls most recently sent message into input"
+      (let [msg "hist-last-xyzzy-001"]
+        (keys! msg "Enter")
+        (wait-for! (has "SAFE") 30000)
+        (keys! "Up" "Enter")
+        (let [s (wait-for! (has "SAFE") 30000)]
+          (is (<= 2 (count (re-seq (re-pattern (java.util.regex.Pattern/quote msg)) s)))))))
+    (finally (kill!))))
+
+(deftest phase3-history-multi-navigate-test
+  (start! "bb run")
+  (try
+    (testing "up+up reaches second-to-last message"
+      (keys! "hist-alpha-xyzzy" "Enter")
+      (wait-for! (has "SAFE") 30000)
+      (keys! "hist-beta-xyzzy" "Enter")
+      (wait-for! (has "SAFE") 30000)
+      (keys! "Up" "Up" "Enter")
+      (let [s (wait-for! (has "SAFE") 30000)]
+        (is (<= 2 (count (re-seq #"hist-alpha-xyzzy" s))))
+        (is (<= 1 (count (re-seq #"hist-beta-xyzzy" s))))))
+    (finally (kill!))))
+
+(deftest phase3-history-down-clears-test
+  (start! "bb run")
+  (try
+    (testing "down after up clears input back to empty"
+      (keys! "hist-base-xyzzy" "Enter")
+      (wait-for! (has "SAFE") 30000)
+      (keys! "Up" "Down" "hist-fresh-xyzzy" "Enter")
+      (let [s (wait-for! (has "SAFE") 30000)]
+        (is (str/includes? s "hist-fresh-xyzzy"))
+        (is (not (str/includes? s "hist-base-xyzzyhist-fresh-xyzzy")))))
+    (finally (kill!))))
+
+(deftest phase3-scroll-pgup-pgdn-test
+  (start! "bb run")
+  (try
+    (testing "PgUp and PgDn scroll within the viewport without breaking the app"
+      (keys! "scroll-test-ping" "Enter")
+      (wait-for! (has "SAFE") 30000)
+      (keys! "PPage")
+      (Thread/sleep 300)
+      (keys! "NPage")
+      (let [s (wait-for! (has "SAFE") 3000)]
+        (is (str/includes? s "SAFE"))))
+    (finally (kill!))))

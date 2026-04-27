@@ -351,6 +351,8 @@
    :selected-agent        nil
    :selected-variant      nil
    :input                 (ti/text-input)
+   :input-history         []
+   :history-idx           nil
    :chat-lines            []
    :scroll-offset         0
    :width                 80
@@ -463,6 +465,8 @@
                               (update :items conj {:type :user :text text})
                               (assoc :mode :chatting :pending-message text)
                               (update :input #(-> % ti/reset ti/blur))
+                              (update :input-history conj text)
+                              (assoc :history-idx nil)
                               rebuild-lines)]
             (send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
             [new-state nil])
@@ -598,18 +602,51 @@
       (let [[new-list _] (cl/list-update (get-in state [:picker :list]) msg)]
         [(assoc-in state [:picker :list] new-list) nil])
 
+      ;; Input history navigation (up/down in :ready mode)
       (and (msg/key-press? msg)
-           (or (msg/key-match? msg :up)
-               (and (msg/key-match? msg "k") (= :chatting (:mode state))))
-           (not (#{:approving :picking} (:mode state))))
-      (let [max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 5)))]
-        [(update state :scroll-offset #(min max-offset (inc %))) nil])
+           (msg/key-match? msg :up)
+           (= :ready (:mode state)))
+      (let [history (:input-history state)
+            cur-idx (:history-idx state)
+            new-idx (if (nil? cur-idx)
+                      (dec (count history))
+                      (max 0 (dec cur-idx)))]
+        (if (seq history)
+          [(-> state
+               (assoc :history-idx new-idx)
+               (update :input #(ti/set-value % (nth history new-idx))))
+           nil]
+          [state nil]))
 
       (and (msg/key-press? msg)
-           (or (msg/key-match? msg :down)
-               (and (msg/key-match? msg "j") (= :chatting (:mode state))))
+           (msg/key-match? msg :down)
+           (= :ready (:mode state))
+           (some? (:history-idx state)))
+      (let [history (:input-history state)
+            new-idx (inc (:history-idx state))]
+        (if (< new-idx (count history))
+          [(-> state
+               (assoc :history-idx new-idx)
+               (update :input #(ti/set-value % (nth history new-idx))))
+           nil]
+          [(-> state
+               (assoc :history-idx nil)
+               (update :input #(ti/set-value % "")))
+           nil]))
+
+      ;; PgUp/PgDn scroll (full page)
+      (and (msg/key-press? msg)
+           (msg/key-match? msg :page-up)
            (not (#{:approving :picking} (:mode state))))
-      [(update state :scroll-offset #(max 0 (dec %))) nil]
+      (let [max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 5)))
+            page       (max 1 (- (:height state) 5))]
+        [(update state :scroll-offset #(min max-offset (+ % page))) nil])
+
+      (and (msg/key-press? msg)
+           (msg/key-match? msg :page-down)
+           (not (#{:approving :picking} (:mode state))))
+      (let [page (max 1 (- (:height state) 5))]
+        [(update state :scroll-offset #(max 0 (- % page))) nil])
 
       :else
       (let [[new-input cmd] (ti/text-input-update (:input state) msg)]

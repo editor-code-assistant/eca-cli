@@ -35,5 +35,5 @@
     (program/run {:init       (state/make-init opts)
                   :update     state/update-state
                   :view       view/view
-                  :alt-screen false
+                  :alt-screen true
                   :fps        20})))
