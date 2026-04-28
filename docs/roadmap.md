@@ -13,7 +13,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [1a](#phase-1a-reliable-core) | Reliable Core | Everything works, nothing leaks | [detail](roadmap/phase-1a-reliable-core.md) |
 | [1b](#phase-1b-login-hardening) | Login Hardening | End-to-end auth with real credentials | [detail](roadmap/phase-1b-login-hardening.md) |
 | [2](#phase-2-model--agent-identity) | Model & Agent Identity | Know what you're running, change it | [detail](roadmap/phase-2-model-agent-identity.md) |
-| [3](#phase-3-session-continuity) | Session Continuity | Quit and resume, start fresh | — |
+| [3](#phase-3-session-continuity) | Session Continuity | Quit and resume, start fresh | [detail](roadmap/phase-3-session-continuity.md) |
 | [4](#phase-4-command-system) | Command System | Slash commands as the extensibility seam | — |
 | [5](#phase-5-message-steering) | Message Steering | Influence a running prompt | — |
 | [6](#phase-6-rich-interaction) | Rich Interaction | Server-initiated Q&A | — |
@@ -68,34 +68,51 @@ These are client notifications (no response expected) that inform ECA of the use
 
 ---
 
+## Phase 2.5: UX Polish *(delivered between phases)*
+
+**Goal:** Smooth everyday interaction — not a planned phase, delivered incrementally.
+
+- `alt-screen true` — fullscreen mode; native mouse selection (Shift+drag) works out of the box
+- Mouse wheel scroll — DECSET 1000 mouse reporting lets the app own scroll; 3 lines per tick
+- Input history — Up/Down in `:ready` recalls previously sent messages
+- PgUp/PgDn — full-page scroll through chat history
+- Integration tests for all of the above (Phase 3 tests in `integration_test.clj`)
+
+---
+
 ## Phase 3: Session Continuity
 
 **Goal:** Quit and come back. Start fresh. Know which chat you're in.
 
+See [roadmap/phase-3-session-continuity.md](roadmap/phase-3-session-continuity.md) for the full implementation plan, tests, and stopping criteria.
+
 ### What to build
 
-**Chat persistence.**  
-When a chat is established (chat-id received), persist it to disk (e.g., `~/.cache/eca/eca-bb-session.json` keyed by workspace path). On next startup, offer to resume.
+**Own ECA binary (`bb upgrade-eca`).**  
+Download and manage a pinned ECA binary at `~/.cache/eca/eca-bb/eca`, independent of editor plugins. Discovery order updated to prefer this over nvim/emacs locations. Startup version check warns if the running binary doesn't match the pinned version.
 
-**`--resume` flag.**  
-`bb run --resume` (or equivalent) picks up the last chat-id for the current workspace and sends it with the next `chat/prompt`, continuing the session. ECA server already maintains chat history server-side.
+**Chat-id persistence.**  
+After first exchange, write chat-id to `~/.cache/eca/eca-bb-sessions.edn` keyed by workspace path. On restart, read it and resume silently — no prompt, no flag.
+
+**`chat/opened` and `chat/cleared` handlers.**  
+`chat/opened` is the canonical notification when a chat is created or replayed — store chat-id and title. `chat/cleared` signals the server wants us to wipe local items (used before replay and after `/new`).
 
 **`/new` command.**  
-Start a fresh chat. Clears the chat-id, clears the local items list, sends `chat/clear` to ECA (to free server memory), and resets to `:ready`.
+Clears the chat-id, deletes the chat on the server, wipes local items, removes from disk. Next message starts a fresh session.
 
 **`/sessions` command.**  
-Calls `chat/list` on ECA and shows available chats in a simple selector. The user picks one, eca-bb sends `chat/open` and stores the new chat-id.
+Calls `chat/list`, shows a picker of available chats. Selecting one sends `chat/open` — server replays the chat via `chat/cleared` → `chat/opened` → `chat/contentReceived`.
 
 **Chat title in status bar.**  
-Once sessions are named/listed, show the current chat title (or chat-id prefix) in the status bar.
+Show the current chat title (truncated) from `chat/opened`.
 
 ### Stopping criteria
 
-- Chat-id is persisted to disk after first exchange
-- `bb run` in the same workspace resumes the previous session automatically (or prompts to)  
-- `/new` starts a fresh chat, confirmed by a new chat-id on next send  
-- `/sessions` shows a selectable list of previous chats and opens the chosen one
-- Status bar shows current chat identity
+- Chat-id persisted; restart in same workspace resumes automatically
+- `chat/opened` stores chat-id and title; `chat/cleared` wipes local items
+- `/new` starts a fresh chat (old messages gone, new chat-id on next send)
+- `/sessions` shows selectable list of previous chats and opens chosen one
+- Status bar shows current chat title when available
 
 ---
 

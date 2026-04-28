@@ -1,5 +1,6 @@
 (ns eca-bb.view
   (:require [clojure.string :as str]
+            [eca-bb.wrap :as wrap]
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]))
 
@@ -15,23 +16,41 @@
     :rejected  "❌"
     "⏳"))
 
-(defn render-item-lines [item _width]
+(defn render-item-lines [item width]
   (case (:type item)
     :user
-    ["" (str "\033[7m ❯ " (:text item) " \033[0m") ""]
+    ;; " ❯ " prefix = 4 cols, trailing " " = 1 col → inner budget = width - 5
+    (let [inner-w (max 1 (- width 5))
+          wrapped (wrap/wrap-text (str (:text item)) inner-w)]
+      (into [""]
+            (conj (mapv #(str "\033[7m ❯ " % " \033[0m") wrapped)
+                  "")))
 
     (:assistant-text :streaming-text)
-    (let [lines (str/split-lines (str (:text item)))]
-      (if (seq lines)
-        (into [(str "◆ " (first lines))]
-              (map #(str "  " %) (rest lines)))
+    ;; "◆ " prefix = 2 cols; continuation "  " = 2 cols → inner budget = width - 2
+    (let [inner-w (max 1 (- width 2))
+          lines   (str/split-lines (str (:text item)))
+          wrapped (mapcat #(wrap/wrap-text % inner-w) lines)]
+      (if (seq wrapped)
+        (into [(str "◆ " (first wrapped))]
+              (map #(str "  " %) (rest wrapped)))
         []))
 
     :tool-call
-    [(str (render-tool-icon item) " " (or (:summary item) (:name item)))]
+    ;; icon (2 cols) + " " (1 col) → inner budget = width - 3
+    (let [icon    (render-tool-icon item)
+          text    (or (:summary item) (:name item))
+          inner-w (max 1 (- width 3))
+          wrapped (wrap/wrap-text (str text) inner-w)]
+      (into [(str icon " " (first wrapped))]
+            (map #(str "   " %) (rest wrapped))))
 
     :system
-    [(str "⚠ " (:text item))]
+    ;; "⚠ " = 2 cols → inner budget = width - 2
+    (let [inner-w (max 1 (- width 2))
+          wrapped (wrap/wrap-text (str (:text item)) inner-w)]
+      (into [(str "⚠ " (first wrapped))]
+            (map #(str "  " %) (rest wrapped))))
 
     []))
 
@@ -71,27 +90,32 @@
 
 (defn- render-picker [state]
   (let [{:keys [kind query list]} (:picker state)
-        label (if (= kind :model) "model" "agent")]
+        label (case kind :model "model" :agent "agent" :session "chat" "item")]
     (str "Select " label " (type to filter): " query "\n"
          (divider (:width state)) "\n"
          (cl/list-view list))))
 
 (defn render-status-bar [state]
-  (let [workspace (-> (get-in state [:opts :workspace] ".")
-                      java.io.File.
-                      .getName)
-        model     (or (:selected-model state) (:model state) "…")
-        agent     (:selected-agent state)
-        variant   (:selected-variant state)
-        usage     (:usage state)
-        tokens    (some-> usage :sessionTokens (str "tok"))
-        cost      (some-> usage :sessionCost)
-        ctx-pct   (when-let [l (:limit usage)]
-                    (when (pos? (:context l))
-                      (str (int (* 100 (/ (:sessionTokens usage) (:context l)))) "%")))
-        loading   (when (some #(not (:done? %)) (vals (:init-tasks state))) "⏳")
-        trust     (if (:trust state) "TRUST" "SAFE")]
-    (str/join "  " (remove nil? [workspace loading model agent variant tokens cost ctx-pct trust]))))
+  (let [workspace  (-> (get-in state [:opts :workspace] ".")
+                       java.io.File.
+                       .getName)
+        model      (or (:selected-model state) (:model state) "…")
+        agent      (:selected-agent state)
+        variant    (:selected-variant state)
+        usage      (:usage state)
+        tokens     (some-> usage :sessionTokens (str "tok"))
+        cost       (some-> usage :sessionCost)
+        ctx-pct    (when-let [l (:limit usage)]
+                     (when (pos? (:context l))
+                       (str (int (* 100 (/ (:sessionTokens usage) (:context l)))) "%")))
+        loading    (when (some #(not (:done? %)) (vals (:init-tasks state))) "⏳")
+        chat-title (let [t (:chat-title state)]
+                     (when (and t (seq t))
+                       (if (> (count t) 24)
+                         (str "\"" (subs t 0 24) "…\"")
+                         (str "\"" t "\""))))
+        trust      (if (:trust state) "TRUST" "SAFE")]
+    (str/join "  " (remove nil? [workspace loading model agent variant tokens cost ctx-pct chat-title trust]))))
 
 (defn render-login [state]
   (let [{:keys [provider action field-idx]} (:login state)

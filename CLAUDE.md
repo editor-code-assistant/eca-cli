@@ -12,6 +12,16 @@ bb run --workspace /path      # set workspace root (default: cwd)
 bb run --model <model>        # specify model
 bb run --agent <agent>        # specify agent
 bb nrepl                      # start nREPL for development
+bb upgrade-eca                # download and install pinned ECA binary
+```
+
+In-app commands (type in input, press Enter):
+
+```
+/model      open model picker (Ctrl+L also works)
+/agent      open agent picker
+/new        start fresh chat (deletes current chat, clears UI)
+/sessions   browse and resume previous chats
 ```
 
 Requires Babashka 1.12.215+. No separate build step — `bb run` compiles and runs directly.
@@ -71,14 +81,21 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 - `src/eca_bb/protocol.clj` — message constructors, request ID tracking, response correlation
 - `src/eca_bb/state.clj` — Elm state machine, ECA content handlers, all key bindings
 - `src/eca_bb/view.clj` — pure rendering: chat lines, tool icons, approval prompt, status bar
+- `src/eca_bb/sessions.clj` — EDN persistence of workspace → chat-id map
+- `src/eca_bb/upgrade.clj` — ECA binary download and version check
 
 ### ECA binary discovery order
 
 1. `--eca` flag
-2. `which eca` (PATH)
-3. `~/.cache/nvim/eca/eca` (nvim plugin, Linux)
-4. `~/Library/Caches/nvim/eca/eca` (nvim plugin, macOS)
-5. `~/.emacs.d/eca/eca` (emacs plugin)
+2. `~/.cache/eca/eca-bb/eca` (eca-bb managed, installed via `bb upgrade-eca`)
+3. `which eca` (PATH)
+4. `~/.cache/nvim/eca/eca` (nvim plugin, Linux)
+5. `~/Library/Caches/nvim/eca/eca` (nvim plugin, macOS)
+6. `~/.emacs.d/eca/eca` (emacs plugin)
+
+### Session persistence
+
+Chat-ids are persisted to `~/.cache/eca/eca-bb-sessions.edn` keyed by workspace path. Each startup begins a fresh session — no auto-resume. Use `/sessions` to explicitly resume a previous chat. `/new` deletes the current chat and removes its entry from the sessions file.
 
 ### Protocol reference
 

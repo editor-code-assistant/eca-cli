@@ -4,6 +4,7 @@
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-bb.protocol :as protocol]
+            [eca-bb.sessions :as sessions]
             [eca-bb.state :as state]))
 
 (def ^:private flush-current-text   #'state/flush-current-text)
@@ -17,6 +18,7 @@
   {:mode                  :chatting
    :trust                 false
    :chat-id               "chat1"
+   :chat-title            nil
    :items                 []
    :current-text          ""
    :tool-calls            {}
@@ -31,6 +33,8 @@
    :selected-agent        nil
    :selected-variant      nil
    :input                 (ti/text-input)
+   :input-history         []
+   :history-idx           nil
    :chat-lines            []
    :scroll-offset         0
    :width                 80
@@ -616,4 +620,113 @@
           [s _]      (state/update-state s-pick (msg/key-press :escape))]
       (is (= :ready (:mode s)))
       (is (nil? (:picker s)))
-      (is (= "anthropic/claude-sonnet-4-6" (:selected-model s)))))))
+      (is (= "anthropic/claude-sonnet-4-6" (:selected-model s))))))
+
+;; --- Phase 3: Session Continuity ---
+
+(deftest chat-opened-handler-test
+  (testing "chat/opened stores chat-id and title"
+    (let [[s _] (handle-eca-notification
+                  (base-state)
+                  {:method "chat/opened"
+                   :params {:chatId "new-chat-123" :title "My Project Chat"}})]
+      (is (= "new-chat-123" (:chat-id s)))
+      (is (= "My Project Chat" (:chat-title s)))))
+
+  (testing "chat/opened with no title stores nil"
+    (let [[s _] (handle-eca-notification
+                  (base-state)
+                  {:method "chat/opened"
+                   :params {:chatId "chat-no-title"}})]
+      (is (= "chat-no-title" (:chat-id s)))
+      (is (nil? (:chat-title s))))))
+
+(deftest chat-cleared-handler-test
+  (testing "chat/cleared with messages:true clears items and scroll"
+    (let [s0 (assoc (base-state)
+                    :items [{:type :user :text "hi"}]
+                    :scroll-offset 5)
+          [s _] (handle-eca-notification
+                  s0
+                  {:method "chat/cleared"
+                   :params {:chatId "x" :messages true}})]
+      (is (empty? (:items s)))
+      (is (= 0 (:scroll-offset s)))))
+
+  (testing "chat/cleared with messages:false leaves items intact"
+    (let [s0 (assoc (base-state)
+                    :items [{:type :user :text "hi"}])
+          [s _] (handle-eca-notification
+                  s0
+                  {:method "chat/cleared"
+                   :params {:chatId "x" :messages false}})]
+      (is (= 1 (count (:items s)))))))
+
+(deftest slash-new-clears-state-test
+  (testing "/new with no chat-id is a no-op (already fresh)"
+    (let [s0 (-> (base-state)
+                 (assoc :mode :ready :chat-id nil)
+                 (assoc :input (ti/set-value (ti/text-input) "/new")))
+          [s cmd] (state/update-state s0 (msg/key-press :enter))]
+      (is (= :ready (:mode s)))
+      (is (nil? cmd))))
+
+  (testing "/new with chat-id clears state and returns delete cmd"
+    (with-redefs [sessions/save-chat-id! (fn [& _] nil)]
+      (let [s0 (-> (base-state)
+                   (assoc :mode :ready
+                          :chat-id "old-chat"
+                          :items [{:type :user :text "hello"}])
+                   (assoc :input (ti/set-value (ti/text-input) "/new")))
+            [s cmd] (state/update-state s0 (msg/key-press :enter))]
+        (is (= :ready (:mode s)))
+        (is (nil? (:chat-id s)))
+        (is (nil? (:chat-title s)))
+        (is (empty? (:items s)))
+        (is (some? cmd))))))
+
+(deftest slash-sessions-fires-list-cmd-test
+  (testing "/sessions in :ready fires chat/list cmd"
+    (let [s0 (-> (base-state)
+                 (assoc :mode :ready)
+                 (assoc :input (ti/set-value (ti/text-input) "/sessions")))
+          [s cmd] (state/update-state s0 (msg/key-press :enter))]
+      (is (= :ready (:mode s)))
+      (is (some? cmd)))))
+
+(deftest chat-list-loaded-enters-picking-test
+  (testing ":chat-list-loaded with results enters :picking :session"
+    (let [s0    (assoc (base-state) :mode :ready)
+          chats [{:id "chat-abc" :title "Project A" :messageCount 10}
+                 {:id "chat-def" :title "Project B" :messageCount 5}]
+          [s _] (state/update-state s0 {:type :chat-list-loaded :chats chats})]
+      (is (= :picking (:mode s)))
+      (is (= :session (get-in s [:picker :kind])))
+      (is (= 2 (count (get-in s [:picker :all]))))))
+
+  (testing ":chat-list-loaded with empty list still enters :picking"
+    (let [s0    (assoc (base-state) :mode :ready)
+          [s _] (state/update-state s0 {:type :chat-list-loaded :chats []})]
+      (is (= :picking (:mode s)))
+      (is (= :session (get-in s [:picker :kind])))
+      (is (empty? (get-in s [:picker :all]))))))
+
+(deftest session-picker-enter-fires-open-cmd-test
+  (testing "Enter in session picker returns :ready and fires open-chat cmd"
+    (with-redefs [sessions/save-chat-id! (fn [& _] nil)]
+      (let [s0    (assoc (base-state) :mode :ready)
+            chats [{:id "chat-abc" :title "My Chat" :messageCount 3}]
+            [s-pick _] (state/update-state s0 {:type :chat-list-loaded :chats chats})
+            [s cmd]    (state/update-state s-pick (msg/key-press :enter))]
+        (is (= :ready (:mode s)))
+        (is (nil? (:picker s)))
+        (is (some? cmd))))))
+
+(deftest session-picker-escape-test
+  (testing "Esc in session picker returns to :ready, no change"
+    (let [s0    (assoc (base-state) :mode :ready)
+          chats [{:id "chat-abc" :title "My Chat" :messageCount 3}]
+          [s-pick _] (state/update-state s0 {:type :chat-list-loaded :chats chats})
+          [s _]      (state/update-state s-pick (msg/key-press :escape))]
+      (is (= :ready (:mode s)))
+      (is (nil? (:picker s)))))))

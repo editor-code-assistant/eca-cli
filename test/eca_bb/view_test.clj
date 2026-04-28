@@ -184,7 +184,20 @@
     (testing "no agent or variant when nil"
       (let [bar (render-status-bar base)]
         (is (not (clojure.string/includes? bar "plan")))
-        (is (not (clojure.string/includes? bar "medium")))))))
+        (is (not (clojure.string/includes? bar "medium")))))
+
+    (testing "chat title shown when :chat-title set"
+      (let [bar (render-status-bar (assoc base :chat-title "My Project Chat"))]
+        (is (clojure.string/includes? bar "My Project Chat"))))
+
+    (testing "long title truncated to 24 chars with ellipsis"
+      (let [bar (render-status-bar (assoc base :chat-title "A very long chat title that exceeds limits"))]
+        (is (clojure.string/includes? bar "…"))
+        (is (not (clojure.string/includes? bar "A very long chat title that exceeds")))))
+
+    (testing "no title shown when :chat-title nil"
+      (let [bar (render-status-bar base)]
+        (is (not (clojure.string/includes? bar "My Project")))))))
 
 ;; --- Login render ---
 

@@ -6,6 +6,8 @@
             [charm.message :as msg]
             [eca-bb.server :as server]
             [eca-bb.protocol :as protocol]
+            [eca-bb.sessions :as sessions]
+            [eca-bb.upgrade :as upgrade]
             [eca-bb.view :as view]))
 
 ;; Expose last-known state for nREPL inspection
@@ -61,6 +63,29 @@
     (program/cmd (fn [] (server/shutdown! srv) nil))
     program/quit-cmd))
 
+(defn- delete-chat-cmd [srv chat-id]
+  (program/cmd
+    (fn []
+      (protocol/delete-chat! srv chat-id (fn [_] nil))
+      nil)))
+
+(defn- open-chat-cmd [srv chat-id]
+  (program/cmd
+    (fn []
+      (protocol/open-chat! srv chat-id (fn [_] nil))
+      nil)))
+
+(defn- list-chats-cmd [srv]
+  (program/cmd
+    (fn []
+      (let [p (promise)]
+        (protocol/list-chats! srv
+          (fn [r]
+            (deliver p {:chats  (or (get-in r [:result :chats]) [])
+                        :error? (boolean (:error r))})))
+        (let [{:keys [chats error?]} (deref p 10000 {:chats [] :error? true})]
+          {:type :chat-list-loaded :chats chats :error? error?})))))
+
 (defn- start-login-cmd [srv pending-message]
   (program/cmd
     (fn []
@@ -113,6 +138,8 @@
       (:model opts) (assoc :model (:model opts))
       (:agent opts) (assoc :agent (:agent opts)))
     (fn [result]
+      (when-let [new-id (:chat-id result)]
+        (sessions/save-chat-id! (:workspace opts) new-id))
       (.put (:queue srv)
             {:type    :eca-prompt-response
              :chat-id (:chat-id result)
@@ -133,7 +160,7 @@
       (if (= "finished" (:state content))
         (-> state
             flush-current-text
-            (assoc :mode :ready)
+            (assoc :mode :ready :echo-pending false)
             (update :input ti/focus)
             rebuild-lines)
         state)
@@ -216,14 +243,25 @@
 (defn- handle-eca-notification [state notification]
   (case (:method notification)
     "chat/contentReceived"
-    ;; ECA echoes the user's message back into the stream (role:"user") so editor
-    ;; plugins that don't track sent messages can display it. We render user messages
-    ;; immediately on send, so skip role:"user" content to avoid duplication.
-    ;; If ECA ever sends meaningful role:"user" content (e.g. injected context,
-    ;; steer messages) this will silently drop it — revisit if that happens.
-    (if (= "user" (:role (:params notification)))
-      [state nil]
-      [(handle-content state (:params notification)) nil])
+    ;; ECA echoes the user's message back (role:"user") so editor plugins that don't
+    ;; track sent messages can display it. We render user messages immediately on send,
+    ;; so consume the echo via :echo-pending flag and skip rendering it.
+    ;; Non-echo role:"user" text is a replayed historical message (session resume):
+    ;; flush :current-text first so prior assistant responses land in the right position.
+    ;; Non-text role:"user" content (e.g. progress start markers) is ignored.
+    (let [params  (:params notification)
+          content (:content params)]
+      (if (= "user" (:role params))
+        (if (= "text" (:type content))
+          (if (:echo-pending state)
+            [(assoc state :echo-pending false) nil]
+            [(-> state
+                 flush-current-text
+                 (update :items conj {:type :user :text (or (:text content) "")})
+                 rebuild-lines)
+             nil])
+          [state nil])
+        [(handle-content state params) nil]))
 
     "providers/updated"
     (handle-providers-updated state (:params notification))
@@ -258,6 +296,22 @@
                                                                        :text (:welcomeMessage chat)}))]
       [(if (:welcomeMessage chat) (rebuild-lines s') s') nil])
 
+    "chat/opened"
+    (let [{:keys [chatId title]} (:params notification)]
+      [(-> state
+           (assoc :chat-id chatId)
+           (assoc :chat-title title))
+       nil])
+
+    "chat/cleared"
+    (let [clear-msgs? (get-in notification [:params :messages])]
+      [(cond-> state
+         clear-msgs? (-> (assoc :items [])
+                         (assoc :current-text "")
+                         (assoc :chat-lines [])
+                         (assoc :scroll-offset 0)))
+       nil])
+
     [state nil]))
 
 (defn- handle-eca-tick [state msgs]
@@ -291,36 +345,61 @@
 
 ;; --- Picker helpers ---
 
+(defn- item-display [kind item]
+  (if (= :session kind) (first item) item))
+
 (defn- open-picker [state kind]
   (let [items (if (= :model kind) (:available-models state) (:available-agents state))]
     (if (empty? items)
       state
       (-> state
           (assoc :mode :picking
-                 :picker {:kind  kind
-                          :list  (cl/item-list items :height 8)
-                          :all   items
-                          :query ""})
+                 :picker {:kind     kind
+                          :list     (cl/item-list items :height 8)
+                          :all      items
+                          :filtered items
+                          :query    ""})
           (update :input ti/reset)))))
 
+(defn- open-session-picker [state session-pairs]
+  (let [labels (mapv first session-pairs)]
+    (-> state
+        (assoc :mode :picking
+               :picker {:kind     :session
+                        :list     (cl/item-list labels :height 8)
+                        :all      session-pairs
+                        :filtered session-pairs
+                        :query    ""})
+        (update :input ti/reset))))
+
 (defn- filter-picker [state ch]
-  (let [query (str (get-in state [:picker :query]) ch)
-        all   (get-in state [:picker :all])
-        items (filter #(str/includes? (str/lower-case %) (str/lower-case query)) all)]
+  (let [query    (str (get-in state [:picker :query]) ch)
+        kind     (get-in state [:picker :kind])
+        all      (get-in state [:picker :all])
+        filtered (filterv #(str/includes? (str/lower-case (item-display kind %))
+                                           (str/lower-case query))
+                           all)
+        labels   (mapv #(item-display kind %) filtered)]
     (-> state
         (assoc-in [:picker :query] query)
-        (update-in [:picker :list] cl/set-items (vec items)))))
+        (assoc-in [:picker :filtered] filtered)
+        (update-in [:picker :list] cl/set-items labels))))
 
 (defn- unfilter-picker [state]
-  (let [query (get-in state [:picker :query])
-        new-q (if (seq query) (subs query 0 (dec (count query))) "")
-        all   (get-in state [:picker :all])
-        items (if (seq new-q)
-                (filter #(str/includes? (str/lower-case %) (str/lower-case new-q)) all)
-                all)]
+  (let [query    (get-in state [:picker :query])
+        new-q    (if (seq query) (subs query 0 (dec (count query))) "")
+        kind     (get-in state [:picker :kind])
+        all      (get-in state [:picker :all])
+        filtered (if (seq new-q)
+                   (filterv #(str/includes? (str/lower-case (item-display kind %))
+                                             (str/lower-case new-q))
+                              all)
+                   all)
+        labels   (mapv #(item-display kind %) filtered)]
     (-> state
         (assoc-in [:picker :query] new-q)
-        (update-in [:picker :list] cl/set-items (vec items)))))
+        (assoc-in [:picker :filtered] filtered)
+        (update-in [:picker :list] cl/set-items labels))))
 
 (defn- printable-char? [msg]
   (and (msg/key-press? msg)
@@ -337,11 +416,13 @@
    :opts                  opts
    :trust                 (boolean (:trust opts))
    :chat-id               nil
+   :chat-title            nil
    :items                 []
    :current-text          ""
    :tool-calls            {}
    :pending-approval      nil
    :pending-message       nil
+   :echo-pending          false
    :session-trusted-tools #{}
    :init-tasks            {}
    :available-models      []
@@ -362,12 +443,16 @@
 
 (defn make-init [opts]
   (fn []
-    (let [srv       (-> (server/spawn! {:path (:eca opts)})
+    (let [workspace (:workspace opts)
+          binary    (or (:eca opts) (server/find-eca-binary))
+          srv       (-> (server/spawn! {:path binary})
                         (assoc :pending-requests protocol/pending-requests))
-          workspace (:workspace opts)]
+          warn      (upgrade/check-version binary)
+          init-s    (cond-> (initial-state srv opts)
+                      warn (-> (update :items conj {:type :system :text warn})
+                               rebuild-lines))]
       (server/start-reader! srv)
-      [(initial-state srv opts)
-       (init-cmd srv workspace)])))
+      [init-s (init-cmd srv workspace)])))
 
 ;; --- Update ---
 
@@ -439,6 +524,21 @@
           (send-chat-prompt! (:server state) nil pending (:opts state)))
         [(-> state (assoc :mode :chatting) (dissoc :login) (update :input ti/blur)) nil])
 
+      ;; Session list loaded from chat/list response
+      (= :chat-list-loaded (:type msg))
+      (let [chats  (:chats msg)
+            error? (:error? msg)
+            pairs  (mapv (fn [{:keys [id title messageCount]}]
+                           (let [t   (if (seq title) title (subs (or id "") 0 (min 8 (count (or id "")))))
+                                 cnt (when messageCount (str messageCount " msgs"))]
+                             [(str/join "  •  " (remove nil? [t cnt])) id]))
+                         chats)
+            s'     (open-session-picker state pairs)]
+        [(if error?
+           (-> s' (update :items conj {:type :system :text "⚠ Could not load sessions"}) rebuild-lines)
+           s')
+         nil])
+
       (or (msg/quit? msg)
           (and (msg/key-press? msg) (msg/key-match? msg "ctrl+c")))
       [state (shutdown-cmd (:server state))]
@@ -460,10 +560,24 @@
           (and (= "/agent" text) (seq (:available-agents state)))
           [(open-picker state :agent) nil]
 
+          (= "/new" text)
+          (if-let [old-chat-id (:chat-id state)]
+            (do
+              (sessions/save-chat-id! (get-in state [:opts :workspace]) nil)
+              [(-> state
+                   (assoc :items [] :chat-lines [] :chat-id nil :chat-title nil :scroll-offset 0)
+                   (update :input #(-> % ti/reset ti/focus)))
+               (delete-chat-cmd (:server state) old-chat-id)])
+            [(update state :input #(-> % ti/reset ti/focus)) nil])
+
+          (= "/sessions" text)
+          [(update state :input ti/reset)
+           (list-chats-cmd (:server state))]
+
           (seq text)
           (let [new-state (-> state
                               (update :items conj {:type :user :text text})
-                              (assoc :mode :chatting :pending-message text)
+                              (assoc :mode :chatting :pending-message text :echo-pending true)
                               (update :input #(-> % ti/reset ti/blur))
                               (update :input-history conj text)
                               (assoc :history-idx nil)
@@ -559,22 +673,40 @@
       (and (msg/key-press? msg)
            (msg/key-match? msg :enter)
            (= :picking (:mode state)))
-      (let [{:keys [kind list]} (:picker state)
-            selected (cl/selected-item list)]
-        (if selected
-          (do
-            (if (= :model kind)
-              (protocol/selected-model-changed! (:server state) selected)
-              (protocol/selected-agent-changed! (:server state) selected))
+      (let [{:keys [kind list filtered]} (:picker state)]
+        (case kind
+          (:model :agent)
+          (let [selected (cl/selected-item list)]
+            (if selected
+              (do
+                (if (= :model kind)
+                  (protocol/selected-model-changed! (:server state) selected)
+                  (protocol/selected-agent-changed! (:server state) selected))
+                [(-> state
+                     (assoc :mode :ready)
+                     (assoc (if (= :model kind) :selected-model :selected-agent) selected)
+                     (cond-> (= :model kind) (assoc :selected-variant nil))
+                     (assoc-in [:opts (if (= :model kind) :model :agent)] selected)
+                     (dissoc :picker)
+                     (update :input ti/focus))
+                 nil])
+              [state nil]))
+
+          :session
+          (let [idx             (cl/selected-index list)
+                [_display chat-id] (when (and (some? idx) (< idx (count filtered)))
+                                     (nth filtered idx))]
+            (when chat-id
+              (sessions/save-chat-id! (get-in state [:opts :workspace]) chat-id))
             [(-> state
-                 (assoc :mode :ready)
-                 (assoc (if (= :model kind) :selected-model :selected-agent) selected)
-                 (cond-> (= :model kind) (assoc :selected-variant nil))
-                 (assoc-in [:opts (if (= :model kind) :model :agent)] selected)
+                 (assoc :mode :ready
+                        :items []
+                        :chat-lines []
+                        :scroll-offset 0)
+                 (assoc :chat-id (or chat-id (:chat-id state)))
                  (dissoc :picker)
                  (update :input ti/focus))
-             nil])
-          [state nil]))
+             (when chat-id (open-chat-cmd (:server state) chat-id))])))
 
       ;; Picker: Escape to cancel
       (and (msg/key-press? msg)
