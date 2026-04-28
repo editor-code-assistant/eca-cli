@@ -249,9 +249,13 @@
     ;; Non-echo role:"user" text is a replayed historical message (session resume):
     ;; flush :current-text first so prior assistant responses land in the right position.
     ;; Non-text role:"user" content (e.g. progress start markers) is ignored.
+    ;; parentChatId present means this is sub-agent content — suppress from main view.
+    ;; The parent-level eca__spawn_agent tool call item is sufficient feedback.
     (let [params  (:params notification)
           content (:content params)]
-      (if (= "user" (:role params))
+      (if (:parentChatId params)
+        [state nil]
+        (if (= "user" (:role params))
         (if (= "text" (:type content))
           (if (:echo-pending state)
             [(assoc state :echo-pending false) nil]
@@ -261,7 +265,7 @@
                  rebuild-lines)
              nil])
           [state nil])
-        [(handle-content state params) nil]))
+        [(handle-content state params) nil])))
 
     "providers/updated"
     (handle-providers-updated state (:params notification))

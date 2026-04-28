@@ -236,6 +236,29 @@
       (is (= 1 (count (:items s))))
       (is (= :system (:type (first (:items s))))))))
 
+;; --- subagent suppression ---
+
+(deftest subagent-content-suppressed-test
+  (testing "contentReceived with parentChatId is ignored — no items added"
+    (let [base (assoc (base-state) :mode :chatting)
+          [s _] (handle-eca-notification
+                  base
+                  {:method "chat/contentReceived"
+                   :params {:chatId       "subagent-chat-42"
+                            :parentChatId "chat1"
+                            :role         "assistant"
+                            :content      {:type "text" :text "verbatim file contents..."}}})]
+      (is (= base s))))
+
+  (testing "contentReceived without parentChatId is processed normally"
+    (let [[s _] (handle-eca-notification
+                  (assoc (base-state) :mode :chatting)
+                  {:method "chat/contentReceived"
+                   :params {:chatId  "chat1"
+                            :role    "assistant"
+                            :content {:type "text" :text "hello"}}})]
+      (is (= "hello" (:current-text s))))))
+
 ;; --- config/updated ---
 
 (deftest handle-config-updated-test
