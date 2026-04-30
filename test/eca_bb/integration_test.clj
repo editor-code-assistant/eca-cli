@@ -453,28 +453,42 @@
 (deftest phase5-tool-block-and-focus-test
   ;; Sends a prompt that reliably invokes the read_file tool. After the agent
   ;; finishes, checks collapsed tool block then Tab/Enter/Escape interactions.
+  ;; Note: the agent may generate thinking blocks before the tool call, so
+  ;; criterion 17 loops Tab+Enter until Arguments box appears (tool call expanded).
   (start! itest-cmd)
   (try
     (sh "touch" "/tmp/eca-bb-itest/phase5-sentinel.txt")
     (keys! "Read the file /tmp/eca-bb-itest/phase5-sentinel.txt" "Enter")
 
-    (testing "15: collapsed tool block with ✓ icon visible after tool call completes"
-      (wait-for! #(and (str/includes? % "SAFE") (str/includes? % "✓")) 60000)
+    (testing "15: collapsed tool block with ✓ visible after agent fully finishes"
+      ;; Wait for :ready (\n>\n) AND ✓ — not just SAFE (which is always present)
+      (wait-for! #(and (str/includes? % "\n>\n") (str/includes? % "✓")) 60000)
       (is (str/includes? (screen) "✓")))
 
-    (testing "16: Tab moves focus to tool block — › indicator visible"
+    (testing "16: Tab moves focus — › indicator visible on first focusable item"
       (keys! "Tab")
       (Thread/sleep 300)
       (is (str/includes? (screen) "›")))
 
-    (testing "17: Enter expands block — ▾ marker and Arguments box visible"
-      (keys! "Enter")
-      (Thread/sleep 300)
+    (testing "17: Tab to tool call + Enter expands — ▾ and Arguments box visible"
+      ;; The agent may have thinking blocks before the tool call in render order.
+      ;; Tab+Enter each item; if Arguments does not appear (thinking block, no args),
+      ;; collapse it and advance to the next until we hit the tool call.
+      (loop [n 0]
+        (when (< n 6)
+          (keys! "Tab")
+          (Thread/sleep 200)
+          (keys! "Enter")
+          (Thread/sleep 300)
+          (when-not (str/includes? (screen) "Arguments")
+            (keys! "Enter") ; collapse — not the tool call
+            (Thread/sleep 100)
+            (recur (inc n)))))
       (let [s (screen)]
         (is (str/includes? s "▾"))
         (is (str/includes? s "Arguments"))))
 
-    (testing "18: Enter again collapses block — ▾ marker gone"
+    (testing "18: Enter collapses block — ▾ gone"
       (keys! "Enter")
       (Thread/sleep 300)
       (is (not (str/includes? (screen) "▾"))))
@@ -486,7 +500,9 @@
       (Thread/sleep 200)
       (is (not (str/includes? (screen) "›"))))
 
-    (finally (kill!))))
+    (finally
+      (sh "rm" "-f" "/tmp/eca-bb-itest/phase5-sentinel.txt")
+      (kill!))))
 
 ;; Phase 5 criteria 20–22 (sub-agent spawn block, Tab into sub-items) are manual.
 ;; Requires sending a prompt that triggers eca__spawn_agent, which depends on
