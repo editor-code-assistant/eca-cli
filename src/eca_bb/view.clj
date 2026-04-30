@@ -9,6 +9,9 @@
 
 (def ^:private ansi-focus    "\033[48;5;238m")
 (def ^:private ansi-thinking "\033[3;38;5;245m")
+(def ^:private ansi-yellow   "\033[33m")
+(def ^:private ansi-green    "\033[32m")
+(def ^:private ansi-red      "\033[31m")
 (def ^:private ansi-reset    "\033[0m")
 
 (defn- render-box [label text width]
@@ -29,12 +32,14 @@
 
 (defn- render-tool-icon [tool-call]
   (case (:state tool-call)
-    :preparing "⏳"
-    :run       "🚧"
-    :running   "⏳"
-    :called    (if (:error? tool-call) "❌" "✅")
-    :rejected  "❌"
-    "⏳"))
+    :preparing (str ansi-yellow "◌" ansi-reset)
+    :run       (str ansi-yellow "▸" ansi-reset)
+    :running   (str ansi-yellow "◌" ansi-reset)
+    :called    (if (:error? tool-call)
+                 (str ansi-red "✗" ansi-reset)
+                 (str ansi-green "✓" ansi-reset))
+    :rejected  (str ansi-red "✗" ansi-reset)
+    (str ansi-yellow "◌" ansi-reset)))
 
 (defn render-item-lines [item width]
   (let [lines
@@ -96,7 +101,7 @@
 
           :hook
           (let [status (:status item)
-                icon   (case status :failed "❌" "⚡")
+                icon   (case status :failed (str ansi-red "✗" ansi-reset) (str ansi-yellow "⚑" ansi-reset))
                 label  (case status :running "running…" :ok "ok" :failed "failed" "…")]
             (if (:expanded? item)
               (let [header (str icon " " (:name item) "  " label "  ▾")

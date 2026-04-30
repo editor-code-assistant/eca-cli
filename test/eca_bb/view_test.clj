@@ -14,13 +14,15 @@
   (is (= 40 (count (view/divider 40)))))
 
 (deftest render-tool-icon-test
-  (is (= "⏳" (render-tool-icon {:state :preparing})))
-  (is (= "🚧" (render-tool-icon {:state :run})))
-  (is (= "⏳" (render-tool-icon {:state :running})))
-  (is (= "✅" (render-tool-icon {:state :called})))
-  (is (= "❌" (render-tool-icon {:state :called :error? true})))
-  (is (= "❌" (render-tool-icon {:state :rejected})))
-  (is (= "⏳" (render-tool-icon {:state :unknown}))))
+  (is (clojure.string/includes? (render-tool-icon {:state :preparing})   "◌"))
+  (is (clojure.string/includes? (render-tool-icon {:state :run})         "▸"))
+  (is (clojure.string/includes? (render-tool-icon {:state :running})     "◌"))
+  (is (clojure.string/includes? (render-tool-icon {:state :called})      "✓"))
+  (is (clojure.string/includes? (render-tool-icon {:state :called :error? true}) "✗"))
+  (is (clojure.string/includes? (render-tool-icon {:state :rejected})    "✗"))
+  (is (clojure.string/includes? (render-tool-icon {:state :unknown})     "◌"))
+  ;; All icons must be ANSI-wrapped (no bare emoji → consistent 1-col width for JLine diff)
+  (is (clojure.string/starts-with? (render-tool-icon {:state :called}) "\033[")))
 
 (deftest render-item-lines-test
   (testing ":user item — 3 lines with symbol and reverse-video highlight"
