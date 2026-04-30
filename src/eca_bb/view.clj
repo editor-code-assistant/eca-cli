@@ -58,7 +58,7 @@
               []))
 
           :tool-call
-          (let [icon    (if (:focused? item) "›" (render-tool-icon item))
+          (let [icon    (render-tool-icon item)
                 name    (:name item)
                 summary (or (:summary item) name)]
             (if (:expanded? item)
@@ -80,6 +80,7 @@
                 [(str icon " " summary (or steps ""))])))
 
           :thinking
+          ;; Use › (same width as ▸) so focused swap doesn't change visual line width
           (let [status  (:status item)
                 icon    (if (:focused? item) "›" "▸")
                 label   (if (= :thought status) "Thought" "Thinking…")]
@@ -98,11 +99,11 @@
                 icon   (case status :failed "❌" "⚡")
                 label  (case status :running "running…" :ok "ok" :failed "failed" "…")]
             (if (:expanded? item)
-              (let [header (str (if (:focused? item) "›" icon) " " (:name item) "  " label "  ▾")
+              (let [header (str icon " " (:name item) "  " label "  ▾")
                     boxes  (when (seq (str (:out-text item)))
                              (render-box "Output" (:out-text item) width))]
                 (vec (cons header (or boxes []))))
-              [(str (if (:focused? item) "›" icon) " " (:name item) "  " label)]))
+              [(str icon " " (:name item) "  " label)]))
 
           :system
           ;; "⚠ " = 2 cols → inner budget = width - 2
