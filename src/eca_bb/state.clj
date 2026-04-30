@@ -783,6 +783,7 @@
       ;; Focus navigation: Tab/Shift+Tab cycles through focusable items in render order
       (and (msg/key-press? msg)
            (msg/key-match? msg :tab)
+           (not (:shift msg))
            (not (:alt msg))
            (#{:ready :chatting} (:mode state)))
       (let [paths (focusable-paths (:items state))]
@@ -796,7 +797,8 @@
             [(-> state (assoc :focus-path next) sync-focus rebuild-lines) nil])))
 
       (and (msg/key-press? msg)
-           (msg/key-match? msg "shift+tab")
+           (msg/key-match? msg :tab)
+           (:shift msg)
            (#{:ready :chatting} (:mode state)))
       (let [paths (focusable-paths (:items state))]
         (if (empty? paths)

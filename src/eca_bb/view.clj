@@ -7,6 +7,10 @@
 (defn divider [width]
   (apply str (repeat width "─")))
 
+(def ^:private ansi-focus    "\033[48;5;238m")
+(def ^:private ansi-thinking "\033[3;38;5;245m")
+(def ^:private ansi-reset    "\033[0m")
+
 (defn- render-box [label text width]
   (let [box-w   (max 4 (- width 2))
         inner-w (max 1 (- box-w 4))
@@ -33,86 +37,96 @@
     "⏳"))
 
 (defn render-item-lines [item width]
-  (case (:type item)
-    :user
-    ;; " ❯ " prefix = 4 cols, trailing " " = 1 col → inner budget = width - 5
-    (let [inner-w (max 1 (- width 5))
-          wrapped (wrap/wrap-text (str (:text item)) inner-w)]
-      (into [""]
-            (conj (mapv #(str "\033[7m ❯ " % " \033[0m") wrapped)
-                  "")))
+  (let [lines
+        (case (:type item)
+          :user
+          ;; " ❯ " prefix = 4 cols, trailing " " = 1 col → inner budget = width - 5
+          (let [inner-w (max 1 (- width 5))
+                wrapped (wrap/wrap-text (str (:text item)) inner-w)]
+            (into [""]
+                  (conj (mapv #(str "\033[7m ❯ " % " \033[0m") wrapped)
+                        "")))
 
-    (:assistant-text :streaming-text)
-    ;; "◆ " prefix = 2 cols; continuation "  " = 2 cols → inner budget = width - 2
-    (let [inner-w (max 1 (- width 2))
-          lines   (str/split-lines (str (:text item)))
-          wrapped (mapcat #(wrap/wrap-text % inner-w) lines)]
-      (if (seq wrapped)
-        (into [(str "◆ " (first wrapped))]
-              (map #(str "  " %) (rest wrapped)))
-        []))
+          (:assistant-text :streaming-text)
+          ;; "◆ " prefix = 2 cols; continuation "  " = 2 cols → inner budget = width - 2
+          (let [inner-w (max 1 (- width 2))
+                lines   (str/split-lines (str (:text item)))
+                wrapped (mapcat #(wrap/wrap-text % inner-w) lines)]
+            (if (seq wrapped)
+              (into [(str "◆ " (first wrapped))]
+                    (map #(str "  " %) (rest wrapped)))
+              []))
 
-    :tool-call
-    (let [icon    (if (:focused? item) "›" (render-tool-icon item))
-          name    (:name item)
-          summary (or (:summary item) name)]
-      (if (:expanded? item)
-        (let [steps  (when (seq (:sub-items item))
-                       (str "  ▸ " (count (:sub-items item)) " steps"))
-              header (str icon " " name "  " summary (or steps "") "  ▾")
-              boxes  (concat
-                       (when (:args-text item)
-                         (render-box "Arguments" (:args-text item) width))
-                       (when (:out-text item)
-                         (render-box "Output" (:out-text item) width)))
-              subs   (when (seq (:sub-items item))
-                       (mapcat (fn [sub]
-                                 (map #(str "  " %) (render-item-lines sub (- width 2))))
-                               (:sub-items item)))]
-          (vec (concat [header] boxes subs)))
-        (let [steps (when (seq (:sub-items item))
-                      (str "  ▸ " (count (:sub-items item)) " steps"))]
-          [(str icon " " summary (or steps ""))])))
+          :tool-call
+          (let [icon    (if (:focused? item) "›" (render-tool-icon item))
+                name    (:name item)
+                summary (or (:summary item) name)]
+            (if (:expanded? item)
+              (let [steps  (when (seq (:sub-items item))
+                             (str "  ▸ " (count (:sub-items item)) " steps"))
+                    header (str icon " " name "  " summary (or steps "") "  ▾")
+                    boxes  (concat
+                             (when (:args-text item)
+                               (render-box "Arguments" (:args-text item) width))
+                             (when (:out-text item)
+                               (render-box "Output" (:out-text item) width)))
+                    subs   (when (seq (:sub-items item))
+                             (mapcat (fn [sub]
+                                       (map #(str "  " %) (render-item-lines sub (- width 2))))
+                                     (:sub-items item)))]
+                (vec (concat [header] boxes subs)))
+              (let [steps (when (seq (:sub-items item))
+                            (str "  ▸ " (count (:sub-items item)) " steps"))]
+                [(str icon " " summary (or steps ""))])))
 
-    :thinking
-    (let [status   (:status item)
-          icon     (if (:focused? item) "›" "▸")
-          label    (if (= :thought status) "Thought" "Thinking…")]
-      (if (:expanded? item)
-        (let [header (str icon " " label "  ▾")
-              inner-w (max 1 (- width 2))
-              body   (when (seq (:text item))
-                       (mapcat #(map (fn [l] (str "  " l))
-                                     (wrap/wrap-text % inner-w))
-                               (str/split-lines (:text item))))]
-          (vec (cons header (or (seq body) [""]))))
-        [(str icon " " label)]))
+          :thinking
+          (let [status  (:status item)
+                icon    (if (:focused? item) "›" "▸")
+                label   (if (= :thought status) "Thought" "Thinking…")]
+            (if (:expanded? item)
+              (let [header  (str ansi-thinking icon " " label "  ▾" ansi-reset)
+                    inner-w (max 1 (- width 2))
+                    body    (when (seq (:text item))
+                              (mapcat #(map (fn [l] (str "  " ansi-thinking l ansi-reset))
+                                           (wrap/wrap-text % inner-w))
+                                      (str/split-lines (:text item))))]
+                (vec (cons header (or (seq body) [""]))))
+              [(str ansi-thinking icon " " label ansi-reset)]))
 
-    :hook
-    (let [status (:status item)
-          icon   (case status :failed "❌" "⚡")
-          label  (case status :running "running…" :ok "ok" :failed "failed" "…")]
-      (if (:expanded? item)
-        (let [header (str (if (:focused? item) "›" icon) " " (:name item) "  " label "  ▾")
-              boxes  (when (seq (str (:out-text item)))
-                       (render-box "Output" (:out-text item) width))]
-          (vec (cons header (or boxes []))))
-        [(str (if (:focused? item) "›" icon) " " (:name item) "  " label)]))
+          :hook
+          (let [status (:status item)
+                icon   (case status :failed "❌" "⚡")
+                label  (case status :running "running…" :ok "ok" :failed "failed" "…")]
+            (if (:expanded? item)
+              (let [header (str (if (:focused? item) "›" icon) " " (:name item) "  " label "  ▾")
+                    boxes  (when (seq (str (:out-text item)))
+                             (render-box "Output" (:out-text item) width))]
+                (vec (cons header (or boxes []))))
+              [(str (if (:focused? item) "›" icon) " " (:name item) "  " label)]))
 
-    :system
-    ;; "⚠ " = 2 cols → inner budget = width - 2
-    (let [inner-w (max 1 (- width 2))
-          wrapped (wrap/wrap-text (str (:text item)) inner-w)]
-      (into [(str "⚠ " (first wrapped))]
-            (map #(str "  " %) (rest wrapped))))
+          :system
+          ;; "⚠ " = 2 cols → inner budget = width - 2
+          (let [inner-w (max 1 (- width 2))
+                wrapped (wrap/wrap-text (str (:text item)) inner-w)]
+            (into [(str "⚠ " (first wrapped))]
+                  (map #(str "  " %) (rest wrapped))))
 
-    []))
+          [])]
+    ;; Apply focus background to first line of focusable items
+    (if (and (:focused? item) (seq lines))
+      (into [(str ansi-focus (first lines) ansi-reset)] (rest lines))
+      lines)))
 
 (defn rebuild-chat-lines [items current-text width]
   (->> (concat items
                (when (seq current-text)
                  [{:type :streaming-text :text current-text}]))
-       (mapcat #(render-item-lines % width))
+       (mapcat (fn [item]
+                 (let [lines (render-item-lines item width)]
+                   ;; User items already include blank lines; add one after everything else
+                   (if (= :user (:type item))
+                     lines
+                     (conj (vec lines) "")))))
        vec))
 
 (defn- pad-to-height [lines height]

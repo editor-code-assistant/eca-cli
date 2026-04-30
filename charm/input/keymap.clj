@@ -76,7 +76,9 @@
   [{:event {:type :focus}       :seqs ["[I"]}
    {:event {:type :blur}        :seqs ["[O"]}
    {:event {:type :paste-start} :seqs ["[200~"]}
-   {:event {:type :paste-end}   :seqs ["[201~"]}])
+   {:event {:type :paste-end}   :seqs ["[201~"]}
+   ;; CSI Z = Shift+Tab (back tab, sent by most terminals)
+   {:event {:type :tab :shift true} :seqs ["[Z"]}])
 
 ;; ---------------------------------------------------------------------------
 ;; Modifier Sequence Generation

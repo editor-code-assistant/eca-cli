@@ -71,19 +71,21 @@
       (is (= 3 (count lines)))
       (is (clojure.string/includes? (second lines) "hi"))))
 
-  (testing "multiple items — user (3 lines) + assistant (1 line)"
+  (testing "multiple items — user (3 lines) + assistant (1 line) + blank (1 line)"
     (let [lines (view/rebuild-chat-lines
                   [{:type :user :text "hi"}
                    {:type :assistant-text :text "hello"}]
                   "" 80)]
-      (is (= 4 (count lines)))
+      (is (= 5 (count lines)))
       (is (clojure.string/includes? (second lines) "hi"))
-      (is (clojure.string/starts-with? (last lines) "◆ "))))
+      (is (= "" (last lines)))
+      (is (clojure.string/starts-with? (nth lines 3) "◆ "))))
 
-  (testing "with current-text appended as streaming"
+  (testing "with current-text appended as streaming (+ blank)"
     (let [lines (view/rebuild-chat-lines [{:type :user :text "hi"}] "typing..." 80)]
-      (is (= 4 (count lines)))
-      (is (clojure.string/starts-with? (last lines) "◆ "))))
+      (is (= 5 (count lines)))
+      (is (= "" (last lines)))
+      (is (clojure.string/starts-with? (nth lines 3) "◆ "))))
 
   (testing "empty current-text not appended"
     (let [lines (view/rebuild-chat-lines [{:type :user :text "hi"}] "" 80)]
