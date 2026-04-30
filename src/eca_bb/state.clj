@@ -796,6 +796,7 @@
                           (nth paths (mod (inc cur-idx) (count paths))))]
             [(-> state (assoc :focus-path next) sync-focus rebuild-lines) nil])))
 
+      ;; Shift+Tab: reverse focus (kept as-is; may not work in tmux with mouse on)
       (and (msg/key-press? msg)
            (msg/key-match? msg :tab)
            (:shift msg)
@@ -810,6 +811,37 @@
                           (last paths)
                           (nth paths (mod (dec cur-idx) n)))]
             [(-> state (assoc :focus-path prev) sync-focus rebuild-lines) nil])))
+
+      ;; Up/Down arrows navigate between focusable items when focus is active;
+      ;; fall through to history/scroll handlers when no focus is set
+      (and (msg/key-press? msg)
+           (msg/key-match? msg :up)
+           (some? (:focus-path state))
+           (#{:ready :chatting} (:mode state)))
+      (let [paths (focusable-paths (:items state))]
+        (if (empty? paths)
+          [state nil]
+          (let [cur     (:focus-path state)
+                n       (count paths)
+                cur-idx (when cur (first (keep-indexed #(when (= cur %2) %1) paths)))
+                prev    (if (nil? cur-idx)
+                          (last paths)
+                          (nth paths (mod (dec cur-idx) n)))]
+            [(-> state (assoc :focus-path prev) sync-focus rebuild-lines) nil])))
+
+      (and (msg/key-press? msg)
+           (msg/key-match? msg :down)
+           (some? (:focus-path state))
+           (#{:ready :chatting} (:mode state)))
+      (let [paths (focusable-paths (:items state))]
+        (if (empty? paths)
+          [state nil]
+          (let [cur     (:focus-path state)
+                cur-idx (when cur (first (keep-indexed #(when (= cur %2) %1) paths)))
+                next    (if (nil? cur-idx)
+                          (first paths)
+                          (nth paths (mod (inc cur-idx) (count paths))))]
+            [(-> state (assoc :focus-path next) sync-focus rebuild-lines) nil])))
 
       ;; Focus: Escape clears focus without changing mode
       (and (msg/key-press? msg)
