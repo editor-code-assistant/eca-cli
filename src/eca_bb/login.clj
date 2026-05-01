@@ -169,4 +169,7 @@
          (update :input ti/focus))
      nil]
 
-    :else [state nil]))
+    ;; Default: forward to text-input so users can type into login fields
+    :else
+    (let [[new-input cmd] (ti/text-input-update (:input state) msg)]
+      [(assoc state :input new-input) cmd])))

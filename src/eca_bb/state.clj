@@ -215,18 +215,32 @@
       [init-s (init-cmd srv workspace)])))
 
 ;; --- Update ---
+;;
+;; Top-level dispatcher. Order is load-bearing — runtime events first, then
+;; global key bindings, then per-mode delegation. Picker arms remain inline
+;; pending step-9 extraction.
+
+(defn- enter-slash-command? [state msg]
+  (and (msg/key-press? msg)
+       (msg/key-match? msg :enter)
+       (= :ready (:mode state))
+       (str/starts-with? (str/trim (ti/value (:input state))) "/")))
+
+(defn- autocomplete-slash? [state msg]
+  (and (commands/printable-char? msg)
+       (= "/" (:key msg))
+       (= :ready (:mode state))
+       (= "" (str/trim (ti/value (:input state))))))
 
 (defn update-state [state msg]
   (reset! debug-state {:state (dissoc state :server :input)
-                        :msg-type (or (:type msg) (:method msg))
-                        :queue-size (when-let [q (get-in state [:server :queue])] (.size q))})
+                       :msg-type (or (:type msg) (:method msg))
+                       :queue-size (when-let [q (get-in state [:server :queue])] (.size q))})
   (let [queue (get-in state [:server :queue])]
     (cond
+      ;; --- Runtime mode-agnostic events ---
       (= :window-size (:type msg))
-      [(-> state
-           (assoc :width (:width msg) :height (:height msg))
-           view/rebuild-lines)
-       nil]
+      [(-> state (assoc :width (:width msg) :height (:height msg)) view/rebuild-lines) nil]
 
       (= :eca-initialized (:type msg))
       [(-> state (assoc :mode :ready) (update :input ti/focus))
@@ -244,15 +258,9 @@
       (let [[new-state extra-cmd] (handle-eca-tick state (:msgs msg))]
         [new-state (program/batch extra-cmd (drain-queue-cmd queue))])
 
-      ;; Login: action received from providers/login
-      (= :eca-login-action (:type msg))
-      (login/handle-eca-login-action state msg)
+      (= :eca-login-action (:type msg))    (login/handle-eca-login-action state msg)
+      (= :eca-login-complete (:type msg))  (login/handle-eca-login-complete state msg)
 
-      ;; Login: input submitted successfully
-      (= :eca-login-complete (:type msg))
-      (login/handle-eca-login-complete state msg)
-
-      ;; Session list loaded from chat/list response
       (= :chat-list-loaded (:type msg))
       (let [chats  (:chats msg)
             error? (:error? msg)
@@ -267,157 +275,25 @@
            s')
          nil])
 
-      (or (msg/quit? msg)
-          (and (msg/key-press? msg) (msg/key-match? msg "ctrl+c")))
+      ;; --- Global key bindings (mode-aware but handled at dispatcher level) ---
+      (or (msg/quit? msg) (and (msg/key-press? msg) (msg/key-match? msg "ctrl+c")))
       [state (shutdown-cmd (:server state))]
 
-      ;; Ctrl+L: open model picker (same guard as /model command)
-      (and (msg/key-press? msg)
-           (msg/key-match? msg "ctrl+l")
-           (= :ready (:mode state)))
+      (and (msg/key-press? msg) (msg/key-match? msg "ctrl+l") (= :ready (:mode state)))
       (commands/cmd-open-model-picker state)
 
-      ;; Focus navigation: Tab/Shift+Tab cycles through focusable items in render order
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :tab)
-           (not (:shift msg))
-           (not (:alt msg))
-           (#{:ready :chatting} (:mode state)))
-      (let [paths (chat/focusable-paths (:items state))]
-        (if (empty? paths)
-          [state nil]
-          (let [cur     (:focus-path state)
-                cur-idx (when cur (first (keep-indexed #(when (= cur %2) %1) paths)))
-                next    (if (nil? cur-idx)
-                          (first paths)
-                          (nth paths (mod (inc cur-idx) (count paths))))]
-            [(-> state (assoc :focus-path next) chat/sync-focus view/rebuild-lines) nil])))
+      (enter-slash-command? state msg)
+      (commands/dispatch-command state (str/trim (ti/value (:input state))))
 
-      ;; Shift+Tab: reverse focus (kept as-is; may not work in tmux with mouse on)
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :tab)
-           (:shift msg)
-           (#{:ready :chatting} (:mode state)))
-      (let [paths (chat/focusable-paths (:items state))]
-        (if (empty? paths)
-          [state nil]
-          (let [cur     (:focus-path state)
-                n       (count paths)
-                cur-idx (when cur (first (keep-indexed #(when (= cur %2) %1) paths)))
-                prev    (if (nil? cur-idx)
-                          (last paths)
-                          (nth paths (mod (dec cur-idx) n)))]
-            [(-> state (assoc :focus-path prev) chat/sync-focus view/rebuild-lines) nil])))
+      (autocomplete-slash? state msg)
+      [(commands/open-command-picker state) nil]
 
-      ;; Up/Down arrows navigate between focusable items when focus is active;
-      ;; fall through to history/scroll handlers when no focus is set
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :up)
-           (some? (:focus-path state))
-           (#{:ready :chatting} (:mode state)))
-      (let [paths (chat/focusable-paths (:items state))]
-        (if (empty? paths)
-          [state nil]
-          (let [cur     (:focus-path state)
-                n       (count paths)
-                cur-idx (when cur (first (keep-indexed #(when (= cur %2) %1) paths)))
-                prev    (if (nil? cur-idx)
-                          (last paths)
-                          (nth paths (mod (dec cur-idx) n)))]
-            [(-> state (assoc :focus-path prev) chat/sync-focus view/rebuild-lines) nil])))
+      ;; --- Per-mode dispatch (single-arm delegation) ---
+      (= :login (:mode state))      (login/handle-key state msg)
+      (= :approving (:mode state))  (chat/handle-approval-key state msg)
 
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :down)
-           (some? (:focus-path state))
-           (#{:ready :chatting} (:mode state)))
-      (let [paths (chat/focusable-paths (:items state))]
-        (if (empty? paths)
-          [state nil]
-          (let [cur     (:focus-path state)
-                cur-idx (when cur (first (keep-indexed #(when (= cur %2) %1) paths)))
-                next    (if (nil? cur-idx)
-                          (first paths)
-                          (nth paths (mod (inc cur-idx) (count paths))))]
-            [(-> state (assoc :focus-path next) chat/sync-focus view/rebuild-lines) nil])))
-
-      ;; Focus: Escape clears focus without changing mode
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :escape)
-           (some? (:focus-path state))
-           (#{:ready :chatting} (:mode state)))
-      [(-> state (assoc :focus-path nil) chat/sync-focus view/rebuild-lines) nil]
-
-      ;; Focus: Enter toggles :expanded? on focused item
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :enter)
-           (some? (:focus-path state))
-           (#{:ready :chatting} (:mode state)))
-      (let [[i j] (:focus-path state)
-            item-path (if j [:items i :sub-items j] [:items i])]
-        [(-> state (update-in item-path update :expanded? not) view/rebuild-lines) nil])
-
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :enter)
-           (= :ready (:mode state)))
-      (let [text (str/trim (ti/value (:input state)))]
-        (cond
-          (str/starts-with? text "/")
-          (commands/dispatch-command state text)
-
-          (seq text)
-          (let [new-state (-> state
-                              (update :items conj {:type :user :text text})
-                              (assoc :mode :chatting :pending-message text :echo-pending true)
-                              (update :input #(-> % ti/reset ti/blur))
-                              (update :input-history conj text)
-                              (assoc :history-idx nil)
-                              view/rebuild-lines)]
-            (chat/send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
-            [new-state nil])
-
-          :else [state nil]))
-
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :escape)
-           (= :chatting (:mode state)))
-      (do
-        (when (:chat-id state)
-          (protocol/stop-prompt! (:server state) (:chat-id state)))
-        [(-> state (assoc :mode :ready) (update :input ti/focus)) nil])
-
-      ;; Login: all keypresses dispatched to login/handle-key
-      (and (msg/key-press? msg) (= :login (:mode state)))
-      (login/handle-key state msg)
-
-      (and (msg/key-press? msg)
-           (msg/key-match? msg "y")
-           (= :approving (:mode state)))
-      (let [{:keys [chat-id tool-call-id]} (:pending-approval state)]
-        (protocol/approve-tool! (:server state) chat-id tool-call-id)
-        [(assoc state :mode :chatting :pending-approval nil) nil])
-
-      (and (msg/key-press? msg)
-           (msg/key-match? msg "Y")
-           (= :approving (:mode state)))
-      (let [{:keys [chat-id tool-call-id]} (:pending-approval state)
-            tool-name (get-in state [:tool-calls tool-call-id :name])]
-        (protocol/approve-tool! (:server state) chat-id tool-call-id)
-        [(-> state
-             (assoc :mode :chatting :pending-approval nil)
-             (update :session-trusted-tools conj tool-name))
-         nil])
-
-      (and (msg/key-press? msg)
-           (msg/key-match? msg "n")
-           (= :approving (:mode state)))
-      (let [{:keys [chat-id tool-call-id]} (:pending-approval state)]
-        (protocol/reject-tool! (:server state) chat-id tool-call-id)
-        [(assoc state :mode :chatting :pending-approval nil) nil])
-
-      ;; Picker: Enter to select
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :enter)
-           (= :picking (:mode state)))
+      ;; --- :picking arms (inline; step 9 to extract) ---
+      (and (msg/key-press? msg) (msg/key-match? msg :enter) (= :picking (:mode state)))
       (let [{:keys [kind list filtered]} (:picker state)]
         (case kind
           (:model :agent)
@@ -438,124 +314,47 @@
               [state nil]))
 
           :session
-          (let [idx             (cl/selected-index list)
+          (let [idx                (cl/selected-index list)
                 [_display chat-id] (when (and (some? idx) (< idx (count filtered)))
                                      (nth filtered idx))]
             (when chat-id
               (sessions/save-chat-id! (get-in state [:opts :workspace]) chat-id))
             [(-> state
-                 (assoc :mode :ready
-                        :items []
-                        :chat-lines []
-                        :scroll-offset 0)
+                 (assoc :mode :ready :items [] :chat-lines [] :scroll-offset 0)
                  (assoc :chat-id (or chat-id (:chat-id state)))
                  (dissoc :picker)
                  (update :input ti/focus))
              (when chat-id (sessions/open-chat-cmd (:server state) chat-id))])
 
           :command
-          (let [idx           (cl/selected-index list)
-                [cmd-name _]  (when (and (some? idx) (< idx (count filtered)))
-                                (nth filtered idx))]
+          (let [idx          (cl/selected-index list)
+                [cmd-name _] (when (and (some? idx) (< idx (count filtered)))
+                               (nth filtered idx))]
             (if cmd-name
               (commands/run-handler-from-picker
                 (-> state (dissoc :picker) (assoc :mode :ready))
                 cmd-name)
               [state nil]))))
 
-      ;; Picker: Escape to cancel
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :escape)
-           (= :picking (:mode state)))
-      [(-> state
-           (assoc :mode :ready)
-           (dissoc :picker)
-           (update :input ti/focus))
-       nil]
+      (and (msg/key-press? msg) (msg/key-match? msg :escape) (= :picking (:mode state)))
+      [(-> state (assoc :mode :ready) (dissoc :picker) (update :input ti/focus)) nil]
 
-      ;; Picker: Backspace removes last filter char
-      ;; For the command picker, backspace on empty query exits to :ready
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :backspace)
-           (= :picking (:mode state)))
+      (and (msg/key-press? msg) (msg/key-match? msg :backspace) (= :picking (:mode state)))
       (if (and (= :command (get-in state [:picker :kind]))
                (= "" (get-in state [:picker :query])))
         [(-> state (assoc :mode :ready) (dissoc :picker) (update :input ti/focus)) nil]
         [(picker/unfilter-picker state) nil])
 
-      ;; Picker: printable char narrows filter
-      (and (commands/printable-char? msg)
-           (= :picking (:mode state)))
+      (and (commands/printable-char? msg) (= :picking (:mode state)))
       [(picker/filter-picker state (:key msg)) nil]
 
-      ;; Picker: navigation keys passed to list-update
       (= :picking (:mode state))
       (let [[new-list _] (cl/list-update (get-in state [:picker :list]) msg)]
         [(assoc-in state [:picker :list] new-list) nil])
 
-      ;; Input history navigation (up/down in :ready mode)
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :up)
-           (= :ready (:mode state)))
-      (let [history (:input-history state)
-            cur-idx (:history-idx state)
-            new-idx (if (nil? cur-idx)
-                      (dec (count history))
-                      (max 0 (dec cur-idx)))]
-        (if (seq history)
-          [(-> state
-               (assoc :history-idx new-idx)
-               (update :input #(ti/set-value % (nth history new-idx))))
-           nil]
-          [state nil]))
+      ;; --- :ready / :chatting → chat/handle-key ---
+      (#{:ready :chatting} (:mode state))
+      (chat/handle-key state msg)
 
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :down)
-           (= :ready (:mode state))
-           (some? (:history-idx state)))
-      (let [history (:input-history state)
-            new-idx (inc (:history-idx state))]
-        (if (< new-idx (count history))
-          [(-> state
-               (assoc :history-idx new-idx)
-               (update :input #(ti/set-value % (nth history new-idx))))
-           nil]
-          [(-> state
-               (assoc :history-idx nil)
-               (update :input #(ti/set-value % "")))
-           nil]))
+      :else [state nil])))
 
-      ;; PgUp/PgDn scroll (full page)
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :page-up)
-           (not (#{:approving :picking} (:mode state))))
-      (let [max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 5)))
-            page       (max 1 (- (:height state) 5))]
-        [(update state :scroll-offset #(min max-offset (+ % page))) nil])
-
-      (and (msg/key-press? msg)
-           (msg/key-match? msg :page-down)
-           (not (#{:approving :picking} (:mode state))))
-      (let [page (max 1 (- (:height state) 5))]
-        [(update state :scroll-offset #(max 0 (- % page))) nil])
-
-      ;; Mouse wheel scroll (3 lines per tick)
-      (and (msg/wheel-up? msg)
-           (not (#{:approving :picking} (:mode state))))
-      (let [max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 5)))]
-        [(update state :scroll-offset #(min max-offset (+ % 3))) nil])
-
-      (and (msg/wheel-down? msg)
-           (not (#{:approving :picking} (:mode state))))
-      [(update state :scroll-offset #(max 0 (- % 3))) nil]
-
-      ;; Autocomplete: "/" as first char in empty :ready input opens command picker
-      (and (commands/printable-char? msg)
-           (= "/" (:key msg))
-           (= :ready (:mode state))
-           (= "" (str/trim (ti/value (:input state)))))
-      [(commands/open-command-picker state) nil]
-
-      :else
-      (let [[new-input cmd] (ti/text-input-update (:input state) msg)]
-        [(assoc state :input new-input) cmd]))))

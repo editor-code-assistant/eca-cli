@@ -1,8 +1,11 @@
 (ns eca-bb.chat
-  "Chat-domain state helpers and ECA content handlers.
-  No back-references to eca-bb.state — features depend on leaf utils only."
-  (:require [cheshire.core :as json]
+  "Chat-domain state helpers, ECA content handlers, and key dispatch for
+  :ready / :chatting / :approving modes. No back-references to eca-bb.state
+  or eca-bb.commands — features depend on leaf utils only."
+  (:require [clojure.string :as str]
+            [cheshire.core :as json]
             [charm.components.text-input :as ti]
+            [charm.message :as msg]
             [eca-bb.protocol :as protocol]
             [eca-bb.sessions :as sessions]
             [eca-bb.view :as view]))
@@ -247,3 +250,163 @@
       (assoc state :usage content)
 
       state)))
+
+;; --- Approval key dispatch (:approving mode) ---
+
+(defn handle-approval-key
+  "y / Y / n keypresses in :approving mode. Caller guarantees mode = :approving."
+  [state msg]
+  (cond
+    (and (msg/key-press? msg) (msg/key-match? msg "y"))
+    (let [{:keys [chat-id tool-call-id]} (:pending-approval state)]
+      (protocol/approve-tool! (:server state) chat-id tool-call-id)
+      [(assoc state :mode :chatting :pending-approval nil) nil])
+
+    (and (msg/key-press? msg) (msg/key-match? msg "Y"))
+    (let [{:keys [chat-id tool-call-id]} (:pending-approval state)
+          tool-name (get-in state [:tool-calls tool-call-id :name])]
+      (protocol/approve-tool! (:server state) chat-id tool-call-id)
+      [(-> state
+           (assoc :mode :chatting :pending-approval nil)
+           (update :session-trusted-tools conj tool-name))
+       nil])
+
+    (and (msg/key-press? msg) (msg/key-match? msg "n"))
+    (let [{:keys [chat-id tool-call-id]} (:pending-approval state)]
+      (protocol/reject-tool! (:server state) chat-id tool-call-id)
+      [(assoc state :mode :chatting :pending-approval nil) nil])
+
+    :else [state nil]))
+
+;; --- Chat key dispatch (:ready / :chatting modes) ---
+;;
+;; State.clj's dispatcher catches Ctrl+L, Ctrl+C, Enter+slash, "/" autocomplete
+;; BEFORE delegating here, so handle-key never needs to know about commands.
+
+(defn- focus-paths-cycle [state direction]
+  (let [paths (focusable-paths (:items state))]
+    (if (empty? paths)
+      [state nil]
+      (let [cur     (:focus-path state)
+            n       (count paths)
+            cur-idx (when cur (first (keep-indexed #(when (= cur %2) %1) paths)))
+            next    (case direction
+                      :forward  (if (nil? cur-idx) (first paths) (nth paths (mod (inc cur-idx) n)))
+                      :backward (if (nil? cur-idx) (last paths)  (nth paths (mod (dec cur-idx) n))))]
+        [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines) nil]))))
+
+(defn- enter-submit-prompt [state]
+  (let [text (str/trim (ti/value (:input state)))]
+    (if (seq text)
+      (let [new-state (-> state
+                          (update :items conj {:type :user :text text})
+                          (assoc :mode :chatting :pending-message text :echo-pending true)
+                          (update :input #(-> % ti/reset ti/blur))
+                          (update :input-history conj text)
+                          (assoc :history-idx nil)
+                          view/rebuild-lines)]
+        (send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
+        [new-state nil])
+      [state nil])))
+
+(defn- escape-cancel-chatting [state]
+  (when (:chat-id state)
+    (protocol/stop-prompt! (:server state) (:chat-id state)))
+  [(-> state (assoc :mode :ready) (update :input ti/focus)) nil])
+
+(defn- history-prev [state]
+  (let [history (:input-history state)
+        cur-idx (:history-idx state)
+        new-idx (if (nil? cur-idx)
+                  (dec (count history))
+                  (max 0 (dec cur-idx)))]
+    (if (seq history)
+      [(-> state
+           (assoc :history-idx new-idx)
+           (update :input #(ti/set-value % (nth history new-idx))))
+       nil]
+      [state nil])))
+
+(defn- history-next [state]
+  (let [history (:input-history state)
+        new-idx (inc (:history-idx state))]
+    (if (< new-idx (count history))
+      [(-> state
+           (assoc :history-idx new-idx)
+           (update :input #(ti/set-value % (nth history new-idx))))
+       nil]
+      [(-> state
+           (assoc :history-idx nil)
+           (update :input #(ti/set-value % "")))
+       nil])))
+
+(defn- scroll-page [state direction]
+  (let [page       (max 1 (- (:height state) 5))
+        max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 5)))]
+    (case direction
+      :up   [(update state :scroll-offset #(min max-offset (+ % page))) nil]
+      :down [(update state :scroll-offset #(max 0 (- % page))) nil])))
+
+(defn- scroll-wheel [state direction]
+  (let [max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 5)))]
+    (case direction
+      :up   [(update state :scroll-offset #(min max-offset (+ % 3))) nil]
+      :down [(update state :scroll-offset #(max 0 (- % 3))) nil])))
+
+(defn handle-key
+  "Dispatch keypresses + mouse-wheel events when mode is :ready or :chatting.
+  Caller guarantees mode is :ready or :chatting."
+  [state msg]
+  (cond
+    ;; --- Focus navigation ---
+    (and (msg/key-press? msg) (msg/key-match? msg :tab) (not (:shift msg)) (not (:alt msg)))
+    (focus-paths-cycle state :forward)
+
+    (and (msg/key-press? msg) (msg/key-match? msg :tab) (:shift msg))
+    (focus-paths-cycle state :backward)
+
+    (and (msg/key-press? msg) (msg/key-match? msg :up) (some? (:focus-path state)))
+    (focus-paths-cycle state :backward)
+
+    (and (msg/key-press? msg) (msg/key-match? msg :down) (some? (:focus-path state)))
+    (focus-paths-cycle state :forward)
+
+    (and (msg/key-press? msg) (msg/key-match? msg :escape) (some? (:focus-path state)))
+    [(-> state (assoc :focus-path nil) sync-focus view/rebuild-lines) nil]
+
+    (and (msg/key-press? msg) (msg/key-match? msg :enter) (some? (:focus-path state)))
+    (let [[i j] (:focus-path state)
+          item-path (if j [:items i :sub-items j] [:items i])]
+      [(-> state (update-in item-path update :expanded? not) view/rebuild-lines) nil])
+
+    ;; --- Enter in :ready: non-slash text submission. State.clj handles slash dispatch. ---
+    (and (msg/key-press? msg) (msg/key-match? msg :enter) (= :ready (:mode state)))
+    (enter-submit-prompt state)
+
+    ;; --- Escape during :chatting cancels the in-flight prompt ---
+    (and (msg/key-press? msg) (msg/key-match? msg :escape) (= :chatting (:mode state)))
+    (escape-cancel-chatting state)
+
+    ;; --- Input history (only :ready, no focus path) ---
+    (and (msg/key-press? msg) (msg/key-match? msg :up) (= :ready (:mode state)))
+    (history-prev state)
+
+    (and (msg/key-press? msg) (msg/key-match? msg :down)
+         (= :ready (:mode state)) (some? (:history-idx state)))
+    (history-next state)
+
+    ;; --- Page scroll ---
+    (and (msg/key-press? msg) (msg/key-match? msg :page-up))
+    (scroll-page state :up)
+
+    (and (msg/key-press? msg) (msg/key-match? msg :page-down))
+    (scroll-page state :down)
+
+    ;; --- Mouse wheel ---
+    (msg/wheel-up? msg)   (scroll-wheel state :up)
+    (msg/wheel-down? msg) (scroll-wheel state :down)
+
+    ;; --- Default: forward to text-input ---
+    :else
+    (let [[new-input cmd] (ti/text-input-update (:input state) msg)]
+      [(assoc state :input new-input) cmd])))
