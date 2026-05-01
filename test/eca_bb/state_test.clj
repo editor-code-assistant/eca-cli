@@ -264,75 +264,6 @@
                             :content {:type "text" :text "hello"}}})]
       (is (= "hello" (:current-text s))))))
 
-;; --- config/updated ---
-
-(deftest handle-config-updated-test
-  (testing "stores models list"
-    (let [models ["anthropic/claude-sonnet-4-6" "anthropic/claude-opus-4-7"]
-          [s _]  (handle-eca-notification
-                   (base-state)
-                   {:method "config/updated"
-                    :params {:chat {:models models}}})]
-      (is (= models (:available-models s)))))
-
-  (testing "stores agents list"
-    (let [agents ["code" "plan"]
-          [s _]  (handle-eca-notification
-                   (base-state)
-                   {:method "config/updated"
-                    :params {:chat {:agents agents}}})]
-      (is (= agents (:available-agents s)))))
-
-  (testing "selectModel forces model selection"
-    (let [[s _] (handle-eca-notification
-                  (base-state)
-                  {:method "config/updated"
-                   :params {:chat {:selectModel "anthropic/claude-opus-4-7"}}})]
-      (is (= "anthropic/claude-opus-4-7" (:selected-model s)))))
-
-  (testing "selectModel nil clears selection"
-    (let [s0    (assoc (base-state) :selected-model "anthropic/claude-sonnet-4-6")
-          [s _] (handle-eca-notification
-                  s0
-                  {:method "config/updated"
-                   :params {:chat {:selectModel nil}}})]
-      (is (nil? (:selected-model s)))))
-
-  (testing "selectAgent nil clears selection"
-    (let [s0    (assoc (base-state) :selected-agent "code")
-          [s _] (handle-eca-notification
-                  s0
-                  {:method "config/updated"
-                   :params {:chat {:selectAgent nil}}})]
-      (is (nil? (:selected-agent s)))))
-
-  (testing "welcomeMessage adds assistant-text item"
-    (let [[s _] (handle-eca-notification
-                  (base-state)
-                  {:method "config/updated"
-                   :params {:chat {:welcomeMessage "Welcome! How can I help?"}}})]
-      (is (= 1 (count (:items s))))
-      (is (= :assistant-text (:type (first (:items s)))))
-      (is (= "Welcome! How can I help?" (:text (first (:items s)))))))
-
-  (testing "absent fields do not overwrite existing state"
-    (let [s0    (assoc (base-state)
-                       :available-models ["anthropic/claude-sonnet-4-6"]
-                       :available-agents ["code"])
-          [s _] (handle-eca-notification
-                  s0
-                  {:method "config/updated"
-                   :params {:chat {:models ["anthropic/claude-opus-4-7"]}}})]
-      (is (= ["anthropic/claude-opus-4-7"] (:available-models s)))
-      (is (= ["code"] (:available-agents s)))))
-
-  (testing "nil chat field is a no-op"
-    (let [base  (base-state)
-          [s _] (handle-eca-notification base {:method "config/updated" :params {}})]
-      (is (= base s)))))
-
-;; --- :reader-error ---
-
 (deftest handle-reader-error-test
   (testing "reader error adds system message and returns to :ready"
     (let [[s _] (handle-eca-tick
@@ -512,37 +443,6 @@
 
 ;; --- Phase 2: model & agent identity ---
 
-(deftest handle-config-updated-variants-test
-  (testing "variants list stored"
-    (let [[s _] (handle-eca-notification
-                  (base-state)
-                  {:method "config/updated"
-                   :params {:chat {:variants ["low" "medium" "high"]}}})]
-      (is (= ["low" "medium" "high"] (:available-variants s)))))
-
-  (testing "selectVariant sets selected-variant"
-    (let [[s _] (handle-eca-notification
-                  (base-state)
-                  {:method "config/updated"
-                   :params {:chat {:selectVariant "medium"}}})]
-      (is (= "medium" (:selected-variant s)))))
-
-  (testing "selectVariant null clears selected-variant"
-    (let [s0    (assoc (base-state) :selected-variant "high")
-          [s _] (handle-eca-notification
-                  s0
-                  {:method "config/updated"
-                   :params {:chat {:selectVariant nil}}})]
-      (is (nil? (:selected-variant s)))))
-
-  (testing "absent variants field does not overwrite existing"
-    (let [s0    (assoc (base-state) :available-variants ["low" "high"])
-          [s _] (handle-eca-notification
-                  s0
-                  {:method "config/updated"
-                   :params {:chat {:models ["anthropic/claude-opus-4-7"]}}})]
-      (is (= ["low" "high"] (:available-variants s))))))
-
 (deftest ctrl-l-opens-model-picker-test
   (testing "Ctrl+L in :ready enters :picking with kind :model"
     (let [s0 (assoc (base-state)
@@ -654,44 +554,6 @@
       (is (= "anthropic/claude-sonnet-4-6" (:selected-model s))))))
 
 ;; --- Phase 3: Session Continuity ---
-
-(deftest chat-opened-handler-test
-  (testing "chat/opened stores chat-id and title"
-    (let [[s _] (handle-eca-notification
-                  (base-state)
-                  {:method "chat/opened"
-                   :params {:chatId "new-chat-123" :title "My Project Chat"}})]
-      (is (= "new-chat-123" (:chat-id s)))
-      (is (= "My Project Chat" (:chat-title s)))))
-
-  (testing "chat/opened with no title stores nil"
-    (let [[s _] (handle-eca-notification
-                  (base-state)
-                  {:method "chat/opened"
-                   :params {:chatId "chat-no-title"}})]
-      (is (= "chat-no-title" (:chat-id s)))
-      (is (nil? (:chat-title s))))))
-
-(deftest chat-cleared-handler-test
-  (testing "chat/cleared with messages:true clears items and scroll"
-    (let [s0 (assoc (base-state)
-                    :items [{:type :user :text "hi"}]
-                    :scroll-offset 5)
-          [s _] (handle-eca-notification
-                  s0
-                  {:method "chat/cleared"
-                   :params {:chatId "x" :messages true}})]
-      (is (empty? (:items s)))
-      (is (= 0 (:scroll-offset s)))))
-
-  (testing "chat/cleared with messages:false leaves items intact"
-    (let [s0 (assoc (base-state)
-                    :items [{:type :user :text "hi"}])
-          [s _] (handle-eca-notification
-                  s0
-                  {:method "chat/cleared"
-                   :params {:chatId "x" :messages false}})]
-      (is (= 1 (count (:items s)))))))
 
 (deftest slash-new-clears-state-test
   (testing "/new with no chat-id is a no-op (already fresh)"

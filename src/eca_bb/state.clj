@@ -66,33 +66,13 @@
        nil])
 
     "config/updated"
-    (let [chat (get-in notification [:params :chat])
-          s'   (cond-> state
-                 (:models chat)                  (assoc :available-models (:models chat))
-                 (:agents chat)                  (assoc :available-agents (:agents chat))
-                 (contains? chat :selectModel)   (assoc :selected-model (:selectModel chat))
-                 (contains? chat :selectAgent)   (assoc :selected-agent (:selectAgent chat))
-                 (contains? chat :variants)      (assoc :available-variants (:variants chat))
-                 (contains? chat :selectVariant) (assoc :selected-variant (:selectVariant chat))
-                 (:welcomeMessage chat)          (update :items conj {:type :assistant-text
-                                                                       :text (:welcomeMessage chat)}))]
-      [(if (:welcomeMessage chat) (view/rebuild-lines s') s') nil])
+    (chat/handle-config-updated state notification)
 
     "chat/opened"
-    (let [{:keys [chatId title]} (:params notification)]
-      [(-> state
-           (assoc :chat-id chatId)
-           (assoc :chat-title title))
-       nil])
+    (chat/handle-chat-opened state notification)
 
     "chat/cleared"
-    (let [clear-msgs? (get-in notification [:params :messages])]
-      [(cond-> state
-         clear-msgs? (-> (assoc :items [])
-                         (assoc :current-text "")
-                         (assoc :chat-lines [])
-                         (assoc :scroll-offset 0)))
-       nil])
+    (chat/handle-chat-cleared state notification)
 
     [state nil]))
 

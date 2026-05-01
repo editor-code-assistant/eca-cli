@@ -10,6 +10,7 @@
                       :task (eca-bb.upgrade/run!)}
          test        {:doc "Run unit tests"
                       :task (do (require '[clojure.test])
+                                (require '[eca-bb.chat-test])
                                 (require '[eca-bb.commands-test])
                                 (require '[eca-bb.lifecycle-test])
                                 (require '[eca-bb.protocol-test])
@@ -19,7 +20,8 @@
                                 (require '[eca-bb.sessions-test])
                                 (require '[eca-bb.upgrade-test])
                                 (let [{:keys [fail error]}
-                                      (clojure.test/run-tests 'eca-bb.commands-test
+                                      (clojure.test/run-tests 'eca-bb.chat-test
+                                                              'eca-bb.commands-test
                                                               'eca-bb.lifecycle-test
                                                               'eca-bb.protocol-test
                                                               'eca-bb.view-test

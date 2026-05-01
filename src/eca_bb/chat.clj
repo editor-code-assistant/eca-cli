@@ -251,6 +251,43 @@
 
       state)))
 
+(defn handle-config-updated
+  "ECA `config/updated` notification: populate available models / agents /
+  variants and surface the welcome message as assistant text."
+  [state notification]
+  (let [chat (get-in notification [:params :chat])
+        s'   (cond-> state
+               (:models chat)                  (assoc :available-models (:models chat))
+               (:agents chat)                  (assoc :available-agents (:agents chat))
+               (contains? chat :selectModel)   (assoc :selected-model (:selectModel chat))
+               (contains? chat :selectAgent)   (assoc :selected-agent (:selectAgent chat))
+               (contains? chat :variants)      (assoc :available-variants (:variants chat))
+               (contains? chat :selectVariant) (assoc :selected-variant (:selectVariant chat))
+               (:welcomeMessage chat)          (update :items conj {:type :assistant-text
+                                                                    :text (:welcomeMessage chat)}))]
+    [(if (:welcomeMessage chat) (view/rebuild-lines s') s') nil]))
+
+(defn handle-chat-opened
+  "ECA `chat/opened` notification: store the chat-id and title on state."
+  [state notification]
+  (let [{:keys [chatId title]} (:params notification)]
+    [(-> state
+         (assoc :chat-id chatId)
+         (assoc :chat-title title))
+     nil]))
+
+(defn handle-chat-cleared
+  "ECA `chat/cleared` notification: when params.messages is truthy, drop
+  rendered items + chat-lines + scroll position."
+  [state notification]
+  (let [clear-msgs? (get-in notification [:params :messages])]
+    [(cond-> state
+       clear-msgs? (-> (assoc :items [])
+                       (assoc :current-text "")
+                       (assoc :chat-lines [])
+                       (assoc :scroll-offset 0)))
+     nil]))
+
 (defn handle-content-received
   "ECA `chat/contentReceived` notification handler.
 
