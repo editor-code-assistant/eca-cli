@@ -23,6 +23,20 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion`, `chat/queryCommands` autocomplete, log viewer | — | — |
 | [11](#phase-11-power-features) | Power Features | Context injection, jobs, rollback/fork | — | — |
 
+## Outstanding maintenance
+
+Tracked items that aren't tied to a phase but should be addressed at some point.
+
+### Charm.clj local-copy reconciliation
+
+We currently ship a vendored copy of charm.clj under `charm/` (added to `:paths` in `bb.edn`) because we needed an upstream-not-yet-merged tweak. Action items:
+
+1. **Diff `charm/` against the latest upstream `de.timokramer/charm.clj`.** If `main` already includes our change, this whole tracked item collapses — drop the vendored copy and remove `charm` from `:paths`.
+2. **If still divergent**, open a PR upstream with the patch. Reference this roadmap entry in the PR description.
+3. **Once merged (or once we confirm it's no longer needed)**, drop `charm/` from the repo and `:paths` in `bb.edn`. Bump the maven dep version in `:deps` to whichever release contains the change.
+
+Trigger: revisit before any roadmap phase that touches charm internals (Phase 7 MCP panel rendering and Phase 8 markdown rendering both stretch the render layer; a fresh upstream is worth having before either).
+
 ---
 
 ## Phase 1a: Reliable Core
