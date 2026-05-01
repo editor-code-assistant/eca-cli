@@ -1,4 +1,4 @@
-{:paths ["src" "test" "charm"]
+{:paths ["src" "test"]
  :deps {de.timokramer/charm.clj {:mvn/version "0.2.71"}}
  :tasks {run         {:doc "Run eca-cli"
                       :requires ([eca-cli.core])

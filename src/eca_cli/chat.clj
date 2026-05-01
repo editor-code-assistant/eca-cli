@@ -508,11 +508,8 @@
     (toggle-all-expanded state true)
 
     ;; --- Focus navigation ---
-    (and (msg/key-press? msg) (msg/key-match? msg :tab) (not (:shift msg)) (not (:alt msg)))
+    (and (msg/key-press? msg) (msg/key-match? msg :tab) (not (:alt msg)))
     (focus-paths-cycle state :forward)
-
-    (and (msg/key-press? msg) (msg/key-match? msg :tab) (:shift msg))
-    (focus-paths-cycle state :backward)
 
     (and (msg/key-press? msg) (msg/key-match? msg :up) (some? (:focus-path state)))
     (focus-paths-cycle state :backward)
