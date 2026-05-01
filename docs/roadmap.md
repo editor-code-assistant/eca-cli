@@ -16,12 +16,12 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [3](#phase-3-session-continuity) | Session Continuity | Quit and resume, start fresh | ✅ Complete | [detail](roadmap/phase-3-session-continuity.md) |
 | [4](#phase-4-command-system) | Command System | Slash commands as the extensibility seam | ✅ Complete | [detail](roadmap/phase-4-command-system.md) |
 | [5](#phase-5-rich-display) | Rich Display | Expandable tool blocks, thinking, sub-agent nesting | ✅ Complete | [detail](roadmap/phase-5-rich-display.md) |
-| [6](#phase-6-markdown-rendering) | Markdown Rendering | Render assistant text as formatted ANSI output | — | — |
-| [6.5](#phase-65-tool-call-diff-display) | Tool-Call Diff Display | Render file-edit tool calls as unified diffs | — | — |
+| [6](#phase-6-tool-call-diff-display) | Tool-Call Diff Display | Render file-edit tool calls as unified diffs | — | — |
 | [7](#phase-7-mcp-integration) | MCP Integration | Status indicator, details panel, server update notifications | — | — |
-| [8](#phase-8-message-steering) | Message Steering | Influence a running prompt | — | — |
-| [9](#phase-9-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion`, `chat/queryCommands` autocomplete, log viewer | — | — |
-| [10](#phase-10-power-features) | Power Features | Context injection, jobs, rollback/fork | — | — |
+| [8](#phase-8-markdown-rendering) | Markdown Rendering | Render assistant text as formatted ANSI output | — | — |
+| [9](#phase-9-message-steering) | Message Steering | Influence a running prompt | — | — |
+| [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion`, `chat/queryCommands` autocomplete, log viewer | — | — |
+| [11](#phase-11-power-features) | Power Features | Context injection, jobs, rollback/fork | — | — |
 
 ---
 
@@ -184,35 +184,7 @@ See [roadmap/phase-5-rich-display.md](roadmap/phase-5-rich-display.md) for the f
 
 ---
 
-## Phase 6: Markdown Rendering
-
-**Goal:** Render assistant and user text through a markdown→ANSI converter so that bold, italic, code spans, fenced code blocks, headers, lists, and tables display as formatted output rather than raw syntax.
-
-### What to build
-
-**Markdown→ANSI converter.**
-A lightweight pass over text items before they are split into lines. Outputs ANSI escape sequences for bold (`\e[1m`), italic (`\e[3m`), dim (code spans), and resets. Fenced code blocks get a visual border and a language label. Headers are bold. Lists indent correctly. Tables render with column alignment.
-
-**Library evaluation.**
-Babashka can load Java libraries via `:mvn/version`. Candidates: `commonmark-java` (CommonMark spec-compliant, extensible) and `flexmark-java` (fast, configurable). Evaluate for binary size, Babashka compatibility, and ANSI output support. If neither fits, a purpose-built single-pass tokenizer covering the 80% case (bold, italic, code, headers, lists) is the fallback.
-
-**Scope.**
-Applies to `:assistant-text` and `:user` items. Tool output (`:out-text` in tool-call items) and thinking text are rendered plain — they are code/prose from tools, not model-authored markdown.
-
-**`url` content type.**
-With markdown rendering in place, `url` items (`{:type "url" :title "..." :url "..."}`) are a natural fit here: render as `title (url)` inline, or as an OSC 8 hyperlink where the terminal supports it.
-
-### Stopping criteria
-
-- Assistant text with `**bold**` renders with ANSI bold, not literal asterisks
-- Fenced code blocks display with a border and language label
-- Lists indent correctly; headers are visually distinct
-- `url` content items render as linked text in chat
-- Plain-text fallback if the markdown library is unavailable at runtime
-
----
-
-## Phase 6.5: Tool-Call Diff Display
+## Phase 6: Tool-Call Diff Display
 
 **Goal:** When a tool call modifies a file, the expanded view should render a unified diff so the user can see exactly what changed before approving or after the call completes.
 
@@ -266,7 +238,35 @@ New ns for MCP state, notification handler, and `/mcp` command handler. Pattern 
 
 ---
 
-## Phase 8: Message Steering
+## Phase 8: Markdown Rendering
+
+**Goal:** Render assistant and user text through a markdown→ANSI converter so that bold, italic, code spans, fenced code blocks, headers, lists, and tables display as formatted output rather than raw syntax.
+
+### What to build
+
+**Markdown→ANSI converter.**
+A lightweight pass over text items before they are split into lines. Outputs ANSI escape sequences for bold (`\e[1m`), italic (`\e[3m`), dim (code spans), and resets. Fenced code blocks get a visual border and a language label. Headers are bold. Lists indent correctly. Tables render with column alignment.
+
+**Library evaluation.**
+Babashka can load Java libraries via `:mvn/version`. Candidates: `commonmark-java` (CommonMark spec-compliant, extensible) and `flexmark-java` (fast, configurable). Evaluate for binary size, Babashka compatibility, and ANSI output support. If neither fits, a purpose-built single-pass tokenizer covering the 80% case (bold, italic, code, headers, lists) is the fallback.
+
+**Scope.**
+Applies to `:assistant-text` and `:user` items. Tool output (`:out-text` in tool-call items) and thinking text are rendered plain — they are code/prose from tools, not model-authored markdown.
+
+**`url` content type.**
+With markdown rendering in place, `url` items (`{:type "url" :title "..." :url "..."}`) are a natural fit here: render as `title (url)` inline, or as an OSC 8 hyperlink where the terminal supports it.
+
+### Stopping criteria
+
+- Assistant text with `**bold**` renders with ANSI bold, not literal asterisks
+- Fenced code blocks display with a border and language label
+- Lists indent correctly; headers are visually distinct
+- `url` content items render as linked text in chat
+- Plain-text fallback if the markdown library is unavailable at runtime
+
+---
+
+## Phase 9: Message Steering
 
 **Goal:** Send messages to influence a running prompt without stopping it — the eca-bb equivalent of pi's message queue.
 
@@ -294,7 +294,7 @@ Alt+Enter queues a follow-up message, delivered only after the agent fully compl
 
 ---
 
-## Phase 9: Server-Driven Interaction
+## Phase 10: Server-Driven Interaction
 
 **Goal:** Handle server-initiated dialogue and server-side metadata that wasn't covered earlier — `chat/askQuestion`, server-supplied slash commands via `chat/queryCommands`, and an in-app log viewer for users who don't tail files directly.
 
@@ -332,7 +332,7 @@ A panel that reads `~/.cache/eca/eca-bb.log` and shows the tail with auto-scroll
 
 ---
 
-## Phase 10: Power Features
+## Phase 11: Power Features
 
 **Goal:** Surface the remaining ECA capabilities that reward power users — context injection, background jobs, and session surgery.
 
