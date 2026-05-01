@@ -314,10 +314,72 @@ Phase A was structural alignment with ECA conventions. Phase B finishes the stru
 
 If new structural needs surface during roadmap work (e.g. a sixth or seventh feature ns starts looking too big), revisit with a fresh assessment doc rather than retrofitting another refactor phase.
 
-## Open questions
+## Decisions (locked before execution)
 
-1. **Subdir vs flat layout for view split.** Recommendation: `src/eca_bb/view/blocks.clj` (subdir) — matches sibling-editor convention and prevents future renames. Confirm before step 3.
-2. **`chat_test.clj` creation in step 4.** Recommendation: create in step 4 since 13 deftests migrate. Confirm.
-3. **Block-nav keybindings on Alt-prefix.** Recommendation: Alt-prefix to avoid input-typing conflicts. Confirm — alternative is requiring focus-path-active before bare `g`/`G` fire.
-4. **License copyright holder.** Need a name for the Apache 2.0 line. Recommendation: `Copyright (c) 2026 Sam O'Leary` (matches git author) — confirm.
-5. **Integration-test breakdown.** Pursue investigation-only, or skip outright? Recommendation: skip unless a concrete debugging pain surfaces.
+1. **Subdir layout** for view split — `src/eca_bb/view/blocks.clj`.
+2. **Create `chat_test.clj`** as part of step 4 (13 deftests migrate cleanly).
+3. **Alt-prefix** for block-nav keybindings (avoids input-typing conflicts).
+4. **Apache 2.0** license, matching ECA core / nvim / emacs (no per-file copyright header).
+5. **Skip integration-test breakdown** — phase-prefix naming gives most of the benefit at current scale; revisit if Phase 6/7 testing reveals friction.
+
+---
+
+## Outcome
+
+Status: **complete** (steps 1-5; 6-7 deliberately skipped per decisions above). 85/85 tests green at every commit, 387 assertions.
+
+### Final LOC vs targets
+
+| File | Target | Final | Delta |
+|---|---|---|---|
+| `state.clj` | ≤ 250 (stretch ≤ 240) | **252** | +2 over target |
+| `view.clj` | ≤ 160 | **149** | -11 |
+| `view/blocks.clj` | ≤ 130 | **124** | -6 |
+| `chat.clj` | ≤ 500 | **561** | +61 over (see note) |
+
+`chat.clj` overshot because step 5's block-navigation keybindings added 4 helper fns + 6 cond arms (~60 LOC). The plan estimated step 4 alone would push chat to ~492; step 5 was correctly anticipated to add bindings but the LOC cost wasn't budgeted in the chat.clj ceiling. 561 is still well under any "must split now" threshold — the file is cohesive (one feature: chat).
+
+Project total: 2062 LOC across 13 nses (Phase A end was 1975). +87 LOC for the four new chat fns, six new keybinding arms, and reorganisation overhead.
+
+### Step-by-step summary
+
+| # | Step | Commit | Result |
+|---|---|---|---|
+| 1 | Project docs (README, LICENSE, CHANGELOG) | `01ae400` | All three present; LICENSE matches sibling editors verbatim. |
+| 2 | exit/shutdown lifecycle tests | `4097a91` | 4 new deftests added; 5th (timeout-resilience) deferred — `with-redefs` of `clojure.core/deref` recurses, requires injectable timeout to test cleanly. |
+| 3 | `view.clj` split → `view/blocks.clj` | `705e151` | view.clj 265 → 149 LOC; new view/blocks.clj 124 LOC. Block-level tests live in new test/eca_bb/view/blocks_test.clj. |
+| 4 | `state.clj` residual notification extraction | `3d0a943` | chat/opened, chat/cleared, config/updated moved to chat.clj. state.clj 272 → 252 LOC. New test/eca_bb/chat_test.clj absorbed 4 deftests + 13 testing blocks. |
+| 5 | Block-navigation keybindings | `cc6613d` | 6 new Alt-prefixed bindings + 4 helpers + 7 deftests. README updated with terminal-compatibility note. |
+
+### Plan revisions during execution
+
+**Subdir creation.** Plan called for `src/eca_bb/view/` and `test/eca_bb/view/` subdirs. Both created cleanly; Babashka classpath (`:paths ["src" "test" "charm"]`) covered nested files without bb.edn changes.
+
+**`chat_test.clj` carries its own `base-state`.** Phase A's `state_test.clj` had a private `base-state` helper. Step 4 copied it into chat_test rather than extracting to a shared `test_helpers.clj` — premature abstraction at 2 callers; revisit if a third test ns wants the same fixture.
+
+**Alt+G uses raw-char match.** Plan said use `msg/key-match? "alt+G"`. Discovered during step 5 that capital G via Shift can arrive with `:shift` flag set or unset depending on terminal. Switched to `(= "G" (:key msg))` for the Alt+G arm. Same fallback for Alt+g (`(= "g" (:key msg))`) for symmetry. Removed `(not (:shift msg))` guards — terminal behaviour is too variable.
+
+**Shutdown timeout test deferred.** Plan listed 4 lifecycle tests. The timeout-resilience test (hung server → exit still fires) requires stubbing `clojure.core/deref`, which recurses inside SCI. Documented in `lifecycle_test.clj` as a known gap; would require `protocol/shutdown!` to take an injectable timeout to test cleanly.
+
+**`config.clj` not created.** Plan flagged this as an option for `config/updated` extraction. Decided against — 11 LOC didn't justify a new ns. Moved to `chat.clj` as `chat/handle-config-updated` since it mutates chat-domain state (available-models, welcomeMessage → :assistant-text item).
+
+### Things the plan got right
+
+- LOC estimates landed within ±15% on every file (state.clj +2, view.clj -11, view/blocks.clj -6).
+- 7 ECA-checklist items audited; 5 actionable items completed in the order planned.
+- No behavioural regressions in core flows. Phase 1a-5 tests (~70 deftests) untouched and green.
+- Alt-prefix decision avoided input-typing conflicts as predicted.
+
+### Things the plan missed
+
+- chat.clj LOC ceiling didn't budget for step 5's keybinding additions (+60 LOC). Could have flagged this or set a separate ceiling per step.
+- Shutdown timeout testability — discovered only during execution that SCI deref-redef recurses.
+- README's Alt-key terminal compatibility note is more important than the plan suggested; deserves explicit mention rather than an aside.
+
+### Phase A → Phase B → next
+
+Refactor track is **complete**. eca-bb's structural surface area now mirrors the sibling-editor convention: 13 cohesive nses (8 in `src/eca_bb/`, 1 in `src/eca_bb/view/`, plus `view.clj` itself), each with clear ownership.
+
+All forward motion belongs on the [roadmap track](../roadmap.md), starting with Phase 6 (Tool-Call Diff Display).
+
+Should new structural needs surface during Phase 6+ (e.g. an MCP namespace approaching 500 LOC), revisit with a fresh assessment doc rather than retrofitting another refactor phase.

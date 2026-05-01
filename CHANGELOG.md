@@ -4,9 +4,25 @@ All notable changes to eca-bb. Format inspired by [Keep a Changelog](https://kee
 
 ## Unreleased
 
-### In progress
+## Refactor Phase B — structural cleanup
 
-- Refactor Phase B — structural cleanup: project docs, `view.clj` block-renderer split, `state.clj` residual notification extraction, exit/shutdown lifecycle test coverage, block-navigation keybindings completion. See [`docs/refactor/02-phase-b-plan.md`](docs/refactor/02-phase-b-plan.md).
+Finishes the structural debt from the Phase A audit. 85/85 tests green at every commit.
+
+### Added
+
+- `README.md`, `LICENSE` (Apache 2.0), `CHANGELOG.md` at project root.
+- `src/eca_bb/view/blocks.clj` — extracted per-item block renderers from `view.clj` (assistant text, user message, tool-call expanded/collapsed, thinking, hook, system) plus ANSI styling constants.
+- `chat/handle-config-updated`, `chat/handle-chat-opened`, `chat/handle-chat-cleared` — extracted from `state.clj`'s `handle-eca-notification`.
+- 4 shutdown-lifecycle deftests in `test/eca_bb/lifecycle_test.clj` covering protocol-level sequence order, cmd-quit composition, exception resilience, and Ctrl+C / `/quit` equivalence.
+- 7 block-navigation deftests in `test/eca_bb/chat_test.clj`.
+- 6 new Alt-prefixed keybindings: `Alt+↑` / `Alt+↓` (jump top-level blocks, skip sub-items), `Alt+g` / `Alt+G` (focus first / last block), `Alt+c` / `Alt+o` (collapse / expand all). Documented in README with terminal-compatibility note.
+- New test files: `test/eca_bb/lifecycle_test.clj`, `test/eca_bb/chat_test.clj`, `test/eca_bb/view/blocks_test.clj`.
+
+### Changed
+
+- `state.clj`: 272 → 252 LOC. `handle-eca-notification` now delegates each chat-domain case in one line.
+- `view.clj`: 265 → 149 LOC. Composer + chat-area + overlay renderers retained; block renderers moved out.
+- `chat.clj`: 462 → 561 LOC. Absorbed three new notification handlers and six new key dispatch arms.
 
 ## Refactor Phase A — structural namespace split
 
