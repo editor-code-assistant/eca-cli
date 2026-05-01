@@ -17,9 +17,11 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [4](#phase-4-command-system) | Command System | Slash commands as the extensibility seam | ✅ Complete | [detail](roadmap/phase-4-command-system.md) |
 | [5](#phase-5-rich-display) | Rich Display | Expandable tool blocks, thinking, sub-agent nesting | ✅ Complete | [detail](roadmap/phase-5-rich-display.md) |
 | [6](#phase-6-markdown-rendering) | Markdown Rendering | Render assistant text as formatted ANSI output | — | — |
-| [7](#phase-7-message-steering) | Message Steering | Influence a running prompt | — | — |
-| [8](#phase-8-rich-interaction) | Rich Interaction | Server-initiated Q&A | — | — |
-| [9](#phase-9-power-features) | Power Features | Context injection, jobs, rollback/fork | — | — |
+| [6.5](#phase-65-tool-call-diff-display) | Tool-Call Diff Display | Render file-edit tool calls as unified diffs | — | — |
+| [7](#phase-7-mcp-integration) | MCP Integration | Status indicator, details panel, server update notifications | — | — |
+| [8](#phase-8-message-steering) | Message Steering | Influence a running prompt | — | — |
+| [9](#phase-9-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion`, `chat/queryCommands` autocomplete, log viewer | — | — |
+| [10](#phase-10-power-features) | Power Features | Context injection, jobs, rollback/fork | — | — |
 
 ---
 
@@ -210,7 +212,61 @@ With markdown rendering in place, `url` items (`{:type "url" :title "..." :url "
 
 ---
 
-## Phase 7: Message Steering
+## Phase 6.5: Tool-Call Diff Display
+
+**Goal:** When a tool call modifies a file, the expanded view should render a unified diff so the user can see exactly what changed before approving or after the call completes.
+
+### What to build
+
+**Diff renderer.**
+A new block-renderer for tool calls whose payload includes `before`/`after` (or `oldText`/`newText`) content — typically `edit_file`, `write_file`, `apply_patch`. Output is a unified diff with ANSI red for removed lines, green for added lines, and grey for unchanged context lines (configurable count, default 3).
+
+**Tool-payload extraction.**
+Detect file-edit tool calls by name (`edit_file`, `write_file`, `apply_patch`, plus any future ones) or by payload shape. Extract `path`, `before`, `after` from `arguments` / `output`. Fall back to the existing tool-output renderer if shape doesn't match.
+
+**Approval UX.**
+For tool calls that hit `:approving` mode, the diff is visible *before* the user types y/n/Y, so the approval decision is informed by the actual change.
+
+### Stopping criteria
+
+- File-edit tool calls render as a unified diff in the expanded block
+- Diff colours work in light and dark terminals
+- Approval mode shows the diff before the y/n/Y prompt
+- Non-edit tool calls fall back to the existing output renderer
+- Large diffs (>500 lines) truncate with a "[truncated]" footer
+
+---
+
+## Phase 7: MCP Integration
+
+**Goal:** First-class MCP server support — users see which MCPs are running, can drill into details when one fails, and react to server status changes without restarting.
+
+### What to build
+
+**Status indicator.**
+The status bar shows MCP health at a glance: `MCPs: 3/4 ✓` or `MCPs: 2/4 ⚠` if one has failed. Hidden when no MCPs are configured.
+
+**`/mcp` panel.**
+A new picker-style overlay listing each configured MCP server: name, status (`running` / `failed` / `pending` / `requires-auth`), exposed tools count, last error message if failed. Selecting an entry expands its details. Escape closes the panel.
+
+**`tool/serverUpdated` notification handler.**
+ECA emits status changes for MCP servers. The handler updates the in-memory MCP map, refreshes the status bar, and updates the panel if open.
+
+**`mcp.clj` namespace.**
+New ns for MCP state, notification handler, and `/mcp` command handler. Pattern matches `login.clj` / `picker.clj`.
+
+### Stopping criteria
+
+- Status bar shows MCP count and aggregate health when MCPs are configured
+- `/mcp` opens a panel listing servers with status, tool count, and any error
+- `tool/serverUpdated` notifications update the panel and status bar live
+- Failed MCPs surface their error message in the panel
+- `requires-auth` MCPs surface a hint to run the relevant login flow
+- Panel keybindings: arrow nav, Enter to expand, Escape to close
+
+---
+
+## Phase 8: Message Steering
 
 **Goal:** Send messages to influence a running prompt without stopping it — the eca-bb equivalent of pi's message queue.
 
@@ -238,9 +294,9 @@ Alt+Enter queues a follow-up message, delivered only after the agent fully compl
 
 ---
 
-## Phase 8: Rich Interaction
+## Phase 9: Server-Driven Interaction
 
-**Goal:** Handle server-initiated dialogue — the model can ask the user questions directly.
+**Goal:** Handle server-initiated dialogue and server-side metadata that wasn't covered earlier — `chat/askQuestion`, server-supplied slash commands via `chat/queryCommands`, and an in-app log viewer for users who don't tail files directly.
 
 ### What to build
 
@@ -258,6 +314,12 @@ A new state mode, similar to `:approving`, that takes over the input area with t
 **Question display in chat.**  
 The question and the user's answer should appear in the chat history as a distinct content type (e.g., `:question` item), so the exchange is readable in context.
 
+**`chat/queryCommands` server-side autocomplete.**  
+Phase 4 built a local registry. ECA also exposes server-side commands via `chat/queryCommands` (e.g. agent-defined slash commands). When the user types `/` and the input picker opens, query the server in addition to the local registry and merge results.
+
+**In-app log viewer (`/logs`).**  
+A panel that reads `~/.cache/eca/eca-bb.log` and shows the tail with auto-scroll, primarily for users / contributors who don't know to tail the file directly. Read-only. Keyboard scrolling, Escape to close. Useful when something goes wrong and the user can't be expected to know the path.
+
 ### Stopping criteria
 
 - `chat/askQuestion` requests are handled without hanging the reader thread
@@ -265,11 +327,12 @@ The question and the user's answer should appear in the chat history as a distin
 - Freeform input works when `allowFreeform` is true
 - Escape sends a cancelled response (ECA handles gracefully)
 - Question and answer appear in the chat history
-- The ECA response to the question is sent within a reasonable timeout
+- `/`-autocomplete includes both local and server-side commands, deduplicated
+- `/logs` panel shows recent log lines and scrolls
 
 ---
 
-## Phase 9: Power Features
+## Phase 10: Power Features
 
 **Goal:** Surface the remaining ECA capabilities that reward power users — context injection, background jobs, and session surgery.
 
@@ -287,9 +350,6 @@ A command that shows the chat history and lets the user pick a message to roll b
 **Chat fork (`/fork`).**  
 Fork the current chat at a selected message. Sends `chat/fork` to ECA, which creates a new chat. eca-bb receives `chat/opened` with the new chat-id and switches to it. The forked chat appears in `/sessions`.
 
-**`config/updated` for MCP tools.**  
-Handle `tool/serverUpdated` notifications to show MCP server status changes in the status bar (e.g., a tool server going from `starting` to `running`, or `requires-auth`).
-
 ### Stopping criteria
 
 - `@` in the input opens a file picker; selected file is attached to the next prompt
@@ -297,4 +357,3 @@ Handle `tool/serverUpdated` notifications to show MCP server status changes in t
 - Jobs panel lists running jobs with elapsed time; kill works from the panel
 - `/rollback` lets the user pick a message and rolls the chat back to that point
 - `/fork` creates a new chat from the current one and switches to it
-- MCP server status changes are visible in the status bar

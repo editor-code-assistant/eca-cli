@@ -93,8 +93,14 @@ Fold in:
 3. Insert new phases per the proposal above.
 4. Open a tracking issue mirroring development.md's checklist (per its instruction: *"Create an issue to help track the effort copying and pasting these check box to help track progress, [example](https://github.com/editor-code-assistant/eca/issues/5)"*) — gives ECA maintainers visibility into eca-bb's progress against the standard.
 
-## Open questions for the user
+## Decisions
 
-- **Renumber vs decimals?** 6 / 6.5 / 6.7 vs renumber 7/8/9 → 7/8/9/10.
-- **MCP scope?** Full panel + details + status, or minimal status-bar indicator first and panel later (split into Phase 7a / 7b)?
-- **Log viewer urgency?** Could land much earlier than Phase 9 — useful debugging tool. Worth promoting to Phase 6.8 or similar?
+The three open questions have been resolved:
+
+**Renumber.** 7/8/9 → 8/9/10, with new Phase 6.5 (Tool-Call Diff Display) and new Phase 7 (MCP Integration) inserted. Decimal numbering (6.5) only used for the diff-display insert because it sits clearly between Phases 6 and 7 thematically (rich rendering refinements). MCP gets a clean integer slot.
+
+**MCP stays a single phase.** Status indicator alone is too thin to ship without the panel — users would see "something is broken" but couldn't drill in. Sibling editors (eca-emacs `eca-mcp.el` 341 LOC, eca-nvim integrated in sidebar) ship MCP as a unit. Following that pattern.
+
+**Log viewer is not promoted.** The user's primary workflow is to tail the log file directly. The viewer's value is for contributors / users who don't know to do that — useful but not urgent. Stays in renumbered Phase 9 (Server-Driven Interaction).
+
+These decisions are reflected in the updated [docs/roadmap.md](../roadmap.md).
