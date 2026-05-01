@@ -7,7 +7,7 @@ Phase A kept the public API stable and got the namespace layout into shape. Phas
 ## Inventory snapshot (post-Phase A)
 
 ```
-src/eca_bb/
+src/eca_cli/
   core.clj          40 LOC
   sessions.clj      56 LOC
   upgrade.clj       60 LOC
@@ -33,7 +33,7 @@ src/eca_bb/
 | 3 | `view.clj` block-renderer split | View is currently a single 265-LOC ns mixing block-level rendering (~120 LOC `render-item-lines`) with overlays and the top-level composer. Sibling editors split (eca-emacs `eca-chat-expandable.el` 573 LOC for tool/thinking blocks). LLM-maintainability win. | Phase A "Deferred to Phase B" |
 | 4 | `state.clj` residual notification-case extraction | `chat/opened`, `chat/cleared`, `config/updated` cases in `handle-eca-notification` belong elsewhere. `$/progress` and `$/showMessage` are framework-generic and stay. | Phase A outcome |
 | 5 | Block-navigation keybindings completion | Phase 5 added Tab cycle + arrow nav + Enter toggle; ECA development.md requires "navigate through chat blocks/messages". `g` / `G` (jump first/last), Alt+↑/↓ (jump top-level), `c` / `o` (collapse-all / expand-all) still missing. | development.md checklist |
-| 6 | *Optional:* integration-test scenario breakdown | eca-nvim has ~20 per-feature integration test files; eca-bb has 1 monolithic `integration_test.clj` (515 LOC). Investigate whether per-feature splits would catch regressions Phase A missed. | Sibling comparison |
+| 6 | *Optional:* integration-test scenario breakdown | eca-nvim has ~20 per-feature integration test files; eca-cli has 1 monolithic `integration_test.clj` (515 LOC). Investigate whether per-feature splits would catch regressions Phase A missed. | Sibling comparison |
 | 7 | *Skipped:* `bb.edn` test-namespace auto-discovery | Low value at 6-9 ns scale; Phase A already concluded skip. | Phase A outcome |
 
 ## Out of scope (handled in roadmap track)
@@ -65,7 +65,7 @@ Anything user-visible — see `03-feature-gaps-roadmap-proposal.md`:
 
 `LICENSE` (project root). Apache 2.0 verbatim — same text as `/home/sam/workspace/sbs/eca-project/eca/LICENSE`.
 
-`CHANGELOG.md` (project root). Phase-by-phase entries reconstructed from `git log` (Phase 1a → Phase 5 are tagged in commit history; refactor Phase A landed in commits `844013b`–`af37734`). Use [Keep a Changelog](https://keepachangelog.com) format. No version numbers yet — eca-bb has no versioning scheme.
+`CHANGELOG.md` (project root). Phase-by-phase entries reconstructed from `git log` (Phase 1a → Phase 5 are tagged in commit history; refactor Phase A landed in commits `844013b`–`af37734`). Use [Keep a Changelog](https://keepachangelog.com) format. No version numbers yet — eca-cli has no versioning scheme.
 
 **Acceptance.**
 - `README.md` renders correctly on GitHub (verify locally with a markdown preview).
@@ -93,7 +93,7 @@ Looks correct: shutdown request → wait up to 5s → exit notification. Aligns 
 
 **Gap.** No test verifies the full sequence executes in order.
 
-**Tests to add** (in `test/eca_bb/protocol_test.clj` or new `test/eca_bb/lifecycle_test.clj`):
+**Tests to add** (in `test/eca_cli/protocol_test.clj` or new `test/eca_cli/lifecycle_test.clj`):
 
 1. `shutdown-sequence-order-test` — stub `send-request!` and `send-notification!`, call `protocol/shutdown!`, assert order: shutdown request first, exit notification second, exactly once each.
 2. `shutdown-timeout-test` — stub `send-request!` to never deliver the promise; assert `protocol/shutdown!` returns within ~5.5 s and still sends exit notification (timeout doesn't abort the sequence).
@@ -125,9 +125,9 @@ Looks correct: shutdown request → wait up to 5s → exit notification. Aligns 
 **Proposed split.**
 
 ```
-src/eca_bb/view/
+src/eca_cli/view/
   blocks.clj    ; render-item-lines + helpers (render-tool-icon, render-box) + ANSI constants
-  view.clj      ; OR keep at src/eca_bb/view.clj — layout + composer + overlays
+  view.clj      ; OR keep at src/eca_cli/view.clj — layout + composer + overlays
 ```
 
 Two-file layout. Block-renderers move to `view/blocks.clj` (~120 LOC). `view.clj` keeps everything else (~150 LOC). Rationale:
@@ -136,12 +136,12 @@ Two-file layout. Block-renderers move to `view/blocks.clj` (~120 LOC). `view.clj
 - ANSI constants belong with block renderers (they're block-level styling).
 - Overlays (approval, picker, login, status-bar) are already small; further splitting would fragment the composer.
 
-**Path naming.** Use `src/eca_bb/view/blocks.clj` (subdir) to leave room for future view/* expansion. Sibling pattern: eca-webview has `pages/chat/` subdir with many components. eca-bb at this scale doesn't need a subdir, but inserting it now prevents bb.edn classpath churn later. **Decision needed**: subdir vs flat (`view_blocks.clj`). Recommendation: subdir, matches sibling-editor convention.
+**Path naming.** Use `src/eca_cli/view/blocks.clj` (subdir) to leave room for future view/* expansion. Sibling pattern: eca-webview has `pages/chat/` subdir with many components. eca-cli at this scale doesn't need a subdir, but inserting it now prevents bb.edn classpath churn later. **Decision needed**: subdir vs flat (`view_blocks.clj`). Recommendation: subdir, matches sibling-editor convention.
 
 **Public API.** Currently `view/rebuild-lines`, `view/rebuild-chat-lines`, `view/view`, `view/render-chat`, `view/render-status-bar` etc. are referenced from state.clj, chat.clj, login.clj, picker.clj, commands.clj, sessions.clj. Need to keep these stable. Internals like `render-item-lines` move to `view.blocks` namespace; if any external caller exists, it gets re-exported via `view.clj` or callers are updated. Audit: `grep -nE "view/[a-z-]+" src/` reveals which symbols are externally consumed.
 
-**Test impact.** `test/eca_bb/view_test.clj` (352 LOC, 11 deftests) directly tests `render-item-lines`, `render-chat`, `render-tool-icon`, `rebuild-chat-lines`, `pad-to-height`, `render-status-bar`, `render-picker`, `render-login`. After split:
-- Tests for block-level fns (`render-item-lines`, `render-tool-icon`) → new `test/eca_bb/view/blocks_test.clj`.
+**Test impact.** `test/eca_cli/view_test.clj` (352 LOC, 11 deftests) directly tests `render-item-lines`, `render-chat`, `render-tool-icon`, `rebuild-chat-lines`, `pad-to-height`, `render-status-bar`, `render-picker`, `render-login`. After split:
+- Tests for block-level fns (`render-item-lines`, `render-tool-icon`) → new `test/eca_cli/view/blocks_test.clj`.
 - Tests for layout/overlays stay in `view_test.clj`.
 
 **Acceptance.**
@@ -191,7 +191,7 @@ Two-file layout. Block-renderers move to `view/blocks.clj` (~120 LOC). `view.clj
 - `state.clj` ≤ 250 LOC (down from 272). Stretch: ≤ 240.
 - `chat.clj` ≤ 500 LOC (currently 462, will grow by ~30 to ~492).
 - `bb test` passes.
-- Tests for moved cases live in `test/eca_bb/chat_test.clj` (new file) — referencing chat ns.
+- Tests for moved cases live in `test/eca_cli/chat_test.clj` (new file) — referencing chat ns.
 
 **Risks.** Low. Each move is a single case body extracted into a dedicated fn. handle-eca-notification stays in state.clj; only the case body delegates.
 
@@ -214,7 +214,7 @@ Two-file layout. Block-renderers move to `view/blocks.clj` (~120 LOC). `view.clj
 
 **Why Alt-prefixed?** Plain `g` / `G` / `c` / `o` would conflict with text-input typing. Tab-cycle is already non-alpha so it works without modifier. New jumps need a modifier.
 
-**Counter-argument.** Some TUI apps (vim, less) use bare `g`/`G` for jump because they're modal. eca-bb is not modal — input is always live. Alt-prefix is the safe path.
+**Counter-argument.** Some TUI apps (vim, less) use bare `g`/`G` for jump because they're modal. eca-cli is not modal — input is always live. Alt-prefix is the safe path.
 
 **Implementation.** Extend `chat.clj/handle-key` with new arms. `chat.clj/focusable-paths` (already extracted Phase A) returns `[[i] [i j]]` pairs. New helper `chat/top-level-paths` filters to `[[i]]` only.
 
@@ -240,7 +240,7 @@ Each test sets up an items vector with mixed top-level + sub-items, asserts `:fo
 
 ### 6. Optional: integration-test scenario breakdown
 
-**Audit.** `test/eca_bb/integration_test.clj` is 515 LOC, 20+ deftests organized by phase prefix (`phase1a-*`, `phase2-*`, etc). Tests share an ECA-spawning fixture and use tmux for output capture.
+**Audit.** `test/eca_cli/integration_test.clj` is 515 LOC, 20+ deftests organized by phase prefix (`phase1a-*`, `phase2-*`, etc). Tests share an ECA-spawning fixture and use tmux for output capture.
 
 **Compare:** eca-nvim has 20 separate test files (`tests/test_*.lua`), one per concern (auth, picker, chat-clear, stream-queue, etc).
 
@@ -253,7 +253,7 @@ Each test sets up an items vector with mixed top-level + sub-items, asserts `:fo
 
 **Recommendation pending audit.** If the answer is "current monolith works fine, no friction", document why and skip. If "split would help when adding Phase 6/7 tests", split.
 
-**Acceptance (if pursued).** Each new file ≤ 150 LOC, fixture-sharing extracted to `test/eca_bb/integration_helpers.clj` or similar. Total LOC stays roughly constant.
+**Acceptance (if pursued).** Each new file ≤ 150 LOC, fixture-sharing extracted to `test/eca_cli/integration_helpers.clj` or similar. Total LOC stays roughly constant.
 
 **Risks.** Pure churn if no real benefit. Skip until concrete pain point.
 
@@ -316,7 +316,7 @@ If new structural needs surface during roadmap work (e.g. a sixth or seventh fea
 
 ## Decisions (locked before execution)
 
-1. **Subdir layout** for view split — `src/eca_bb/view/blocks.clj`.
+1. **Subdir layout** for view split — `src/eca_cli/view/blocks.clj`.
 2. **Create `chat_test.clj`** as part of step 4 (13 deftests migrate cleanly).
 3. **Alt-prefix** for block-nav keybindings (avoids input-typing conflicts).
 4. **Apache 2.0** license, matching ECA core / nvim / emacs (no per-file copyright header).
@@ -347,13 +347,13 @@ Project total: 2062 LOC across 13 nses (Phase A end was 1975). +87 LOC for the f
 |---|---|---|---|
 | 1 | Project docs (README, LICENSE, CHANGELOG) | `01ae400` | All three present; LICENSE matches sibling editors verbatim. |
 | 2 | exit/shutdown lifecycle tests | `4097a91` | 4 new deftests added; 5th (timeout-resilience) deferred — `with-redefs` of `clojure.core/deref` recurses, requires injectable timeout to test cleanly. |
-| 3 | `view.clj` split → `view/blocks.clj` | `705e151` | view.clj 265 → 149 LOC; new view/blocks.clj 124 LOC. Block-level tests live in new test/eca_bb/view/blocks_test.clj. |
-| 4 | `state.clj` residual notification extraction | `3d0a943` | chat/opened, chat/cleared, config/updated moved to chat.clj. state.clj 272 → 252 LOC. New test/eca_bb/chat_test.clj absorbed 4 deftests + 13 testing blocks. |
+| 3 | `view.clj` split → `view/blocks.clj` | `705e151` | view.clj 265 → 149 LOC; new view/blocks.clj 124 LOC. Block-level tests live in new test/eca_cli/view/blocks_test.clj. |
+| 4 | `state.clj` residual notification extraction | `3d0a943` | chat/opened, chat/cleared, config/updated moved to chat.clj. state.clj 272 → 252 LOC. New test/eca_cli/chat_test.clj absorbed 4 deftests + 13 testing blocks. |
 | 5 | Block-navigation keybindings | `cc6613d` | 6 new Alt-prefixed bindings + 4 helpers + 7 deftests. README updated with terminal-compatibility note. |
 
 ### Plan revisions during execution
 
-**Subdir creation.** Plan called for `src/eca_bb/view/` and `test/eca_bb/view/` subdirs. Both created cleanly; Babashka classpath (`:paths ["src" "test" "charm"]`) covered nested files without bb.edn changes.
+**Subdir creation.** Plan called for `src/eca_cli/view/` and `test/eca_cli/view/` subdirs. Both created cleanly; Babashka classpath (`:paths ["src" "test" "charm"]`) covered nested files without bb.edn changes.
 
 **`chat_test.clj` carries its own `base-state`.** Phase A's `state_test.clj` had a private `base-state` helper. Step 4 copied it into chat_test rather than extracting to a shared `test_helpers.clj` — premature abstraction at 2 callers; revisit if a third test ns wants the same fixture.
 
@@ -378,7 +378,7 @@ Project total: 2062 LOC across 13 nses (Phase A end was 1975). +87 LOC for the f
 
 ### Phase A → Phase B → next
 
-Refactor track is **complete**. eca-bb's structural surface area now mirrors the sibling-editor convention: 13 cohesive nses (8 in `src/eca_bb/`, 1 in `src/eca_bb/view/`, plus `view.clj` itself), each with clear ownership.
+Refactor track is **complete**. eca-cli's structural surface area now mirrors the sibling-editor convention: 13 cohesive nses (8 in `src/eca_cli/`, 1 in `src/eca_cli/view/`, plus `view.clj` itself), each with clear ownership.
 
 All forward motion belongs on the [roadmap track](../roadmap.md), starting with Phase 6 (Tool-Call Diff Display).
 

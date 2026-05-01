@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to eca-bb. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No formal versioning yet — entries are grouped by roadmap phase and refactor phase.
+All notable changes to eca-cli. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No formal versioning yet — entries are grouped by roadmap phase and refactor phase.
 
 ## Unreleased
 
@@ -11,12 +11,12 @@ Finishes the structural debt from the Phase A audit. 85/85 tests green at every 
 ### Added
 
 - `README.md`, `LICENSE` (Apache 2.0), `CHANGELOG.md` at project root.
-- `src/eca_bb/view/blocks.clj` — extracted per-item block renderers from `view.clj` (assistant text, user message, tool-call expanded/collapsed, thinking, hook, system) plus ANSI styling constants.
+- `src/eca_cli/view/blocks.clj` — extracted per-item block renderers from `view.clj` (assistant text, user message, tool-call expanded/collapsed, thinking, hook, system) plus ANSI styling constants.
 - `chat/handle-config-updated`, `chat/handle-chat-opened`, `chat/handle-chat-cleared` — extracted from `state.clj`'s `handle-eca-notification`.
-- 4 shutdown-lifecycle deftests in `test/eca_bb/lifecycle_test.clj` covering protocol-level sequence order, cmd-quit composition, exception resilience, and Ctrl+C / `/quit` equivalence.
-- 7 block-navigation deftests in `test/eca_bb/chat_test.clj`.
+- 4 shutdown-lifecycle deftests in `test/eca_cli/lifecycle_test.clj` covering protocol-level sequence order, cmd-quit composition, exception resilience, and Ctrl+C / `/quit` equivalence.
+- 7 block-navigation deftests in `test/eca_cli/chat_test.clj`.
 - 6 new Alt-prefixed keybindings: `Alt+↑` / `Alt+↓` (jump top-level blocks, skip sub-items), `Alt+g` / `Alt+G` (focus first / last block), `Alt+c` / `Alt+o` (collapse / expand all). Documented in README with terminal-compatibility note.
-- New test files: `test/eca_bb/lifecycle_test.clj`, `test/eca_bb/chat_test.clj`, `test/eca_bb/view/blocks_test.clj`.
+- New test files: `test/eca_cli/lifecycle_test.clj`, `test/eca_cli/chat_test.clj`, `test/eca_cli/view/blocks_test.clj`.
 
 ### Changed
 
@@ -35,7 +35,7 @@ Split monolithic `state.clj` (1121 LOC) into feature-scoped namespaces aligned w
 - `login.clj` — provider login cmd builders, `providers/updated` notification handler, key dispatch for `:login` mode.
 - `view/rebuild-lines` — leaf utility called from every feature ns.
 - Pre-refactor test hardening: 7 deftests covering the approval flow (`y`/`n`/`Y`), Enter-to-send prompt, `:window-size` resize, and Ctrl+C shutdown.
-- `docs/refactor/00-assessment.md` — eca-bb-vs-ECA-editor-plugin checklist audit.
+- `docs/refactor/00-assessment.md` — eca-cli-vs-ECA-editor-plugin checklist audit.
 - `docs/refactor/01-phase-a-plan.md` — refactor plan with outcome section recording final LOC vs targets, mid-flight plan revisions, and final dep graph.
 - `docs/refactor/02-phase-b-plan.md` — Phase B plan with audit-grounded detail.
 - `docs/refactor/03-feature-gaps-roadmap-proposal.md` — maps user-visible feature gaps onto roadmap phases.
@@ -75,7 +75,7 @@ Split monolithic `state.clj` (1121 LOC) into feature-scoped namespaces aligned w
 
 ### Added
 
-- Session persistence (`~/.cache/eca/eca-bb-sessions.edn`) keyed by workspace path.
+- Session persistence (`~/.cache/eca/eca-cli-sessions.edn`) keyed by workspace path.
 - `/new` — start a fresh chat (deletes the current chat-id from sessions).
 - `/sessions` — browse and resume previous chats via picker.
 - `chat/opened` and `chat/list` protocol handling for replay and switching.
@@ -119,7 +119,7 @@ Split monolithic `state.clj` (1121 LOC) into feature-scoped namespaces aligned w
 - Streaming chat with the LLM.
 - Tool-call approval flow (`y` / `n` / `Y` for approve / reject / approve-and-trust).
 - Reader-error detection — ECA EOF surfaces as a system message rather than a silent hang.
-- Echo suppression — ECA echoes user messages back; eca-bb consumes the echo via `:echo-pending` flag rather than rendering it twice.
+- Echo suppression — ECA echoes user messages back; eca-cli consumes the echo via `:echo-pending` flag rather than rendering it twice.
 - Charm.clj integration — the Elm-loop runtime driving the TUI.
 - Initial test suite: protocol, view, state.
 

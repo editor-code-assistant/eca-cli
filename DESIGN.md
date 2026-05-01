@@ -1,10 +1,10 @@
-# eca-bb Design
+# eca-cli Design
 
 ## Vision
 
 Terminal-first AI development driver. Not a chat window in a terminal — a development loop where the LLM has real agency (reads, edits, runs commands) and the human steers and approves. Inspired by how Claude Code drives development, adapted to the ECA ecosystem and protocol.
 
-The key distinction: the LLM *pulls* context via ECA's built-in tools (filesystem, grep, git, shell) rather than the user pushing it via mentions. The user states a goal; eca-bb handles the loop.
+The key distinction: the LLM *pulls* context via ECA's built-in tools (filesystem, grep, git, shell) rather than the user pushing it via mentions. The user states a goal; eca-cli handles the loop.
 
 ## Trust Model
 

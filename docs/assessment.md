@@ -1,4 +1,4 @@
-# eca-bb Assessment: Towards a Pi-like ECA Client
+# eca-cli Assessment: Towards a Pi-like ECA Client
 
 ## What is Pi?
 
@@ -10,11 +10,11 @@ Pi's TUI reflects this. The footer shows the model, token usage, cost, and conte
 
 ECA server is a rich JSON-RPC agent backend. It handles the full complexity of LLM interaction: multi-model support, tool calling, MCP server management, context injection, sub-agents, background jobs, session persistence, rollback, forking, and provider auth. It exposes all of this over a clean protocol that any client can speak.
 
-The key insight is that **ECA is to eca-bb what pi's agent framework is to pi's TUI**. The heavy lifting — tool execution, context management, sub-agents, streaming — lives in ECA server. The client's job is to be an excellent, focused UI layer.
+The key insight is that **ECA is to eca-cli what pi's agent framework is to pi's TUI**. The heavy lifting — tool execution, context management, sub-agents, streaming — lives in ECA server. The client's job is to be an excellent, focused UI layer.
 
-## Where eca-bb Stands Today
+## Where eca-cli Stands Today
 
-eca-bb currently uses roughly 20% of the ECA protocol:
+eca-cli currently uses roughly 20% of the ECA protocol:
 
 | Area | Protocol Coverage |
 |------|------------------|
@@ -38,27 +38,27 @@ There are also known correctness gaps: the escape key was broken, login status w
 
 ## The Pi Alignment
 
-Pi and eca-bb should share a philosophy, not a feature list. The principles that should guide eca-bb:
+Pi and eca-cli should share a philosophy, not a feature list. The principles that should guide eca-cli:
 
-**Minimal core.** Every feature in eca-bb should earn its place. If ECA server handles it, eca-bb shouldn't duplicate it. The TUI's job is to surface what ECA exposes, cleanly.
+**Minimal core.** Every feature in eca-cli should earn its place. If ECA server handles it, eca-cli shouldn't duplicate it. The TUI's job is to surface what ECA exposes, cleanly.
 
 **Transparent.** The user should always know: what model they're on, what it's costing, how much context remains, what's happening right now. Pi's footer is a model for this.
 
 **Keyboard-driven.** Everything reachable by keyboard. No mouse dependency. Works in tmux alongside other tools.
 
-**Composable.** eca-bb should work as one pane in a tmux layout, not demand full-screen ownership.
+**Composable.** eca-cli should work as one pane in a tmux layout, not demand full-screen ownership.
 
 **Recoverable.** Sessions persist. You can quit and come back. You can roll back. You can steer a running prompt. Nothing is irreversibly lost.
 
-**Extensible at the seams.** The slash command system is the natural extension point. Commands are the eca-bb equivalent of pi's extensions for anything that doesn't belong in the core.
+**Extensible at the seams.** The slash command system is the natural extension point. Commands are the eca-cli equivalent of pi's extensions for anything that doesn't belong in the core.
 
-## What eca-bb is Not
+## What eca-cli is Not
 
 - It is not a general coding agent harness (that's pi)
 - It is not responsible for tool execution or context management (that's ECA server)
 - It does not need an extension system in the TypeScript sense — ECA's agent/MCP/context system already provides that layer
-- It does not need sub-agents, plan mode, or MCP management UI (ECA handles these; eca-bb exposes their outputs)
+- It does not need sub-agents, plan mode, or MCP management UI (ECA handles these; eca-cli exposes their outputs)
 
 ## Summary
 
-eca-bb's opportunity is to be the definitive TUI client for ECA server: minimal, reliable, transparent, and keyboard-driven. The roadmap that follows takes it there in phases, each one delivering a usable increment.
+eca-cli's opportunity is to be the definitive TUI client for ECA server: minimal, reliable, transparent, and keyboard-driven. The roadmap that follows takes it there in phases, each one delivering a usable increment.

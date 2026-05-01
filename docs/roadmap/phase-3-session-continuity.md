@@ -23,11 +23,11 @@ What is NOT done yet: persistence across restarts, `chat/opened`/`chat/cleared` 
 
 ### 0. Own ECA binary — `bb upgrade-eca` task
 
-eca-bb currently falls through the discovery chain to `~/.cache/nvim/eca/eca` (the Neovim plugin binary). That's fragile — users without Neovim get no binary, and eca-bb can't control which version it runs against.
+eca-cli currently falls through the discovery chain to `~/.cache/nvim/eca/eca` (the Neovim plugin binary). That's fragile — users without Neovim get no binary, and eca-cli can't control which version it runs against.
 
-**Target location:** `~/.cache/eca/eca-bb/eca` — eca-bb's exclusively managed binary.
+**Target location:** `~/.cache/eca/eca-cli/eca` — eca-cli's exclusively managed binary.
 
-**Pinned version:** stored as a constant in `src/eca_bb/upgrade.clj`:
+**Pinned version:** stored as a constant in `src/eca_cli/upgrade.clj`:
 ```clojure
 (def eca-version "0.130.0")
 ```
@@ -45,21 +45,21 @@ eca-bb currently falls through the discovery chain to `~/.cache/nvim/eca/eca` (t
 1. Build URL: `https://github.com/editor-code-assistant/eca/releases/download/{version}/{asset}`
 2. `curl -fsSL -o /tmp/eca-download.zip <url>`
 3. `unzip -o /tmp/eca-download.zip -d /tmp/eca-extract/`
-4. `chmod +x` and move to `~/.cache/eca/eca-bb/eca`
+4. `chmod +x` and move to `~/.cache/eca/eca-cli/eca`
 5. Print version confirmation.
 
 **New bb task:**
 ```clojure
 upgrade-eca {:doc "Download and install the pinned ECA binary"
-             :requires ([eca-bb.upgrade])
-             :task (eca-bb.upgrade/run!)}
+             :requires ([eca-cli.upgrade])
+             :task (eca-cli.upgrade/run!)}
 ```
 
-**Discovery order update in `server.clj`** — insert eca-bb's own binary as first fallback after `--eca` flag, before PATH and nvim:
+**Discovery order update in `server.clj`** — insert eca-cli's own binary as first fallback after `--eca` flag, before PATH and nvim:
 
 ```
 1. --eca flag
-2. ~/.cache/eca/eca-bb/eca        ← NEW (eca-bb managed)
+2. ~/.cache/eca/eca-cli/eca        ← NEW (eca-cli managed)
 3. which eca (PATH)
 4. ~/.cache/nvim/eca/eca          (nvim plugin)
 5. ~/Library/Caches/nvim/eca/eca  (nvim macOS)
@@ -70,23 +70,23 @@ upgrade-eca {:doc "Download and install the pinned ECA binary"
 ```
 ⚠ ECA version mismatch: running 0.128.2, expected 0.130.0. Run `bb upgrade-eca` to update.
 ```
-This is a warning only — eca-bb still runs with whatever binary it found.
+This is a warning only — eca-cli still runs with whatever binary it found.
 
 ---
 
-### 1. Chat-id persistence — `src/eca_bb/sessions.clj`
+### 1. Chat-id persistence — `src/eca_cli/sessions.clj`
 
 New file. Stores a map of workspace-path → chat-id in EDN:
 
 ```
-~/.cache/eca/eca-bb-sessions.edn
+~/.cache/eca/eca-cli-sessions.edn
 {"/home/sam/project" "abc-123-def"
  "/home/sam/other"   "xyz-789-ghi"}
 ```
 
 ```clojure
 (defn sessions-path []
-  (str (System/getProperty "user.home") "/.cache/eca/eca-bb-sessions.edn"))
+  (str (System/getProperty "user.home") "/.cache/eca/eca-cli-sessions.edn"))
 
 (defn load-chat-id
   "Returns persisted chat-id for workspace, or nil."
@@ -99,7 +99,7 @@ New file. Stores a map of workspace-path → chat-id in EDN:
 
 **`load-chat-id`:** `slurp` the file, `clojure.edn/read-string`, `get` by workspace. Return nil on any error (file missing, parse error).
 
-**`save-chat-id!`:** Read existing map (or `{}`), `assoc` or `dissoc`, `spit`. Create parent dirs if needed (`io/make-parents`). No locking — only one eca-bb process per workspace is expected.
+**`save-chat-id!`:** Read existing map (or `{}`), `assoc` or `dissoc`, `spit`. Create parent dirs if needed (`io/make-parents`). No locking — only one eca-cli process per workspace is expected.
 
 **Wire in `make-init`:** After resolving opts, call `(sessions/load-chat-id workspace)` and include the result as `:chat-id` in `initial-state`. First `chat/prompt` will then include `chatId`, resuming the session server-side.
 
@@ -245,7 +245,7 @@ queue <-- chat/list response  -->  :chat-list-loaded
 
 ### Unit tests (`bb test`)
 
-#### `test/eca_bb/sessions_test.clj` (new file)
+#### `test/eca_cli/sessions_test.clj` (new file)
 
 ```clojure
 (deftest load-chat-id-missing-file-test
@@ -412,7 +412,7 @@ queue <-- chat/list response  -->  :chat-list-loaded
 
 ### Integration tests (`bb itest`)
 
-Add to `test/eca_bb/integration_test.clj` under a Phase 3 section:
+Add to `test/eca_cli/integration_test.clj` under a Phase 3 section:
 
 ```clojure
 (deftest phase3-resume-test
@@ -489,12 +489,12 @@ Add to `test/eca_bb/integration_test.clj` under a Phase 3 section:
 
 ### Manual
 
-13b. `bb upgrade-eca` downloads the binary to `~/.cache/eca/eca-bb/eca` and prints the version.
-13c. `bb run` uses `~/.cache/eca/eca-bb/eca` (confirm via `--eca` flag or log output).
+13b. `bb upgrade-eca` downloads the binary to `~/.cache/eca/eca-cli/eca` and prints the version.
+13c. `bb run` uses `~/.cache/eca/eca-cli/eca` (confirm via `--eca` flag or log output).
 14. Select a session from `/sessions` picker → previous messages replay and appear in chat.
 15. Chat title appears in status bar after a chat exchange is established.
 16. `/new` after a long chat → clean start, no old messages visible, next message begins a new session.
-17. Two workspaces: each has its own independent chat-id (check `eca-bb-sessions.edn`).
+17. Two workspaces: each has its own independent chat-id (check `eca-cli-sessions.edn`).
 
 ---
 

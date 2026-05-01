@@ -15,7 +15,7 @@ No credential changes needed — do not touch `~/.cache/eca/db.transit.json`.
 
 For all scenarios, you can tail the raw protocol log in a second terminal:
 ```
-tail -f ~/.cache/eca/eca-bb.log
+tail -f ~/.cache/eca/eca-cli.log
 ```
 
 ---

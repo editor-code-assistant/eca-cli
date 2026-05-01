@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-bb run                        # start eca-bb TUI
+bb run                        # start eca-cli TUI
 bb run --trust                # start with auto-approved tool calls
 bb run --eca /path/to/eca     # specify ECA binary explicitly
 bb run --workspace /path      # set workspace root (default: cwd)
@@ -26,11 +26,11 @@ In-app commands (type in input, press Enter):
 
 Requires Babashka 1.12.215+. No separate build step — `bb run` compiles and runs directly.
 
-ECA server logs go to `~/.cache/eca/eca-bb.log`. Tail this when debugging.
+ECA server logs go to `~/.cache/eca/eca-cli.log`. Tail this when debugging.
 
 ## Architecture
 
-eca-bb is a Babashka TUI client for the ECA (Editor Code Assistant) server. It speaks the ECA JSON-RPC protocol over stdin/stdout (same as editor plugins). The LLM pulls context via ECA's built-in tools — the user just sends messages.
+eca-cli is a Babashka TUI client for the ECA (Editor Code Assistant) server. It speaks the ECA JSON-RPC protocol over stdin/stdout (same as editor plugins). The LLM pulls context via ECA's built-in tools — the user just sends messages.
 
 ### Data flow
 
@@ -77,17 +77,17 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 
 ### Key files
 
-- `src/eca_bb/server.clj` — process spawn, Content-Length JSON-RPC framing, reader thread, queue drain
-- `src/eca_bb/protocol.clj` — message constructors, request ID tracking, response correlation
-- `src/eca_bb/state.clj` — Elm state machine, ECA content handlers, all key bindings
-- `src/eca_bb/view.clj` — pure rendering: chat lines, tool icons, approval prompt, status bar
-- `src/eca_bb/sessions.clj` — EDN persistence of workspace → chat-id map
-- `src/eca_bb/upgrade.clj` — ECA binary download and version check
+- `src/eca_cli/server.clj` — process spawn, Content-Length JSON-RPC framing, reader thread, queue drain
+- `src/eca_cli/protocol.clj` — message constructors, request ID tracking, response correlation
+- `src/eca_cli/state.clj` — Elm state machine, ECA content handlers, all key bindings
+- `src/eca_cli/view.clj` — pure rendering: chat lines, tool icons, approval prompt, status bar
+- `src/eca_cli/sessions.clj` — EDN persistence of workspace → chat-id map
+- `src/eca_cli/upgrade.clj` — ECA binary download and version check
 
 ### ECA binary discovery order
 
 1. `--eca` flag
-2. `~/.cache/eca/eca-bb/eca` (eca-bb managed, installed via `bb upgrade-eca`)
+2. `~/.cache/eca/eca-cli/eca` (eca-cli managed, installed via `bb upgrade-eca`)
 3. `which eca` (PATH)
 4. `~/.cache/nvim/eca/eca` (nvim plugin, Linux)
 5. `~/Library/Caches/nvim/eca/eca` (nvim plugin, macOS)
@@ -95,7 +95,7 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 
 ### Session persistence
 
-Chat-ids are persisted to `~/.cache/eca/eca-bb-sessions.edn` keyed by workspace path. Each startup begins a fresh session — no auto-resume. Use `/sessions` to explicitly resume a previous chat. `/new` deletes the current chat and removes its entry from the sessions file.
+Chat-ids are persisted to `~/.cache/eca/eca-cli-sessions.edn` keyed by workspace path. Each startup begins a fresh session — no auto-resume. Use `/sessions` to explicitly resume a previous chat. `/new` deletes the current chat and removes its entry from the sessions file.
 
 ### Protocol reference
 

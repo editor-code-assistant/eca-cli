@@ -207,7 +207,7 @@ The `▸ N steps` suffix appears only when `:sub-items` is non-empty.
   │ {"path": "src/foo.clj"}      │
   └──────────────────────────────┘
   ┌─ Output ─────────────────────┐
-  │ (ns eca-bb.core              │
+  │ (ns eca-cli.core              │
   │   (:require ...))            │
   └──────────────────────────────┘
 ```
@@ -247,7 +247,7 @@ Wrapped at `width - 2`. While still streaming (`:status :thinking`), the expande
 ✅ eca__spawn_agent   explorer agent  ▾
   ◆ Here is the codebase overview...
   ✅ read_file   read src/state.clj
-  ✅ list_directory   src/eca_bb/
+  ✅ list_directory   src/eca_cli/
 ```
 Sub-items render their own collapsed form (1 line each) indented by 2 spaces. They are individually focusable and expandable — Tab walks them in render order alongside top-level items. An expanded sub-item adds its args/output block at the same 2-space indent level.
 
@@ -645,7 +645,7 @@ No new top-level modes. Focus is orthogonal to existing modes.
 
 - **No new modes.** Focus state is orthogonal to `:ready`/`:chatting`/`:approving`. Tab and Enter remain active in both `:ready` and `:chatting` (so the user can inspect previous tool blocks while the agent is working).
 
-- **Content type inventory.** Reference from eca-webview's protocol. Columns: handled in eca-bb today / handled in this phase / deferred.
+- **Content type inventory.** Reference from eca-webview's protocol. Columns: handled in eca-cli today / handled in this phase / deferred.
 
   | Content type | Today | Phase 4.5 | Deferred |
   |---|---|---|---|

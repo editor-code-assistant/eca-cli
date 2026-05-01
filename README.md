@@ -1,10 +1,10 @@
-# eca-bb
+# eca-cli
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
 A [Babashka](https://babashka.org/) TUI client for [ECA (Editor Code Assistant)](https://eca.dev/).
 
-eca-bb speaks the same JSON-RPC protocol as the editor plugins (eca-emacs, eca-nvim, eca-desktop) but renders entirely in the terminal. The server does the heavy lifting — eca-bb is a focused, scriptable, keyboard-driven front end.
+eca-cli speaks the same JSON-RPC protocol as the editor plugins (eca-emacs, eca-nvim, eca-desktop) but renders entirely in the terminal. The server does the heavy lifting — eca-cli is a focused, scriptable, keyboard-driven front end.
 
 > **Status:** Early development. Roadmap phases 1a–5 complete. See [docs/roadmap.md](./docs/roadmap.md) for what's in and what's next.
 
@@ -17,8 +17,8 @@ eca-bb speaks the same JSON-RPC protocol as the editor plugins (eca-emacs, eca-n
 ## Quick start
 
 ```bash
-git clone https://github.com/editor-code-assistant/eca-bb.git
-cd eca-bb
+git clone https://github.com/editor-code-assistant/eca-cli.git
+cd eca-cli
 bb upgrade-eca   # one-time: download the pinned ECA server binary
 bb run           # launch the TUI
 ```
@@ -48,7 +48,7 @@ Type these into the input and press Enter:
 | `/clear` | Clear the chat display (local only) |
 | `/help` | Show available commands |
 | `/login` | Manually trigger provider login |
-| `/quit` | Exit eca-bb |
+| `/quit` | Exit eca-cli |
 
 Typing `/` in an empty input opens an autocomplete picker for these commands.
 
@@ -73,7 +73,7 @@ Alt-prefixed bindings are supported on iTerm2, Ghostty, Kitty, and modern tmux (
 
 ## Architecture
 
-eca-bb is a Babashka TUI client built on the [charm.clj](https://github.com/timokramer/charm.clj) Elm-loop runtime. The LLM pulls context via ECA's built-in tools — the user just sends messages.
+eca-cli is a Babashka TUI client built on the [charm.clj](https://github.com/timokramer/charm.clj) Elm-loop runtime. The LLM pulls context via ECA's built-in tools — the user just sends messages.
 
 ```
 ECA process stdout
@@ -96,7 +96,7 @@ bb itest           # run integration tests (requires tmux + ECA on PATH)
 bb nrepl           # start nREPL on port 7888
 ```
 
-ECA server logs go to `~/.cache/eca/eca-bb.log` — tail this when debugging server-side issues.
+ECA server logs go to `~/.cache/eca/eca-cli.log` — tail this when debugging server-side issues.
 
 ## Roadmap
 

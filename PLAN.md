@@ -1,4 +1,4 @@
-# eca-bb
+# eca-cli
 
 Babashka TUI client for ECA (Editor Code Assistant).
 
@@ -30,7 +30,7 @@ reader thread → LinkedBlockingQueue → program/cmd (drain batch) → update �
 - Trust mode (`--trust` flag, safe by default)
 - Prompt stop (Esc)
 - Graceful shutdown + terminal cleanup on crash
-- ECA stderr → `~/.cache/eca/eca-bb.log` (no terminal bleed)
+- ECA stderr → `~/.cache/eca/eca-cli.log` (no terminal bleed)
 - Manual line-slice scroll (up/down/k/j)
 
 ## MVP-1 (follow-up)

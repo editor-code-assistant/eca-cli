@@ -1,38 +1,38 @@
 {:paths ["src" "test" "charm"]
  :deps {de.timokramer/charm.clj {:mvn/version "0.2.71"}}
- :tasks {run         {:doc "Run eca-bb"
-                      :requires ([eca-bb.core])
-                      :task (apply eca-bb.core/-main *command-line-args*)}
+ :tasks {run         {:doc "Run eca-cli"
+                      :requires ([eca-cli.core])
+                      :task (apply eca-cli.core/-main *command-line-args*)}
          nrepl       {:doc "Start nREPL for development"
                       :task (exec 'nrepl.cmdline/-main {:args ["--port" "7888"]})}
          upgrade-eca {:doc "Download and install the pinned ECA binary"
-                      :requires ([eca-bb.upgrade])
-                      :task (eca-bb.upgrade/run!)}
+                      :requires ([eca-cli.upgrade])
+                      :task (eca-cli.upgrade/run!)}
          test        {:doc "Run unit tests"
                       :task (do (require '[clojure.test])
-                                (require '[eca-bb.chat-test])
-                                (require '[eca-bb.commands-test])
-                                (require '[eca-bb.lifecycle-test])
-                                (require '[eca-bb.protocol-test])
-                                (require '[eca-bb.view-test])
-                                (require '[eca-bb.view.blocks-test])
-                                (require '[eca-bb.state-test])
-                                (require '[eca-bb.sessions-test])
-                                (require '[eca-bb.upgrade-test])
+                                (require '[eca-cli.chat-test])
+                                (require '[eca-cli.commands-test])
+                                (require '[eca-cli.lifecycle-test])
+                                (require '[eca-cli.protocol-test])
+                                (require '[eca-cli.view-test])
+                                (require '[eca-cli.view.blocks-test])
+                                (require '[eca-cli.state-test])
+                                (require '[eca-cli.sessions-test])
+                                (require '[eca-cli.upgrade-test])
                                 (let [{:keys [fail error]}
-                                      (clojure.test/run-tests 'eca-bb.chat-test
-                                                              'eca-bb.commands-test
-                                                              'eca-bb.lifecycle-test
-                                                              'eca-bb.protocol-test
-                                                              'eca-bb.view-test
-                                                              'eca-bb.view.blocks-test
-                                                              'eca-bb.state-test
-                                                              'eca-bb.sessions-test
-                                                              'eca-bb.upgrade-test)]
+                                      (clojure.test/run-tests 'eca-cli.chat-test
+                                                              'eca-cli.commands-test
+                                                              'eca-cli.lifecycle-test
+                                                              'eca-cli.protocol-test
+                                                              'eca-cli.view-test
+                                                              'eca-cli.view.blocks-test
+                                                              'eca-cli.state-test
+                                                              'eca-cli.sessions-test
+                                                              'eca-cli.upgrade-test)]
                                   (System/exit (if (pos? (+ fail error)) 1 0))))}
          itest       {:doc "Run integration tests (requires tmux + ECA on PATH)"
                       :task (do (require '[clojure.test])
-                                (require '[eca-bb.integration-test])
+                                (require '[eca-cli.integration-test])
                                 (let [{:keys [fail error]}
-                                      (clojure.test/run-tests 'eca-bb.integration-test)]
+                                      (clojure.test/run-tests 'eca-cli.integration-test)]
                                   (System/exit (if (pos? (+ fail error)) 1 0))))}}}

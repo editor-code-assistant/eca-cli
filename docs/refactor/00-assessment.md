@@ -1,8 +1,8 @@
-# eca-bb Refactor Assessment
+# eca-cli Refactor Assessment
 
 Date: 2026-05-01
 Source: ECA `docs/development.md` (https://github.com/editor-code-assistant/eca/blob/master/docs/development.md)
-Goal: Align eca-bb with ECA editor-plugin conventions and improve LLM-maintainability.
+Goal: Align eca-cli with ECA editor-plugin conventions and improve LLM-maintainability.
 
 ## Sibling editor patterns
 
@@ -13,20 +13,20 @@ One file per feature concern is the consistent rule across the ecosystem.
 - **eca-nvim**: ~20 test files, one per feature.
 - **ECA core**: layered `src/eca/{server,handlers,messenger,db,llm_api,llm_providers/,features/{chat,mcp,tools/}}`.
 
-eca-bb deviates: `src/eca_bb/state.clj` is 1121 LOC and folds chat handlers, key bindings, MCP-adjacent state, sessions UI, approval, and reasoning into a single namespace.
+eca-cli deviates: `src/eca_cli/state.clj` is 1121 LOC and folds chat handlers, key bindings, MCP-adjacent state, sessions UI, approval, and reasoning into a single namespace.
 
 ## Checklist coverage
 
 Items copied verbatim from `development.md` "Supporting a new editor" checklist.
 
-| Item | eca-bb status | Notes |
+| Item | eca-cli status | Notes |
 |---|---|---|
 | Auto-download server | done | `upgrade.clj` + cache discovery |
 | User-specify server path/args | done | `--eca` flag |
 | Start/stop server from editor | partial | start only (init), no in-app stop/restart |
 | Show server status | done | `:connecting`/`:ready` in status bar |
 | stdin/stdout JSONRPC | done | `server.clj` |
-| stderr access for debug/logs | missing | logs at `~/.cache/eca/eca-bb.log`, no in-app viewer |
+| stderr access for debug/logs | missing | logs at `~/.cache/eca/eca-cli.log`, no in-app viewer |
 | `initialize` / `initialized` | done | |
 | `exit` / `shutdown` | verify | confirm in `protocol.clj` |
 | Open chat window | done | |
@@ -89,17 +89,17 @@ C2. Mirror integration-test naming convention from `bb integration-test`.
   - `/home/sam/workspace/sbs/eca-project/eca-webview/`
   - `/home/sam/workspace/sbs/eca-project/eca/`
 
-## Current eca-bb file inventory
+## Current eca-cli file inventory
 
 ```
-src/eca_bb/commands.clj       4 LOC
-src/eca_bb/core.clj          40 LOC
-src/eca_bb/protocol.clj     138 LOC
-src/eca_bb/server.clj       161 LOC
-src/eca_bb/sessions.clj      29 LOC
-src/eca_bb/state.clj       1121 LOC   <- monolith
-src/eca_bb/upgrade.clj       60 LOC
-src/eca_bb/view.clj         257 LOC
-src/eca_bb/wrap.clj          87 LOC
+src/eca_cli/commands.clj       4 LOC
+src/eca_cli/core.clj          40 LOC
+src/eca_cli/protocol.clj     138 LOC
+src/eca_cli/server.clj       161 LOC
+src/eca_cli/sessions.clj      29 LOC
+src/eca_cli/state.clj       1121 LOC   <- monolith
+src/eca_cli/upgrade.clj       60 LOC
+src/eca_cli/view.clj         257 LOC
+src/eca_cli/wrap.clj          87 LOC
 total                      1897 LOC
 ```

@@ -1,6 +1,6 @@
 # Feature Gaps → Roadmap Proposal
 
-The Phase A assessment audited eca-bb against the ECA `development.md` editor-plugin checklist and surfaced gaps. Some are structural (Phase B). Others are user-visible features and belong on the [roadmap](../roadmap.md). This doc proposes how the feature gaps map to existing or new roadmap phases.
+The Phase A assessment audited eca-cli against the ECA `development.md` editor-plugin checklist and surfaced gaps. Some are structural (Phase B). Others are user-visible features and belong on the [roadmap](../roadmap.md). This doc proposes how the feature gaps map to existing or new roadmap phases.
 
 ## Current roadmap state
 
@@ -84,7 +84,7 @@ Fold in:
 1. Land Phase B (structural) first — small, defensive, completes the refactor track.
 2. Then resume roadmap track at Phase 6 (Tool-Call Diff Display) — first ECA-required item.
 3. Continue through Phase 7 (MCP) before tackling the polish work in Phase 8 (Markdown).
-4. Open a tracking issue mirroring development.md's checklist (per its instruction: *"Create an issue to help track the effort copying and pasting these check box to help track progress, [example](https://github.com/editor-code-assistant/eca/issues/5)"*) — gives ECA maintainers visibility into eca-bb's progress against the standard.
+4. Open a tracking issue mirroring development.md's checklist (per its instruction: *"Create an issue to help track the effort copying and pasting these check box to help track progress, [example](https://github.com/editor-code-assistant/eca/issues/5)"*) — gives ECA maintainers visibility into eca-cli's progress against the standard.
 
 ## Decisions
 

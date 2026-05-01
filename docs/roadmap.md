@@ -1,6 +1,6 @@
-# eca-bb Roadmap
+# eca-cli Roadmap
 
-A phased plan to make eca-bb a minimal, reliable, pi-like TUI client for ECA server.
+A phased plan to make eca-cli a minimal, reliable, pi-like TUI client for ECA server.
 
 Read [assessment.md](assessment.md) for the philosophical grounding behind this roadmap.
 
@@ -93,10 +93,10 @@ See [roadmap/phase-3-session-continuity.md](roadmap/phase-3-session-continuity.m
 ### What to build
 
 **Own ECA binary (`bb upgrade-eca`).**  
-Download and manage a pinned ECA binary at `~/.cache/eca/eca-bb/eca`, independent of editor plugins. Discovery order updated to prefer this over nvim/emacs locations. Startup version check warns if the running binary doesn't match the pinned version.
+Download and manage a pinned ECA binary at `~/.cache/eca/eca-cli/eca`, independent of editor plugins. Discovery order updated to prefer this over nvim/emacs locations. Startup version check warns if the running binary doesn't match the pinned version.
 
 **Chat-id persistence.**  
-After first exchange, write chat-id to `~/.cache/eca/eca-bb-sessions.edn` keyed by workspace path. On restart, read it and resume silently — no prompt, no flag.
+After first exchange, write chat-id to `~/.cache/eca/eca-cli-sessions.edn` keyed by workspace path. On restart, read it and resume silently — no prompt, no flag.
 
 **`chat/opened` and `chat/cleared` handlers.**  
 `chat/opened` is the canonical notification when a chat is created or replayed — store chat-id and title. `chat/cleared` signals the server wants us to wipe local items (used before replay and after `/new`).
@@ -122,7 +122,7 @@ Show the current chat title (truncated) from `chat/opened`.
 
 ## Phase 4: Command System
 
-**Goal:** A slash command system that is the primary extensibility seam for eca-bb.
+**Goal:** A slash command system that is the primary extensibility seam for eca-cli.
 
 ### What to build
 
@@ -268,7 +268,7 @@ With markdown rendering in place, `url` items (`{:type "url" :title "..." :url "
 
 ## Phase 9: Message Steering
 
-**Goal:** Send messages to influence a running prompt without stopping it — the eca-bb equivalent of pi's message queue.
+**Goal:** Send messages to influence a running prompt without stopping it — the eca-cli equivalent of pi's message queue.
 
 ### What to build
 
@@ -301,7 +301,7 @@ Alt+Enter queues a follow-up message, delivered only after the agent fully compl
 ### What to build
 
 **`chat/askQuestion` handler.**  
-ECA server can send a `chat/askQuestion` request with a question, optional predefined options, and an `allowFreeform` flag. eca-bb must:
+ECA server can send a `chat/askQuestion` request with a question, optional predefined options, and an `allowFreeform` flag. eca-cli must:
 1. Pause the chat display and show the question prominently  
 2. If options are provided, show a numbered/lettered selector  
 3. If `allowFreeform` is true, also allow typing a custom answer  
@@ -318,7 +318,7 @@ The question and the user's answer should appear in the chat history as a distin
 Phase 4 built a local registry. ECA also exposes server-side commands via `chat/queryCommands` (e.g. agent-defined slash commands). When the user types `/` and the input picker opens, query the server in addition to the local registry and merge results.
 
 **In-app log viewer (`/logs`).**  
-A panel that reads `~/.cache/eca/eca-bb.log` and shows the tail with auto-scroll, primarily for users / contributors who don't know to tail the file directly. Read-only. Keyboard scrolling, Escape to close. Useful when something goes wrong and the user can't be expected to know the path.
+A panel that reads `~/.cache/eca/eca-cli.log` and shows the tail with auto-scroll, primarily for users / contributors who don't know to tail the file directly. Read-only. Keyboard scrolling, Escape to close. Useful when something goes wrong and the user can't be expected to know the path.
 
 ### Stopping criteria
 
@@ -342,13 +342,13 @@ A panel that reads `~/.cache/eca/eca-bb.log` and shows the tail with auto-scroll
 Typing `@` in the input triggers a fuzzy file search (using `chat/queryFiles`) and inserts the selected file as a context in the `chat/prompt` call. This mirrors pi's `@` shortcut exactly. The context appears as a reference in the user message display.
 
 **Background jobs panel.**  
-ECA tracks long-running background jobs (dev servers, watchers, etc.) via `jobs/list` and `jobs/updated`. eca-bb should show a compact jobs indicator in the status bar (e.g., `[2 jobs]`) that the user can expand into a panel listing job names, statuses, and elapsed times. Killing a job (`jobs/kill`) should be possible from the panel.
+ECA tracks long-running background jobs (dev servers, watchers, etc.) via `jobs/list` and `jobs/updated`. eca-cli should show a compact jobs indicator in the status bar (e.g., `[2 jobs]`) that the user can expand into a panel listing job names, statuses, and elapsed times. Killing a job (`jobs/kill`) should be possible from the panel.
 
 **Chat rollback (`/rollback`).**  
-A command that shows the chat history and lets the user pick a message to roll back to. Sends `chat/rollback` to ECA. ECA sends `chat/cleared` followed by the kept messages, which eca-bb re-renders. This is the eca-bb equivalent of pi's `/tree` for branching.
+A command that shows the chat history and lets the user pick a message to roll back to. Sends `chat/rollback` to ECA. ECA sends `chat/cleared` followed by the kept messages, which eca-cli re-renders. This is the eca-cli equivalent of pi's `/tree` for branching.
 
 **Chat fork (`/fork`).**  
-Fork the current chat at a selected message. Sends `chat/fork` to ECA, which creates a new chat. eca-bb receives `chat/opened` with the new chat-id and switches to it. The forked chat appears in `/sessions`.
+Fork the current chat at a selected message. Sends `chat/fork` to ECA, which creates a new chat. eca-cli receives `chat/opened` with the new chat-id and switches to it. The forked chat appears in `/sessions`.
 
 ### Stopping criteria
 

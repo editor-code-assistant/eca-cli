@@ -4,7 +4,7 @@
 
 ## Goal
 
-A slash command system that is the primary extensibility seam for eca-bb. Typing `/` opens an interactive command picker. All built-in commands live in one registry. Adding a new command means adding one entry — no other code changes.
+A slash command system that is the primary extensibility seam for eca-cli. Typing `/` opens an interactive command picker. All built-in commands live in one registry. Adding a new command means adding one entry — no other code changes.
 
 ---
 
@@ -20,7 +20,7 @@ What is NOT done yet: a command registry, autocomplete-on-`/`, `/clear`, `/help`
 
 ## What to Build
 
-### 1. Command registry — `src/eca_bb/commands.clj`
+### 1. Command registry — `src/eca_cli/commands.clj`
 
 New namespace. Exports a single map `registry`:
 
@@ -31,7 +31,7 @@ New namespace. Exports a single map `registry`:
  "/sessions" {:doc "Browse and resume previous chats"   :handler list-sessions}
  "/clear"    {:doc "Clear chat display (local only)"    :handler clear-chat}
  "/help"     {:doc "Show available commands"            :handler show-help}
- "/quit"     {:doc "Exit eca-bb"                        :handler quit}
+ "/quit"     {:doc "Exit eca-cli"                        :handler quit}
  "/login"    {:doc "Manually trigger provider login"    :handler login}}
 ```
 
@@ -189,12 +189,12 @@ label (case kind
 
 ### Unit tests (`bb test`)
 
-#### `test/eca_bb/commands_test.clj` (new file)
+#### `test/eca_cli/commands_test.clj` (new file)
 
 ```clojure
-(ns eca-bb.commands-test
+(ns eca-cli.commands-test
   (:require [clojure.test :refer [deftest is testing]]
-            [eca-bb.commands :as commands]))
+            [eca-cli.commands :as commands]))
 
 (deftest registry-completeness-test
   (testing "all expected commands present"
@@ -374,7 +374,7 @@ label (case kind
 
 ### Integration tests (`bb itest`)
 
-Add to `test/eca_bb/integration_test.clj` under a Phase 4 section:
+Add to `test/eca_cli/integration_test.clj` under a Phase 4 section:
 
 ```clojure
 ;; ---------------------------------------------------------------------------
@@ -495,7 +495,7 @@ Add to `test/eca_bb/integration_test.clj` under a Phase 4 section:
 26. Type `mo` → narrows to `/model`; Enter opens model picker; select model — status bar updates.
 27. Type `/clear` + Enter → old messages gone; next message continues the same session (chat-id unchanged).
 28. Type `/help` + Enter → formatted command list visible in chat.
-29. Type `/quit` + Enter → eca-bb exits cleanly (exit code 0, no error output).
+29. Type `/quit` + Enter → eca-cli exits cleanly (exit code 0, no error output).
 30. Type `/notacommand` + Enter → ⚠ error visible in chat, app remains responsive.
 31. Type `/login` + Enter → ECA login flow begins for the first unauthenticated provider (device-code, input, or authorize action appears).
 32. If all providers are authenticated, `/login` shows `⚠ Login required but no unauthenticated provider found`.

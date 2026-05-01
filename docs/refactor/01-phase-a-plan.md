@@ -5,7 +5,7 @@ Goal: split `state.clj` (1121 LOC) into feature-scoped namespaces matching sibli
 ## Target file layout
 
 ```
-src/eca_bb/
+src/eca_cli/
   core.clj           ; entrypoint (unchanged)
   server.clj         ; process spawn, JSON-RPC framing, reader thread (unchanged)
   protocol.clj       ; request/notification builders (unchanged)
@@ -20,7 +20,7 @@ src/eca_bb/
   sessions.clj       ; chat-list/open/delete cmds + persistence (EXTEND from 29 LOC, ~80 LOC)
 ```
 
-No subdirs (`features/`) — eca-bb is small enough that flat layout matches eca-emacs.
+No subdirs (`features/`) — eca-cli is small enough that flat layout matches eca-emacs.
 
 ## Dependency graph (one-way)
 
@@ -38,7 +38,7 @@ No back-refs to `state`. No cycles.
 
 ## Mapping: state.clj → target ns
 
-Line ranges from current `src/eca_bb/state.clj`.
+Line ranges from current `src/eca_cli/state.clj`.
 
 | Lines | Symbol | Target |
 |---|---|---|
@@ -112,7 +112,7 @@ This block is the dispatcher's contract. Extraction steps must not reorder arms.
 
 ## Test coverage assessment
 
-`test/eca_bb/state_test.clj` is 1125 LOC, 50 deftests. Breakdown by area:
+`test/eca_cli/state_test.clj` is 1125 LOC, 50 deftests. Breakdown by area:
 
 | Area | deftest count | Coverage |
 |---|---|---|
@@ -135,7 +135,7 @@ Approval logic is exercised indirectly via `handle-content-tool-call-run-test` (
 
 50 deftests use `#'state/private-fn` and `state/public-fn` direct refs. Splitting requires:
 
-- Update every `(:require [eca-bb.state ...])` in tests to point at the new ns.
+- Update every `(:require [eca-cli.state ...])` in tests to point at the new ns.
 - Rename `#'state/handle-content` → `#'chat/handle-content`, etc.
 - Make currently-private fns public on move (or test through `update-state` only).
 
@@ -207,7 +207,7 @@ Status: **complete**. 73/73 tests green at every commit. No behaviour regression
 | `sessions.clj` | ~80 | **56** | Persistence (kept) + 3 cmd builders absorbed. |
 | `view.clj` | unchanged | **265** | +`rebuild-lines` (8 LOC). |
 
-Project total: 1975 LOC across 12 nses. Sibling comparison: eca-nvim 7000, eca-emacs 9903, eca-desktop 6185 — eca-bb is the smallest by 3-5×, expected for a TUI client.
+Project total: 1975 LOC across 12 nses. Sibling comparison: eca-nvim 7000, eca-emacs 9903, eca-desktop 6185 — eca-cli is the smallest by 3-5×, expected for a TUI client.
 
 ### Step sequence (actual)
 
