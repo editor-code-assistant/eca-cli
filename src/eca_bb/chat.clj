@@ -251,6 +251,56 @@
 
       state)))
 
+(defn handle-content-received
+  "ECA `chat/contentReceived` notification handler.
+
+  ECA echoes the user's message back (role:\"user\") so editor plugins that
+  don't track sent messages can display it. We render user messages
+  immediately on send, so consume the echo via :echo-pending flag and skip
+  rendering it.
+  Non-echo role:\"user\" text is a replayed historical message (session
+  resume): flush :current-text first so prior assistant responses land in
+  the right position. Non-text role:\"user\" content (e.g. progress start
+  markers) is ignored.
+  Route by chatId: any message from a known sub-agent chat goes to the
+  spawn tool call's :sub-items. parentChatId is not required — ECA omits
+  it on role:\"user\" messages (the task prompt sent to the sub-agent)."
+  [state notification]
+  (let [params  (:params notification)
+        content (:content params)]
+    (if-let [parent-idx (get (:subagent-chats state) (:chatId params))]
+      [(-> state
+           (update-in [:items parent-idx :sub-items]
+                      (fn [subs]
+                        (if-let [item (content->item params)]
+                          (conj (or subs []) item)
+                          (or subs []))))
+           view/rebuild-lines)
+       nil]
+      (if (= "user" (:role params))
+        (if (= "text" (:type content))
+          (cond
+            ;; Sub-agent task prompt: parentChatId marks it as machine-generated,
+            ;; never typed by the human — render as assistant text, not user input.
+            (:parentChatId params)
+            [(-> state
+                 flush-current-text
+                 (update :items conj {:type :assistant-text :text (or (:text content) "")})
+                 view/rebuild-lines)
+             nil]
+
+            (:echo-pending state)
+            [(assoc state :echo-pending false) nil]
+
+            :else
+            [(-> state
+                 flush-current-text
+                 (update :items conj {:type :user :text (or (:text content) "")})
+                 view/rebuild-lines)
+             nil])
+          [state nil])
+        [(handle-content state params) nil]))))
+
 ;; --- Approval key dispatch (:approving mode) ---
 
 (defn handle-approval-key
