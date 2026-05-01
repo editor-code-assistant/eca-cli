@@ -37,6 +37,22 @@ We currently ship a vendored copy of charm.clj under `charm/` (added to `:paths`
 
 Trigger: revisit before any roadmap phase that touches charm internals (Phase 7 MCP panel rendering and Phase 8 markdown rendering both stretch the render layer; a fresh upstream is worth having before either).
 
+### Production-ready distribution via [bbin](https://github.com/babashka/bbin)
+
+When eca-cli is ready for end-users (not just developers cloning the repo), it should be installable via `bbin install` so the standard install path is one command, not "clone, install Babashka, run `bb upgrade-eca`, run `bb run`". Action items:
+
+1. **Audit `bb.edn`** for bbin compatibility. The `:tasks` map needs at least a default task with stable CLI args so `bbin install` can wire `eca-cli` as a script-on-PATH. Reference: [bbin docs on script installation](https://github.com/babashka/bbin?tab=readme-ov-file#script-installation).
+2. **Tighten config + cache paths to follow XDG conventions.** Currently `~/.cache/eca/eca-cli-sessions.edn`, `~/.cache/eca/eca-cli.log`, and `~/.cache/eca/eca-cli/eca` (the upgrade-eca-managed binary) are hardcoded under `~/.cache/eca/`. For bbin distribution we should:
+   - Respect `XDG_CACHE_HOME` (cache files) and `XDG_CONFIG_HOME` (any future config) when set, falling back to `~/.cache` and `~/.config`.
+   - Centralise path resolution in one helper (probably `sessions.clj` or a new `paths.clj`) so future additions don't drift.
+3. **Tighten logging.** ECA server stderr currently goes to `~/.cache/eca/eca-cli.log`. For installed users we should:
+   - Document the log path in `--help` output and in startup banners ("Logs: $XDG_CACHE_HOME/eca-cli/server.log").
+   - Add log rotation or size-cap (currently the log grows unbounded).
+   - Ensure the log directory is created on first run rather than failing silently.
+4. **Document install via bbin** in README — assuming successful audit, the canonical install becomes `bbin install io.github.editor-code-assistant/eca-cli`.
+
+Trigger: post Phase 7 (MCP) — by that point the feature surface is stable enough to start treating eca-cli as something end-users would install, and the Phase 10 in-app log viewer is also a good moment to revisit log paths.
+
 ---
 
 ## Phase 1a: Reliable Core
