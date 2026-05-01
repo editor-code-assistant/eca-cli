@@ -7,25 +7,35 @@
 (defn divider [width]
   (apply str (repeat width "─")))
 
-(defn rebuild-chat-lines [items current-text width]
-  (->> (concat items
-               (when (seq current-text)
-                 [{:type :streaming-text :text current-text}]))
-       (mapcat (fn [item]
-                 (let [lines (blocks/render-item-lines item width)]
-                   ;; User items already include blank lines; add one after everything else
-                   (if (= :user (:type item))
-                     lines
-                     (conj (vec lines) "")))))
-       vec))
-
+(defn rebuild-chat-lines
+  "Returns {:lines vec :spans {idx [start end]}} where spans key is the index
+  of the source item in `items` (top-level only; streaming-text is excluded)."
+  [items current-text width]
+  (let [n-items (count items)
+        all     (concat items
+                        (when (seq current-text)
+                          [{:type :streaming-text :text current-text}]))]
+    (reduce
+      (fn [{:keys [lines spans]} [idx item]]
+        (let [rendered (blocks/render-item-lines item width)
+              block    (if (= :user (:type item))
+                         (vec rendered)
+                         (conj (vec rendered) ""))
+              start    (count lines)
+              end      (+ start (count block))]
+          {:lines (into lines block)
+           :spans (if (< idx n-items)
+                    (assoc spans idx [start end])
+                    spans)}))
+      {:lines [] :spans {}}
+      (map-indexed vector all))))
 
 (defn rebuild-lines
-  "Rebuild a state's :chat-lines from its :items / :current-text / :width.
+  "Rebuild a state's :chat-lines + :chat-line-spans from :items / :current-text / :width.
   Lives here (leaf util) because every feature ns calls it."
   [state]
-  (assoc state :chat-lines
-         (rebuild-chat-lines (:items state) (:current-text state) (:width state))))
+  (let [{:keys [lines spans]} (rebuild-chat-lines (:items state) (:current-text state) (:width state))]
+    (assoc state :chat-lines lines :chat-line-spans spans)))
 
 (defn- pad-to-height [lines height]
   (let [n (count lines)]

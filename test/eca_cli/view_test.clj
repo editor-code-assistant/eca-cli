@@ -14,31 +14,34 @@
 
 (deftest rebuild-chat-lines-test
   (testing "empty"
-    (is (= [] (view/rebuild-chat-lines [] "" 80))))
+    (is (= {:lines [] :spans {}} (view/rebuild-chat-lines [] "" 80))))
 
   (testing "single user item — 3 lines (empty, content, empty)"
-    (let [lines (view/rebuild-chat-lines [{:type :user :text "hi"}] "" 80)]
+    (let [{:keys [lines spans]} (view/rebuild-chat-lines [{:type :user :text "hi"}] "" 80)]
       (is (= 3 (count lines)))
-      (is (clojure.string/includes? (second lines) "hi"))))
+      (is (clojure.string/includes? (second lines) "hi"))
+      (is (= {0 [0 3]} spans))))
 
   (testing "multiple items — user (3 lines) + assistant (1 line) + blank (1 line)"
-    (let [lines (view/rebuild-chat-lines
-                  [{:type :user :text "hi"}
-                   {:type :assistant-text :text "hello"}]
-                  "" 80)]
+    (let [{:keys [lines spans]} (view/rebuild-chat-lines
+                                  [{:type :user :text "hi"}
+                                   {:type :assistant-text :text "hello"}]
+                                  "" 80)]
       (is (= 5 (count lines)))
       (is (clojure.string/includes? (second lines) "hi"))
       (is (= "" (last lines)))
-      (is (clojure.string/starts-with? (nth lines 3) "◆ "))))
+      (is (clojure.string/starts-with? (nth lines 3) "◆ "))
+      (is (= {0 [0 3] 1 [3 5]} spans))))
 
-  (testing "with current-text appended as streaming (+ blank)"
-    (let [lines (view/rebuild-chat-lines [{:type :user :text "hi"}] "typing..." 80)]
+  (testing "with current-text appended as streaming (+ blank); streaming has no span entry"
+    (let [{:keys [lines spans]} (view/rebuild-chat-lines [{:type :user :text "hi"}] "typing..." 80)]
       (is (= 5 (count lines)))
       (is (= "" (last lines)))
-      (is (clojure.string/starts-with? (nth lines 3) "◆ "))))
+      (is (clojure.string/starts-with? (nth lines 3) "◆ "))
+      (is (= {0 [0 3]} spans))))
 
   (testing "empty current-text not appended"
-    (let [lines (view/rebuild-chat-lines [{:type :user :text "hi"}] "" 80)]
+    (let [{:keys [lines]} (view/rebuild-chat-lines [{:type :user :text "hi"}] "" 80)]
       (is (= 3 (count lines))))))
 
 (deftest pad-to-height-test

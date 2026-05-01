@@ -370,6 +370,34 @@
 ;; State.clj's dispatcher catches Ctrl+L, Ctrl+C, Enter+slash, "/" autocomplete
 ;; BEFORE delegating here, so handle-key never needs to know about commands.
 
+(defn- ensure-focus-visible
+  "Adjust :scroll-offset so the focused item's line span sits inside the
+  visible window. Top-level path [i] uses span i; sub-item path [i j] falls
+  back to parent span [i]. Prefers showing the start of the item if its span
+  exceeds visible-height. No-op if no focus-path or span unknown."
+  [state]
+  (let [path (:focus-path state)]
+    (if-let [[i] path]
+      (if-let [[s e] (get (:chat-line-spans state) i)]
+        (let [total          (count (:chat-lines state))
+              visible-height (max 1 (- (:height state) 5))
+              offset         (or (:scroll-offset state) 0)
+              end-vis        (- total offset)
+              start-vis      (- end-vis visible-height)
+              max-offset     (max 0 (- total visible-height))
+              new-offset     (cond
+                               (or (< s start-vis)
+                                   (> (- e s) visible-height))
+                               (- total s visible-height)
+
+                               (> e end-vis)
+                               (- total e)
+
+                               :else offset)]
+          (assoc state :scroll-offset (max 0 (min max-offset new-offset))))
+        state)
+      state)))
+
 (defn- focus-paths-cycle [state direction]
   (let [paths (focusable-paths (:items state))]
     (if (empty? paths)
@@ -380,7 +408,7 @@
             next    (case direction
                       :forward  (if (nil? cur-idx) (first paths) (nth paths (mod (inc cur-idx) n)))
                       :backward (if (nil? cur-idx) (last paths)  (nth paths (mod (dec cur-idx) n))))]
-        [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines) nil]))))
+        [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines ensure-focus-visible) nil]))))
 
 (defn- enter-submit-prompt [state]
   (let [text (str/trim (ti/value (:input state)))]
@@ -458,7 +486,7 @@
             next    (case direction
                       :forward  (if (nil? cur-idx) (first paths) (nth paths (mod (inc cur-idx) n)))
                       :backward (if (nil? cur-idx) (last paths)  (nth paths (mod (dec cur-idx) n))))]
-        [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines) nil]))))
+        [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines ensure-focus-visible) nil]))))
 
 (defn- focus-edge [state edge]
   (let [paths (focusable-paths (:items state))]
@@ -467,7 +495,8 @@
       [(-> state
            (assoc :focus-path (case edge :first (first paths) :last (last paths)))
            sync-focus
-           view/rebuild-lines)
+           view/rebuild-lines
+           ensure-focus-visible)
        nil])))
 
 (defn- expandable? [item]

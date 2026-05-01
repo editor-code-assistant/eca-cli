@@ -5,7 +5,8 @@
   (:require [clojure.test :refer [deftest is testing]]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
-            [eca-cli.chat :as chat]))
+            [eca-cli.chat :as chat]
+            [eca-cli.view :as view]))
 
 (defn- base-state []
   {:mode                  :chatting
@@ -241,6 +242,30 @@
       (is (every? #(or (not (#{:tool-call :thinking :hook} (:type %)))
                        (true? (:expanded? %)))
                   (:items s))))))
+
+(deftest tab-scrolls-focused-item-into-view-test
+  (testing "Tab past end of visible window pulls scroll-offset toward target"
+    (let [items (vec (concat
+                       (repeat 30 {:type :assistant-text :text "old"})
+                       [{:type :tool-call :name "read_file" :state :called
+                         :expanded? false :focused? false}]))
+          s0 (-> (base-state)
+                 (assoc :items items :mode :ready :height 10 :scroll-offset 25)
+                 view/rebuild-lines)
+          [s _] (chat/handle-key s0 (msg/key-press :tab))]
+      (is (= [30] (:focus-path s)))
+      ;; Last item's span ends at total; offset must drop so end-of-item is visible.
+      (is (zero? (:scroll-offset s)))))
+
+  (testing "Tab to item already inside window leaves scroll-offset unchanged"
+    (let [items [{:type :tool-call :name "a" :state :called :expanded? false :focused? false}
+                 {:type :tool-call :name "b" :state :called :expanded? false :focused? false}]
+          s0 (-> (base-state)
+                 (assoc :items items :mode :ready :height 24 :scroll-offset 0)
+                 view/rebuild-lines)
+          [s _] (chat/handle-key s0 (msg/key-press :tab))]
+      (is (= [0] (:focus-path s)))
+      (is (zero? (:scroll-offset s))))))
 
 (deftest block-nav-noop-on-empty-items-test
   (testing "Alt+↓ on empty items returns state unchanged"
