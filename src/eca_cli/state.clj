@@ -253,8 +253,7 @@
       ;; MCP-picker Enter arm — connect on requires-auth rows; everything else
       ;; falls through to the generic picker dispatch (filter, navigation, Esc).
       (and (msg/key-press? msg) (msg/key-match? msg :enter)
-           (= :picking (:mode state))
-           (= :mcp (get-in state [:picker :kind])))
+           (mcp/picker-open? state))
       (mcp/handle-key state msg)
 
       (= :picking (:mode state))           (picker/handle-key state msg)

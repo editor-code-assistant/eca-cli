@@ -20,6 +20,14 @@
 
 ;; --- /mcp command + panel ---
 
+(defn picker-open?
+  "True when state is in the `:picking` mode with the `:mcp` picker kind. Used
+  by mcp.clj (handler refresh, panel render) and state.clj (Enter dispatch) to
+  share one definition of \"MCP picker is the active overlay\"."
+  [state]
+  (and (= :picking (:mode state))
+       (= :mcp (get-in state [:picker :kind]))))
+
 (defn- panel-list [mcps]
   (mapv val (sort-by key mcps)))
 
@@ -68,8 +76,7 @@
                      (update :prompts   #(or % []))
                      (update :resources #(or % [])))
           state' (assoc-in state [:mcps name] entry)
-          state' (if (and (= :picking (:mode state'))
-                          (= :mcp (get-in state' [:picker :kind])))
+          state' (if (picker-open? state')
                    (refresh-mcp-picker state')
                    state')]
       [state' nil])
@@ -116,8 +123,7 @@
   When the `/mcp` picker is open, rows come from the picker's `:filtered`
   entries so the display stays in lockstep with Enter's selection target."
   [state]
-  (let [entries (if (and (= :picking (:mode state))
-                         (= :mcp (get-in state [:picker :kind])))
+  (let [entries (if (picker-open? state)
                   (get-in state [:picker :filtered])
                   (panel-list (:mcps state)))]
     (mapv render-row entries)))
