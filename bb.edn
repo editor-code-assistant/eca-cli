@@ -13,6 +13,7 @@
                                 (require '[eca-cli.chat-test])
                                 (require '[eca-cli.commands-test])
                                 (require '[eca-cli.lifecycle-test])
+                                (require '[eca-cli.mcp-test])
                                 (require '[eca-cli.protocol-test])
                                 (require '[eca-cli.view-test])
                                 (require '[eca-cli.view.blocks-test])
@@ -23,6 +24,7 @@
                                       (clojure.test/run-tests 'eca-cli.chat-test
                                                               'eca-cli.commands-test
                                                               'eca-cli.lifecycle-test
+                                                              'eca-cli.mcp-test
                                                               'eca-cli.protocol-test
                                                               'eca-cli.view-test
                                                               'eca-cli.view.blocks-test
