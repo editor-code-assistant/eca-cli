@@ -66,7 +66,9 @@
 
 (defn- render-picker [state]
   (let [{:keys [kind query list]} (:picker state)
-        label (case kind :model "model" :agent "agent" :session "chat" :command "command" "item")]
+        label (case kind
+                :model "model" :agent "agent" :session "chat"
+                :command "command" :at-file "file" "item")]
     (str "Select " label " (type to filter): " query "\n"
          (divider (:width state)) "\n"
          (cl/list-view list))))

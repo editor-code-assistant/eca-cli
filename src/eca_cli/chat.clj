@@ -105,9 +105,10 @@
   (protocol/chat-prompt!
     srv
     (cond-> {:message text}
-      chat-id       (assoc :chat-id chat-id)
-      (:model opts) (assoc :model (:model opts))
-      (:agent opts) (assoc :agent (:agent opts)))
+      chat-id              (assoc :chat-id chat-id)
+      (:model opts)        (assoc :model (:model opts))
+      (:agent opts)        (assoc :agent (:agent opts))
+      (seq (:contexts opts)) (assoc :contexts (:contexts opts)))
     (fn [result]
       (when-let [new-id (:chat-id result)]
         (sessions/save-chat-id! (:workspace opts) new-id))
@@ -411,16 +412,20 @@
         [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines ensure-focus-visible) nil]))))
 
 (defn- enter-submit-prompt [state]
-  (let [text (str/trim (ti/value (:input state)))]
+  (let [text     (str/trim (ti/value (:input state)))
+        contexts (:pending-contexts state)]
     (if (seq text)
       (let [new-state (-> state
                           (update :items conj {:type :user :text text})
                           (assoc :mode :chatting :pending-message text :echo-pending true)
+                          (assoc :pending-contexts [])
                           (update :input #(-> % ti/reset ti/blur))
                           (update :input-history conj text)
                           (assoc :history-idx nil)
                           view/rebuild-lines)]
-        (send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
+        (send-chat-prompt! (:server state) (:chat-id state) text
+                           (cond-> (:opts state)
+                             (seq contexts) (assoc :contexts contexts)))
         [new-state nil])
       [state nil])))
 

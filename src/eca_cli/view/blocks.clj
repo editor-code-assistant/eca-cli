@@ -12,7 +12,20 @@
 (def ^:private ansi-yellow   "\033[33m")
 (def ^:private ansi-green    "\033[32m")
 (def ^:private ansi-red      "\033[31m")
+(def ^:private ansi-bold-on  "\033[1m")
+(def ^:private ansi-bold-off "\033[22m")
 (def ^:private ansi-reset    "\033[0m")
+
+(def ^:private at-token-re
+  ;; Match @<non-space-token>, preceded by start-of-line or whitespace.
+  ;; Group 1 captures the leading boundary so we can preserve it in the
+  ;; replacement.
+  #"(^|\s)@(\S+)")
+
+(defn- stylize-at-tokens [s]
+  (str/replace s at-token-re
+               (fn [[_ lead path]]
+                 (str lead ansi-bold-on "@" path ansi-bold-off))))
 
 (defn- render-box [label text width]
   (let [box-w   (max 4 (- width 2))
@@ -47,7 +60,7 @@
           :user
           ;; " ❯ " prefix = 4 cols, trailing " " = 1 col → inner budget = width - 5
           (let [inner-w (max 1 (- width 5))
-                wrapped (wrap/wrap-text (str (:text item)) inner-w)]
+                wrapped (wrap/wrap-text (stylize-at-tokens (str (:text item))) inner-w)]
             (into [""]
                   (conj (mapv #(str "\033[7m ❯ " % " \033[0m") wrapped)
                         "")))
