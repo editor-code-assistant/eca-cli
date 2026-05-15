@@ -2,7 +2,10 @@
   "XDG-aware path resolution for eca-cli (cache, state, config)."
   (:require [clojure.java.io :as io]))
 
-(defn- getenv [k] (System/getenv k))
+(defn getenv
+  "Indirection over `System/getenv` so tests can stub via `with-redefs`."
+  [k]
+  (System/getenv k))
 
 (defn- expand-or [env-var fallback-relative]
   (let [v (getenv env-var)]
