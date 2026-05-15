@@ -4,7 +4,8 @@
             [clojure.test :refer [deftest is testing]]
             [eca-cli.commands :as commands]
             [eca-cli.jobs :as jobs]
-            [eca-cli.protocol :as protocol]))
+            [eca-cli.protocol :as protocol])
+  (:import [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (defn- key-msg [k]
   {:type :key-press :key k})
@@ -128,20 +129,78 @@
           (is (empty? @kill-calls)))))))
 
 (deftest output-fetch-on-enter-test
-  (testing "Enter on row dispatches jobs-read-output"
+  (testing "Enter on row fires jobs/readOutput async; cmd returns nil; result lands on queue"
     (let [read-calls (atom [])
+          queue      (LinkedBlockingQueue.)
+          srv        {:queue queue}
           s          (-> (base-state)
-                         (assoc :jobs {"j1" (job "j1" "A" "running")}))
+                         (assoc :server srv :jobs {"j1" (job "j1" "A" "running")}))
           [s1 _]     (jobs/cmd-open-jobs-panel s)]
       (with-redefs [protocol/jobs-read-output! (fn [_ id cb]
                                                  (swap! read-calls conj id)
                                                  (cb {:result {:lines  [{:stream "stdout" :text "hello"}]
                                                                :status "running"}}))]
-        (let [[s2 cmd] (jobs/handle-key s1 (key-msg :enter))]
+        (let [[s2 cmd]    (jobs/handle-key s1 (key-msg :enter))
+              cmd-result  (when cmd ((:fn cmd)))
+              queued      (.poll queue 1 TimeUnit/SECONDS)]
           (is (= :output (get-in s2 [:jobs-view :kind])))
           (is (= "j1" (get-in s2 [:jobs-view :job-id])))
-          (when cmd ((:fn cmd)))
-          (is (= ["j1"] @read-calls)))))))
+          (is (nil? cmd-result) "cmd fn returns nil — result is delivered via the queue, not as a sync message")
+          (is (= ["j1"] @read-calls))
+          (is (= :eca-jobs-output (:type queued)))
+          (is (= "j1" (:job-id queued)))
+          (is (= {:lines  [{:stream "stdout" :text "hello"}]
+                  :status "running"}
+                 (:data queued))))))))
+
+(deftest read-output-cmd-default-on-empty-result-test
+  (testing "callback with no :result yields the default {:lines [] :status \"unknown\" :exitCode nil}"
+    (let [queue (LinkedBlockingQueue.)
+          srv   {:queue queue}
+          s     (-> (base-state)
+                    (assoc :server srv :jobs {"j1" (job "j1" "A" "running")}))
+          [s1 _] (jobs/cmd-open-jobs-panel s)]
+      (with-redefs [protocol/jobs-read-output! (fn [_ _ cb] (cb {}))]
+        (let [[_ cmd] (jobs/handle-key s1 (key-msg :enter))]
+          ((:fn cmd))
+          (let [queued (.poll queue 1 TimeUnit/SECONDS)]
+            (is (= {:lines [] :status "unknown" :exitCode nil} (:data queued)))))))))
+
+(deftest read-output-cmd-no-block-test
+  (testing "cmd returns immediately even when the server callback never fires"
+    (let [queue (LinkedBlockingQueue.)
+          srv   {:queue queue}
+          s     (-> (base-state)
+                    (assoc :server srv :jobs {"j1" (job "j1" "A" "running")}))
+          [s1 _] (jobs/cmd-open-jobs-panel s)]
+      ;; Redef so the callback is captured but NEVER invoked — simulates a stalled server.
+      (with-redefs [protocol/jobs-read-output! (fn [_ _ _cb] nil)]
+        (let [[_ cmd] (jobs/handle-key s1 (key-msg :enter))
+              t0      (System/currentTimeMillis)
+              _       ((:fn cmd))
+              elapsed (- (System/currentTimeMillis) t0)]
+          (is (< elapsed 500) (str "read-output-cmd must return immediately (no deref); elapsed=" elapsed "ms"))
+          (is (zero? (.size queue)) "no message queued because callback never fired"))))))
+
+(deftest kill-flow-async-no-block-test
+  (testing "kill cmd never blocks the executor — fires protocol request and returns immediately"
+    (let [kill-calls (atom [])
+          queue      (LinkedBlockingQueue.)
+          srv        {:queue queue}
+          s          (-> (base-state)
+                         (assoc :server srv :jobs {"j1" (job "j1" "A" "running")}))
+          [s1 _]     (jobs/cmd-open-jobs-panel s)
+          [s2 _]     (jobs/handle-key s1 (key-msg "d"))]
+      ;; Callback intentionally not invoked — simulates a slow/unresponsive server.
+      (with-redefs [protocol/jobs-kill! (fn [_ id _cb] (swap! kill-calls conj id))]
+        (let [[s3 cmd] (jobs/handle-key s2 (key-msg "y"))
+              t0       (System/currentTimeMillis)
+              result   (when cmd ((:fn cmd)))
+              elapsed  (- (System/currentTimeMillis) t0)]
+          (is (nil? (:jobs-view s3)))
+          (is (< elapsed 500) (str "kill-cmd must return immediately (no deref); elapsed=" elapsed "ms"))
+          (is (nil? result) "kill-cmd does not emit a sync message")
+          (is (= ["j1"] @kill-calls)))))))
 
 (deftest output-popup-render-test
   (testing "stderr lines prefixed, stdout plain"

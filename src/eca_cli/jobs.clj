@@ -63,15 +63,24 @@
       (protocol/jobs-kill! srv job-id (fn [_] nil))
       nil)))
 
-(defn- read-output-cmd [srv job-id]
+(defn- read-output-cmd
+  "Fires jobs/readOutput and returns immediately. The protocol callback (invoked
+  on the reader thread when the server responds) puts an :eca-jobs-output
+  runtime message onto the server queue, where handle-jobs-output picks it up.
+  No blocking deref — the command-executor thread is not stalled and concurrent
+  jobs/updated notifications continue to flow."
+  [srv job-id]
   (program/cmd
     (fn []
-      (let [p (promise)]
-        (protocol/jobs-read-output! srv job-id
-                                    (fn [r] (deliver p (or (:result r) {}))))
-        {:type   :eca-jobs-output
-         :job-id job-id
-         :data   (deref p 10000 {:lines [] :status "unknown" :exitCode nil})}))))
+      (let [queue (:queue srv)]
+        (protocol/jobs-read-output!
+          srv job-id
+          (fn [r]
+            (.put queue {:type   :eca-jobs-output
+                         :job-id job-id
+                         :data   (or (:result r)
+                                     {:lines [] :status "unknown" :exitCode nil})})))
+        nil))))
 
 ;; --- /jobs command — opens panel via shared :picker ---
 
