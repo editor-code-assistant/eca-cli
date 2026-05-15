@@ -27,6 +27,15 @@
       (str (subs s 0 (max 0 (- n 3))) "...")
       s)))
 
+(def ^:private summary-max-len 80)
+
+(defn- job-summary
+  "Display label for a job: prefers :summary, falls back to :label then id,
+  truncated to `summary-max-len`. `id-fallback` is supplied separately so
+  callers that already destructured `:id` into a local can pass it directly."
+  [job id-fallback]
+  (truncate-label (or (:summary job) (:label job) id-fallback) summary-max-len))
+
 (defn- jobs-vec
   "Stable seq of jobs ordered by chatLabel then startedAt."
   [state]
@@ -88,7 +97,7 @@
   "Compact one-line label used as the picker row text and for confirm modal."
   [job]
   (let [emoji   (status-emoji (:status job))
-        summary (truncate-label (or (:summary job) (:label job) (:id job)) 80)
+        summary (job-summary job (:id job))
         elapsed (or (:elapsed job) "")]
     (str emoji " " summary "  ·  " elapsed)))
 
@@ -133,14 +142,16 @@
                        (swap! flat-idx inc)
                        (let [marker  (if (= @flat-idx sel-idx) "▸ " "  ")
                              emoji   (status-emoji (:status job))
-                             summary (truncate-label (or (:summary job) (:label job) (:id job)) 80)
+                             summary (job-summary job (:id job))
                              elapsed (or (:elapsed job) "")
                              exit    (when (and (= "failed" (:status job)) (:exitCode job))
                                        (str "  exit:" (:exitCode job)))]
                          (str marker emoji " " summary "  " elapsed (or exit ""))))
+        max-hdr-w    60
+        hdr-chrome   4 ;; "── " prefix + trailing space before fill
         render-group (fn [[chat-label jobs]]
-                       (let [hdr  (str "── " chat-label " "
-                                       (apply str (repeat (max 0 (- (min 60 width) (count chat-label) 4)) "─")))
+                       (let [fill (max 0 (- (min max-hdr-w width) (count chat-label) hdr-chrome))
+                             hdr  (str "── " chat-label " " (apply str (repeat fill "─")))
                              rows (mapv render-row jobs)]
                          (str/join "\n" (into [hdr] rows))))]
     (str/join "\n"
@@ -156,7 +167,7 @@
         job     (get-in state [:jobs job-id])
         status  (or (:status data) (:status job) "unknown")
         exit    (:exitCode data)
-        label   (truncate-label (or (:summary job) (:label job) job-id) 80)
+        label   (job-summary job job-id)
         header  (str label "  ·  status=" status
                      (when (some? exit) (str "  ·  exit=" exit)))
         lines   (:lines data)
@@ -179,7 +190,7 @@
   [state]
   (let [{:keys [job-id]} (:jobs-view state)
         job     (get-in state [:jobs job-id])
-        summary (truncate-label (or (:summary job) (:label job) job-id) 80)]
+        summary (job-summary job job-id)]
     (str "Kill " summary "? [y/n]")))
 
 ;; --- Key dispatch ---
