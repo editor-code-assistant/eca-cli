@@ -15,14 +15,50 @@
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [charm.program :as program]
+            [clojure.string :as str]
             [eca-cli.protocol :as protocol]))
+
+;; --- /mcp command + panel ---
+
+(defn- panel-list [mcps]
+  (mapv val (sort-by key mcps)))
+
+(defn- apply-query [entries query]
+  (if (str/blank? query)
+    entries
+    (let [q (str/lower-case query)]
+      (filterv #(str/includes? (str/lower-case (:name %)) q) entries))))
+
+(defn- refresh-mcp-picker
+  "Rebuild the open :mcp picker from `:mcps`, re-applying `:query` and preserving
+  selection by server name when possible. Returns updated state. Caller must
+  guard that the picker is open + `:kind :mcp`."
+  [state]
+  (let [{:keys [list filtered query]} (:picker state)
+        prev-idx   (cl/selected-index list)
+        prev-name  (when (and (some? prev-idx) (< prev-idx (count filtered)))
+                     (:name (nth filtered prev-idx)))
+        all        (panel-list (:mcps state))
+        filtered'  (apply-query all query)
+        labels     (mapv :name filtered')
+        new-idx    (or (when prev-name
+                         (some (fn [[i n]] (when (= n prev-name) i))
+                               (map-indexed vector labels)))
+                       0)
+        new-list   (-> list (cl/set-items labels) (cl/select new-idx))]
+    (-> state
+        (assoc-in [:picker :all] all)
+        (assoc-in [:picker :filtered] filtered')
+        (assoc-in [:picker :list] new-list))))
 
 ;; --- ECA notification handler ---
 
 (defn handle-tool-server-updated
   "Handles `tool/serverUpdated`. Non-MCP `:type` values are ignored. MCP servers
   are upserted into `:mcps` keyed by `:name` — subsequent updates replace prior
-  entries rather than appending."
+  entries rather than appending. If the `/mcp` picker is currently open the
+  picker's `:all`/`:filtered`/`:list` are refreshed in lockstep, preserving the
+  current query and selection (by server name) where possible."
   [state params]
   (if (= "mcp" (:type params))
     (let [name   (:name params)
@@ -31,14 +67,13 @@
                      (update :tools     #(or % []))
                      (update :prompts   #(or % []))
                      (update :resources #(or % [])))
-          state' (assoc-in state [:mcps name] entry)]
+          state' (assoc-in state [:mcps name] entry)
+          state' (if (and (= :picking (:mode state'))
+                          (= :mcp (get-in state' [:picker :kind])))
+                   (refresh-mcp-picker state')
+                   state')]
       [state' nil])
     [state nil]))
-
-;; --- /mcp command + panel ---
-
-(defn- panel-list [mcps]
-  (mapv val (sort-by key mcps)))
 
 (defn cmd-open-mcp-panel
   "Opens the `/mcp` panel. Empty `:mcps` shows a system message instead."
@@ -77,9 +112,15 @@
       (= "failed" status)        (str " (check ~/.cache/eca/eca-cli.log)"))))
 
 (defn render-mcp-panel-lines
-  "Renders panel rows: one line per MCP server, sorted alphabetically by name."
+  "Renders panel rows: one line per MCP server, sorted alphabetically by name.
+  When the `/mcp` picker is open, rows come from the picker's `:filtered`
+  entries so the display stays in lockstep with Enter's selection target."
   [state]
-  (mapv render-row (panel-list (:mcps state))))
+  (let [entries (if (and (= :picking (:mode state))
+                         (= :mcp (get-in state [:picker :kind])))
+                  (get-in state [:picker :filtered])
+                  (panel-list (:mcps state)))]
+    (mapv render-row entries)))
 
 ;; --- Status-bar fragment ---
 
