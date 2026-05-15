@@ -4,6 +4,10 @@
             [charm.components.text-input :as ti]
             [eca-cli.view.blocks :as blocks]))
 
+;; Lazy resolution to break the jobs ↔ view circular require.
+(defn- jobs-fn [sym]
+  (requiring-resolve (symbol "eca-cli.jobs" (name sym))))
+
 (defn divider [width]
   (apply str (repeat width "─")))
 
@@ -65,11 +69,16 @@
       (str "🚧 " summary "\n[y] approve  [Y] always  [n] reject"))))
 
 (defn- render-picker [state]
-  (let [{:keys [kind query list]} (:picker state)
-        label (case kind :model "model" :agent "agent" :session "chat" :command "command" "item")]
-    (str "Select " label " (type to filter): " query "\n"
-         (divider (:width state)) "\n"
-         (cl/list-view list))))
+  (let [{:keys [kind query list]} (:picker state)]
+    (if (= :jobs kind)
+      (case (get-in state [:jobs-view :kind])
+        :output       ((jobs-fn 'render-output-popup-lines) state)
+        :confirm-kill ((jobs-fn 'render-confirm-kill-lines) state)
+        ((jobs-fn 'render-jobs-panel-lines) state))
+      (let [label (case kind :model "model" :agent "agent" :session "chat" :command "command" "item")]
+        (str "Select " label " (type to filter): " query "\n"
+             (divider (:width state)) "\n"
+             (cl/list-view list))))))
 
 (defn render-status-bar [state]
   (let [workspace  (-> (get-in state [:opts :workspace] ".")
@@ -85,13 +94,14 @@
                      (when (pos? (:context l))
                        (str (int (* 100 (/ (:sessionTokens usage) (:context l)))) "%")))
         loading    (when (some #(not (:done? %)) (vals (:init-tasks state))) "⏳")
+        jobs-frag  ((jobs-fn 'status-bar-fragment) state (:width state))
         chat-title (let [t (:chat-title state)]
                      (when (and t (seq t))
                        (if (> (count t) 24)
                          (str "\"" (subs t 0 24) "…\"")
                          (str "\"" t "\""))))
         trust      (if (:trust state) "TRUST" "SAFE")]
-    (str/join "  " (remove nil? [workspace loading model agent variant tokens cost ctx-pct chat-title trust]))))
+    (str/join "  " (remove nil? [workspace loading model agent variant jobs-frag tokens cost ctx-pct chat-title trust]))))
 
 (defn render-login [state]
   (let [{:keys [provider action field-idx]} (:login state)

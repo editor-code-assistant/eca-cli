@@ -12,6 +12,7 @@
                       :task (do (require '[clojure.test])
                                 (require '[eca-cli.chat-test])
                                 (require '[eca-cli.commands-test])
+                                (require '[eca-cli.jobs-test])
                                 (require '[eca-cli.lifecycle-test])
                                 (require '[eca-cli.protocol-test])
                                 (require '[eca-cli.view-test])
@@ -22,6 +23,7 @@
                                 (let [{:keys [fail error]}
                                       (clojure.test/run-tests 'eca-cli.chat-test
                                                               'eca-cli.commands-test
+                                                              'eca-cli.jobs-test
                                                               'eca-cli.lifecycle-test
                                                               'eca-cli.protocol-test
                                                               'eca-cli.view-test

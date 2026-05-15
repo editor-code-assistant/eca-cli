@@ -10,6 +10,7 @@
             [eca-cli.sessions :as sessions]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
+            [eca-cli.jobs :as jobs]
             [eca-cli.view :as view]))
 
 (declare command-registry)
@@ -64,12 +65,16 @@
 (defn cmd-login [state]
   [state (login/start-login-cmd (:server state) nil)])
 
+(defn cmd-open-jobs-panel [state]
+  (jobs/cmd-open-jobs-panel state))
+
 (def command-registry
   {"/model"    {:doc "Open model picker"                  :handler cmd-open-model-picker}
    "/agent"    {:doc "Open agent picker"                  :handler cmd-open-agent-picker}
    "/new"      {:doc "Start a fresh chat"                 :handler cmd-new-chat}
    "/sessions" {:doc "Browse and resume previous chats"   :handler cmd-list-sessions}
    "/clear"    {:doc "Clear chat display (local only)"    :handler cmd-clear-chat}
+   "/jobs"     {:doc "Show background shell jobs"         :handler cmd-open-jobs-panel}
    "/help"     {:doc "Show available commands"            :handler cmd-show-help}
    "/quit"     {:doc "Exit eca-cli"                        :handler cmd-quit}
    "/login"    {:doc "Manually trigger provider login"    :handler cmd-login}})

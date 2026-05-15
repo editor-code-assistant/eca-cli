@@ -13,6 +13,7 @@
             [eca-cli.chat :as chat]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
+            [eca-cli.jobs :as jobs]
             [eca-cli.commands :as commands]))
 
 ;; Expose last-known state for nREPL inspection
@@ -74,6 +75,9 @@
     "chat/cleared"
     (chat/handle-chat-cleared state notification)
 
+    "jobs/updated"
+    (jobs/handle-jobs-updated state (:params notification))
+
     [state nil]))
 
 (defn- handle-eca-tick [state msgs]
@@ -114,6 +118,7 @@
    :chat-id               nil
    :chat-title            nil
    :items                 []
+   :jobs                  {}
    :current-text          ""
    :tool-calls            {}
    :pending-approval      nil
@@ -198,6 +203,7 @@
 
       (= :eca-login-action (:type msg))    (login/handle-eca-login-action state msg)
       (= :eca-login-complete (:type msg))  (login/handle-eca-login-complete state msg)
+      (= :eca-jobs-output (:type msg))     (jobs/handle-jobs-output state msg)
 
       (= :chat-list-loaded (:type msg))
       (let [chats  (:chats msg)
@@ -244,6 +250,10 @@
             (-> state (dissoc :picker) (assoc :mode :ready))
             cmd-name)
           [state nil]))
+
+      (and (= :picking (:mode state))
+           (= :jobs (get-in state [:picker :kind])))
+      (jobs/handle-key state msg)
 
       (= :picking (:mode state))           (picker/handle-key state msg)
       (#{:ready :chatting} (:mode state))  (chat/handle-key state msg)
