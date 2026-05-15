@@ -7,6 +7,7 @@
             [charm.message :as msg]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [eca-cli.login :as login]
             [eca-cli.protocol :as protocol]
             [eca-cli.state :as state]
             [eca-cli.view.blocks :as blocks]))
@@ -182,3 +183,126 @@
 
         (protocol/chat-query-files! :srv nil nil identity)
         (is (= {:query ""} (second @sent)))))))
+
+;; --- PR #4 review fixes ---
+
+(deftest stale-context-dropped-on-send-test
+  (testing "Pending context whose @path token was deleted from text is dropped"
+    (let [prompts (atom [])]
+      (with-redefs [protocol/chat-prompt! (fn [_srv params _cb]
+                                            (swap! prompts conj params))]
+        (let [s0    (-> (base-state)
+                        (assoc :pending-contexts [{:type "file" :path "foo.clj"}])
+                        (assoc :input (ti/set-value (ti/text-input) "bar")))
+              [s _] (state/update-state s0 (msg/key-press :enter))]
+          (is (= :chatting (:mode s)))
+          (is (= 1 (count @prompts)))
+          (is (not (contains? (first @prompts) :contexts))
+              "context whose @path no longer appears in text must be omitted")))))
+
+  (testing "Subset of contexts retained when only some tokens remain"
+    (let [prompts (atom [])]
+      (with-redefs [protocol/chat-prompt! (fn [_srv params _cb]
+                                            (swap! prompts conj params))]
+        (let [s0    (-> (base-state)
+                        (assoc :pending-contexts [{:type "file" :path "a.clj"}
+                                                  {:type "file" :path "b.clj"}])
+                        (assoc :input (ti/set-value (ti/text-input) "see @a.clj only")))
+              [_ _] (state/update-state s0 (msg/key-press :enter))]
+          (is (= [{:type "file" :path "a.clj"}]
+                 (:contexts (first @prompts)))))))))
+
+(deftest contexts-preserved-on-login-retry-test
+  (testing "After login completes, pending-message is re-sent with original contexts"
+    (let [prompts (atom [])]
+      (with-redefs [protocol/chat-prompt! (fn [_srv params _cb]
+                                            (swap! prompts conj params))]
+        (let [s0       (-> (base-state)
+                           (assoc :pending-contexts [{:type "file" :path "foo.clj"}])
+                           (assoc :input (ti/set-value (ti/text-input) "look @foo.clj")))
+              ;; First send caches contexts into :opts
+              [s1 _]   (state/update-state s0 (msg/key-press :enter))
+              ;; Simulate the login flow completing — login namespace sends a
+              ;; second prompt using (:opts state). :contexts must survive.
+              [_s2 _]  (login/handle-eca-login-complete
+                         (assoc s1 :mode :login)
+                         {:type :eca-login-complete
+                          :pending-message (:pending-message s1)})]
+          (is (= 2 (count @prompts)) "first send + login-retry send")
+          (is (= [{:type "file" :path "foo.clj"}]
+                 (:contexts (second @prompts)))
+              "login retry must carry the same contexts as the original send"))))))
+
+(defn- drive-at-select
+  "Synthesize an open at-file picker with `base-text` in the input and cursor
+  at `cursor-pos`, splice `paths`, select first via Enter. Returns final state.
+  Bypasses state.clj's `@`-trigger guard so we can test insertion behaviour at
+  arbitrary cursor positions (including mid-word) regardless of how the picker
+  was opened."
+  [base-text cursor-pos paths]
+  (let [s-open       (-> (base-state)
+                         (assoc :input
+                                (-> (ti/text-input)
+                                    (ti/set-value base-text)
+                                    (assoc :pos cursor-pos)))
+                         (assoc :mode :picking)
+                         (assoc :picker {:kind     :at-file
+                                         :list     (cl/item-list [] :height 8)
+                                         :all      []
+                                         :filtered []
+                                         :query    ""}))
+        [s-loaded _] (state/update-state s-open
+                                          {:type :at-files-loaded :paths paths})
+        [s _]        (state/update-state s-loaded (msg/key-press :enter))]
+    s))
+
+(deftest separator-inserted-mid-word-test
+  (testing "Cursor in middle of word: leading + trailing space around @path"
+    (let [s (drive-at-select "foobar" 3 ["path.clj"])]
+      (is (= "foo @path.clj bar" (ti/value (:input s))))
+      (is (= 13 (ti/position (:input s)))
+          "cursor lands just past `@path.clj`, before the inserted trailing space"))))
+
+(deftest separator-not-doubled-at-word-boundary-test
+  (testing "Cursor at end of word: leading space only, no trailing"
+    (let [s (drive-at-select "hello" 5 ["path.clj"])]
+      (is (= "hello @path.clj" (ti/value (:input s))))))
+
+  (testing "Cursor after whitespace: no leading space added"
+    (let [s (drive-at-select "hi " 3 ["p.clj"])]
+      (is (= "hi @p.clj" (ti/value (:input s)))))))
+
+(defn- fire-cmd
+  "Execute a charm cmd map by invoking its :fn — production charm does this
+  automatically; tests need to invoke it explicitly to observe side effects."
+  [cmd]
+  (when (and cmd (= :cmd (:type cmd)) (:fn cmd))
+    ((:fn cmd))))
+
+(deftest query-files-redispatched-on-filter-typing-test
+  (testing "Each filter keystroke fires chat/queryFiles with the current query"
+    (let [queries (atom [])]
+      (with-redefs [protocol/chat-query-files!
+                    (fn [_srv chat-id query cb]
+                      (swap! queries conj {:chat-id chat-id :query query})
+                      (cb {:result {:files []}}))]
+        (let [s0       (assoc (base-state)
+                              :server {:queue (java.util.concurrent.LinkedBlockingQueue.)})
+              [s1 c1]  (state/update-state s0 (msg/key-press "@"))
+              _        (fire-cmd c1)
+              [s2 c2]  (state/update-state s1 (msg/key-press "f"))
+              _        (fire-cmd c2)
+              [s3 c3]  (state/update-state s2 (msg/key-press "o"))
+              _        (fire-cmd c3)
+              [s4 c4]  (state/update-state s3 (msg/key-press "o"))
+              _        (fire-cmd c4)
+              [_s5 c5] (state/update-state s4 (msg/key-press :backspace))
+              _        (fire-cmd c5)]
+          ;; Empty open + 3 typed chars + 1 backspace = 5 dispatches.
+          ;; Each dispatch carries the query as it stood after that keystroke.
+          (is (= [{:chat-id "chat1" :query ""}
+                  {:chat-id "chat1" :query "f"}
+                  {:chat-id "chat1" :query "fo"}
+                  {:chat-id "chat1" :query "foo"}
+                  {:chat-id "chat1" :query "fo"}]
+                 @queries)))))))

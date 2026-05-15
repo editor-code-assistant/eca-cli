@@ -145,14 +145,29 @@
          (update :input ti/focus))
      (when chat-id (sessions/open-chat-cmd (:server state) chat-id))]))
 
-(defn- insert-at-cursor
-  "Splice `s` into the text-input at the current cursor position."
-  [input s]
-  (let [value (ti/value input)
-        pos   (min (count value) (max 0 (or (ti/position input) (count value))))
-        before (subs value 0 pos)
-        after  (subs value pos)]
-    (ti/set-value input (str before s after))))
+(defn- whitespace? [ch]
+  (or (= \space ch) (= \newline ch) (= \tab ch)))
+
+(defn- insert-at-tag
+  "Insert `@<path>` into the text-input at the current cursor position,
+  ensuring a separator on each side when adjacent to non-whitespace text:
+  - leading space when the char before the cursor is non-whitespace
+  - trailing space when the char after the cursor is non-whitespace
+  Cursor ends just past `@<path>` (before any inserted trailing space)."
+  [input path]
+  (let [value     (ti/value input)
+        pos       (min (count value) (max 0 (or (ti/position input) (count value))))
+        before    (subs value 0 pos)
+        after     (subs value pos)
+        prev-ch   (when (pos? (count before)) (.charAt ^String before (dec (count before))))
+        next-ch   (when (pos? (count after))  (.charAt ^String after 0))
+        lead-sp?  (and prev-ch (not (whitespace? prev-ch)))
+        trail-sp? (and next-ch (not (whitespace? next-ch)))
+        insert    (str (when lead-sp? " ") "@" path (when trail-sp? " "))
+        cursor    (+ pos (count insert) (if trail-sp? -1 0))]
+    (-> input
+        (ti/set-value (str before insert after))
+        (assoc :pos cursor))))
 
 (defn- select-at-file [state]
   (let [{:keys [list filtered]} (:picker state)
@@ -161,7 +176,7 @@
                                   (nth filtered idx))]
     (if path
       [(-> state
-           (update :input #(-> % (insert-at-cursor (str "@" path)) ti/focus))
+           (update :input #(-> % (insert-at-tag path) ti/focus))
            (update :pending-contexts (fnil conj []) {:type "file" :path path})
            (assoc :mode :ready)
            (dissoc :picker))

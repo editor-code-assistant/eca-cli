@@ -277,6 +277,26 @@
             cmd-name)
           [state nil]))
 
+      ;; --- At-file picker: re-query server on filter typing ---
+      ;;
+      ;; Server returns a capped list for empty query; subsequent typing must
+      ;; re-query so matches outside the capped initial set become findable.
+      ;; Picker.clj still mutates :query / :filtered client-side for snappy
+      ;; UI feedback; the server response (`:at-files-loaded`) then splices
+      ;; the canonical ranked list in.
+      (and (= :picking (:mode state))
+           (= :at-file (get-in state [:picker :kind]))
+           (picker/printable-char? msg))
+      (let [[s' _] (picker/handle-key state msg)]
+        [s' (query-files-cmd (:server s') (:chat-id s')
+                             (get-in s' [:picker :query]))])
+      (and (= :picking (:mode state))
+           (= :at-file (get-in state [:picker :kind]))
+           (msg/key-press? msg) (msg/key-match? msg :backspace))
+      (let [[s' _] (picker/handle-key state msg)]
+        [s' (query-files-cmd (:server s') (:chat-id s')
+                             (get-in s' [:picker :query]))])
+
       (= :picking (:mode state))           (picker/handle-key state msg)
       (#{:ready :chatting} (:mode state))  (chat/handle-key state msg)
 
