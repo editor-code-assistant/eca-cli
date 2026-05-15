@@ -195,6 +195,16 @@
              (= \space prev)
              (= \newline prev)))))
 
+(defn- at-file-filter-keystroke?
+  "True when `msg` is a keystroke that should re-query the server while the
+  at-file picker is open: any printable char (extends the filter) or backspace
+  (shrinks it). Other keys (Enter, Escape, arrows) fall through to picker."
+  [state msg]
+  (and (= :picking (:mode state))
+       (= :at-file (get-in state [:picker :kind]))
+       (or (picker/printable-char? msg)
+           (and (msg/key-press? msg) (msg/key-match? msg :backspace)))))
+
 (defn update-state [state msg]
   (reset! debug-state {:state (dissoc state :server :input)
                        :msg-type (or (:type msg) (:method msg))
@@ -284,15 +294,7 @@
       ;; Picker.clj still mutates :query / :filtered client-side for snappy
       ;; UI feedback; the server response (`:at-files-loaded`) then splices
       ;; the canonical ranked list in.
-      (and (= :picking (:mode state))
-           (= :at-file (get-in state [:picker :kind]))
-           (picker/printable-char? msg))
-      (let [[s' _] (picker/handle-key state msg)]
-        [s' (query-files-cmd (:server s') (:chat-id s')
-                             (get-in s' [:picker :query]))])
-      (and (= :picking (:mode state))
-           (= :at-file (get-in state [:picker :kind]))
-           (msg/key-press? msg) (msg/key-match? msg :backspace))
+      (at-file-filter-keystroke? state msg)
       (let [[s' _] (picker/handle-key state msg)]
         [s' (query-files-cmd (:server s') (:chat-id s')
                              (get-in s' [:picker :query]))])
