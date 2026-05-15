@@ -31,13 +31,13 @@
   "Saves chat-id for workspace. Passing nil removes the entry. Always writes
   the current XDG state chats file."
   [workspace chat-id]
-  (let [path     (paths/chats-file)
+  (let [f        (paths/chats-file)
         existing (load-chats)
         updated  (if chat-id
                    (assoc existing workspace chat-id)
                    (dissoc existing workspace))]
-    (io/make-parents path)
-    (spit path (pr-str updated))))
+    (io/make-parents f)
+    (spit f (pr-str updated))))
 
 ;; --- charm/program cmd builders for chat-list/open/delete ---
 

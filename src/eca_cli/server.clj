@@ -10,8 +10,8 @@
   "Finds the ECA binary. Preference: eca-cli managed, PATH, editor plugin caches."
   []
   (let [home (System/getProperty "user.home")]
-    (or (let [p (str (paths/eca-binary))]
-          (when (.exists (java.io.File. p)) p))
+    (or (let [f (paths/eca-binary)]
+          (when (.exists f) (str f)))
         (some-> (proc/process ["which" "eca"] {:err :string :out :string})
                 deref :out clojure.string/trim
                 not-empty)
@@ -21,33 +21,35 @@
                (str home "/Library/Caches/nvim/eca/eca")
                (str home "/.emacs.d/eca/eca")]))))
 
-(defn- default-log-file []
-  (let [f (paths/log-file)]
-    (io/make-parents f)
-    (when (.isDirectory (.getParentFile f))
-      f)))
+(defn- ensure-writable
+  "Ensures parent dir exists and returns the file if its parent is a directory, else nil."
+  [^java.io.File f]
+  (io/make-parents f)
+  (when (.isDirectory (.getParentFile f))
+    f))
 
 (defn spawn!
   "Spawns the ECA server process. Returns a map with :process, :reader, :writer, :queue."
   ([] (spawn! {}))
   ([{:keys [path log-file]}]
-   (let [binary (or path (find-eca-binary))
-         _      (when-not binary
-                  (throw (ex-info
-                           (str "ECA binary not found.\n"
-                                "Install via a supported editor plugin or download from:\n"
-                                "  https://github.com/editor-code-assistant/eca/releases\n"
-                                "Or specify path with --eca <path>")
-                           {})))
-         log    (or log-file (default-log-file))
-         err    (or log
-                    (do (.println System/err (str "eca-cli: warning: could not create " (.getParent (paths/log-file)) " — ECA logs will appear in terminal"))
-                        :inherit))
-         p      (proc/process [binary "server"]
-                              {:err err :shutdown proc/destroy-tree})
-         reader (BufferedInputStream. (:out p))
-         writer (BufferedWriter. (OutputStreamWriter. (:in p) "UTF-8"))
-         queue (LinkedBlockingQueue.)]
+   (let [binary    (or path (find-eca-binary))
+         _         (when-not binary
+                     (throw (ex-info
+                              (str "ECA binary not found.\n"
+                                   "Install via a supported editor plugin or download from:\n"
+                                   "  https://github.com/editor-code-assistant/eca/releases\n"
+                                   "Or specify path with --eca <path>")
+                              {})))
+         candidate (or log-file (paths/log-file))
+         log       (ensure-writable candidate)
+         err       (or log
+                       (do (.println System/err (str "eca-cli: warning: could not create " (.getParent candidate) " — ECA logs will appear in terminal"))
+                           :inherit))
+         p         (proc/process [binary "server"]
+                                 {:err err :shutdown proc/destroy-tree})
+         reader    (BufferedInputStream. (:out p))
+         writer    (BufferedWriter. (OutputStreamWriter. (:in p) "UTF-8"))
+         queue     (LinkedBlockingQueue.)]
      {:process p
       :reader reader
       :writer writer
