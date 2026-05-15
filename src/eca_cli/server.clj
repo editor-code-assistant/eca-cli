@@ -1,6 +1,8 @@
 (ns eca-cli.server
   (:require [cheshire.core :as json]
-            [babashka.process :as proc])
+            [babashka.process :as proc]
+            [clojure.java.io :as io]
+            [eca-cli.paths :as paths])
   (:import [java.io BufferedInputStream BufferedWriter OutputStreamWriter]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
@@ -8,7 +10,7 @@
   "Finds the ECA binary. Preference: eca-cli managed, PATH, editor plugin caches."
   []
   (let [home (System/getProperty "user.home")]
-    (or (let [p (str home "/.cache/eca/eca-cli/eca")]
+    (or (let [p (str (paths/eca-binary))]
           (when (.exists (java.io.File. p)) p))
         (some-> (proc/process ["which" "eca"] {:err :string :out :string})
                 deref :out clojure.string/trim
@@ -20,10 +22,10 @@
                (str home "/.emacs.d/eca/eca")]))))
 
 (defn- default-log-file []
-  (let [dir (java.io.File. (str (System/getProperty "user.home") "/.cache/eca"))]
-    (.mkdirs dir)
-    (when (.isDirectory dir)
-      (java.io.File. dir "eca-cli.log"))))
+  (let [f (paths/log-file)]
+    (io/make-parents f)
+    (when (.isDirectory (.getParentFile f))
+      f)))
 
 (defn spawn!
   "Spawns the ECA server process. Returns a map with :process, :reader, :writer, :queue."
@@ -39,7 +41,7 @@
                            {})))
          log    (or log-file (default-log-file))
          err    (or log
-                    (do (.println System/err "eca-cli: warning: could not create ~/.cache/eca/ — ECA logs will appear in terminal")
+                    (do (.println System/err (str "eca-cli: warning: could not create " (.getParent (paths/log-file)) " — ECA logs will appear in terminal"))
                         :inherit))
          p      (proc/process [binary "server"]
                               {:err err :shutdown proc/destroy-tree})
