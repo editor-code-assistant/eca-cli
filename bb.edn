@@ -18,6 +18,7 @@
                                 (require '[eca-cli.view.blocks-test])
                                 (require '[eca-cli.state-test])
                                 (require '[eca-cli.chats-test])
+                                (require '[eca-cli.paths-test])
                                 (require '[eca-cli.upgrade-test])
                                 (let [{:keys [fail error]}
                                       (clojure.test/run-tests 'eca-cli.chat-test
@@ -28,6 +29,7 @@
                                                               'eca-cli.view.blocks-test
                                                               'eca-cli.state-test
                                                               'eca-cli.chats-test
+                                                              'eca-cli.paths-test
                                                               'eca-cli.upgrade-test)]
                                   (System/exit (if (pos? (+ fail error)) 1 0))))}
          itest       {:doc "Run integration tests (requires tmux + ECA on PATH)"

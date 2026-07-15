@@ -4,39 +4,40 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [charm.program :as program]
+            [eca-cli.paths :as paths]
             [eca-cli.protocol :as protocol]))
 
-(defn chats-path []
-  (str (System/getProperty "user.home") "/.cache/eca/eca-cli-chats.edn"))
-
-(defn legacy-chats-path []
-  (str (System/getProperty "user.home") "/.cache/eca/eca-cli-sessions.edn"))
-
-(defn- read-map [path]
+(defn- read-edn-file [^java.io.File f]
   (try
-    (let [f (java.io.File. path)]
-      (when (.exists f) (edn/read-string (slurp f))))
+    (when (.exists f) (edn/read-string (slurp f)))
     (catch Exception _ nil)))
 
+(defn- load-chats
+  "Reads the current chats map from the XDG state file; falls back to the
+  legacy cache locations (renamed chats file, then original sessions file)
+  for transparent migration. Returns {} when nothing is found."
+  []
+  (or (read-edn-file (paths/chats-file))
+      (read-edn-file (paths/legacy-chats-file))
+      (read-edn-file (paths/legacy-sessions-file))
+      {}))
+
 (defn load-chat-id
-  "Returns persisted chat-id for workspace, or nil. Reads the current chats
-  file; falls back to the legacy eca-cli-sessions.edn when the new file is
-  absent (transitional — removable once old files are gone)."
+  "Returns persisted chat-id for workspace, or nil."
   [workspace]
-  (let [m (or (read-map (chats-path)) (read-map (legacy-chats-path)))]
-    (get m workspace)))
+  (get (load-chats) workspace))
 
 (defn save-chat-id!
   "Saves chat-id for workspace. Passing nil removes the entry. Always writes
-  the current chats file."
+  the current XDG state chats file."
   [workspace chat-id]
-  (let [path     (chats-path)
-        existing (or (read-map path) {})
+  (let [f        (paths/chats-file)
+        existing (load-chats)
         updated  (if chat-id
                    (assoc existing workspace chat-id)
                    (dissoc existing workspace))]
-    (io/make-parents path)
-    (spit path (pr-str updated))))
+    (io/make-parents f)
+    (spit f (pr-str updated))))
 
 ;; --- charm/program cmd builders for chat-list/open/delete ---
 
