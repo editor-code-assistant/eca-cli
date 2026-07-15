@@ -68,7 +68,7 @@
   {"/model"    {:doc "Open model picker"                  :handler cmd-open-model-picker}
    "/agent"    {:doc "Open agent picker"                  :handler cmd-open-agent-picker}
    "/new"      {:doc "Start a fresh chat"                 :handler cmd-new-chat}
-   "/chats" {:doc "Browse and resume previous chats"   :handler cmd-list-chats}
+   "/chats"    {:doc "Browse and resume previous chats"   :handler cmd-list-chats}
    "/clear"    {:doc "Clear chat display (local only)"    :handler cmd-clear-chat}
    "/help"     {:doc "Show available commands"            :handler cmd-show-help}
    "/quit"     {:doc "Exit eca-cli"                        :handler cmd-quit}
