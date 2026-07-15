@@ -1,29 +1,37 @@
-(ns eca-cli.sessions
+(ns eca-cli.chats
+  "Chat-id persistence (workspace → chatId map) + charm/program cmd builders
+  for the chat list/open/delete protocol calls."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [charm.program :as program]
             [eca-cli.protocol :as protocol]))
 
-(defn sessions-path []
+(defn chats-path []
+  (str (System/getProperty "user.home") "/.cache/eca/eca-cli-chats.edn"))
+
+(defn legacy-chats-path []
   (str (System/getProperty "user.home") "/.cache/eca/eca-cli-sessions.edn"))
 
-(defn load-chat-id
-  "Returns persisted chat-id for workspace, or nil."
-  [workspace]
+(defn- read-map [path]
   (try
-    (let [f (java.io.File. (sessions-path))]
-      (when (.exists f)
-        (get (edn/read-string (slurp f)) workspace)))
+    (let [f (java.io.File. path)]
+      (when (.exists f) (edn/read-string (slurp f))))
     (catch Exception _ nil)))
 
+(defn load-chat-id
+  "Returns persisted chat-id for workspace, or nil. Reads the current chats
+  file; falls back to the legacy eca-cli-sessions.edn when the new file is
+  absent (transitional — removable once old files are gone)."
+  [workspace]
+  (let [m (or (read-map (chats-path)) (read-map (legacy-chats-path)))]
+    (get m workspace)))
+
 (defn save-chat-id!
-  "Saves chat-id for workspace. Passing nil removes the entry."
+  "Saves chat-id for workspace. Passing nil removes the entry. Always writes
+  the current chats file."
   [workspace chat-id]
-  (let [path     (sessions-path)
-        existing (try
-                   (let [f (java.io.File. path)]
-                     (if (.exists f) (edn/read-string (slurp f)) {}))
-                   (catch Exception _ {}))
+  (let [path     (chats-path)
+        existing (or (read-map path) {})
         updated  (if chat-id
                    (assoc existing workspace chat-id)
                    (dissoc existing workspace))]

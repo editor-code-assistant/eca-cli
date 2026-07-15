@@ -7,7 +7,7 @@
             [charm.components.text-input :as ti]
             [eca-cli.protocol :as protocol]
             [eca-cli.server :as server]
-            [eca-cli.sessions :as sessions]
+            [eca-cli.chats :as chats]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
             [eca-cli.view :as view]))
@@ -35,15 +35,15 @@
 (defn cmd-new-chat [state]
   (if-let [old-chat-id (:chat-id state)]
     (do
-      (sessions/save-chat-id! (get-in state [:opts :workspace]) nil)
+      (chats/save-chat-id! (get-in state [:opts :workspace]) nil)
       [(-> state
            (assoc :items [] :chat-lines [] :chat-id nil :chat-title nil :scroll-offset 0)
            (update :input #(-> % ti/reset ti/focus)))
-       (sessions/delete-chat-cmd (:server state) old-chat-id)])
+       (chats/delete-chat-cmd (:server state) old-chat-id)])
     [(update state :input #(-> % ti/reset ti/focus)) nil]))
 
-(defn cmd-list-sessions [state]
-  [(update state :input ti/reset) (sessions/list-chats-cmd (:server state))])
+(defn cmd-list-chats [state]
+  [(update state :input ti/reset) (chats/list-chats-cmd (:server state))])
 
 (defn cmd-clear-chat [state]
   [(assoc state :items [] :chat-lines [] :scroll-offset 0) nil])
@@ -68,7 +68,7 @@
   {"/model"    {:doc "Open model picker"                  :handler cmd-open-model-picker}
    "/agent"    {:doc "Open agent picker"                  :handler cmd-open-agent-picker}
    "/new"      {:doc "Start a fresh chat"                 :handler cmd-new-chat}
-   "/sessions" {:doc "Browse and resume previous chats"   :handler cmd-list-sessions}
+   "/chats" {:doc "Browse and resume previous chats"   :handler cmd-list-chats}
    "/clear"    {:doc "Clear chat display (local only)"    :handler cmd-clear-chat}
    "/help"     {:doc "Show available commands"            :handler cmd-show-help}
    "/quit"     {:doc "Exit eca-cli"                        :handler cmd-quit}

@@ -7,7 +7,7 @@
             [charm.message :as msg]
             [eca-cli.server :as server]
             [eca-cli.protocol :as protocol]
-            [eca-cli.sessions :as sessions]
+            [eca-cli.chats :as chats]
             [eca-cli.upgrade :as upgrade]
             [eca-cli.view :as view]
             [eca-cli.chat :as chat]
@@ -207,9 +207,9 @@
                                  cnt (when messageCount (str messageCount " msgs"))]
                              [(str/join "  •  " (remove nil? [t cnt])) id]))
                          chats)
-            s'     (picker/open-session-picker state pairs)]
+            s'     (picker/open-chat-picker state pairs)]
         [(if error?
-           (-> s' (update :items conj {:type :system :text "⚠ Could not load sessions"}) view/rebuild-lines)
+           (-> s' (update :items conj {:type :system :text "⚠ Could not load chats"}) view/rebuild-lines)
            s')
          nil])
 
