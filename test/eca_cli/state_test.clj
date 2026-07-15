@@ -6,7 +6,7 @@
             [eca-cli.chat :as chat]
             [eca-cli.login :as login]
             [eca-cli.protocol :as protocol]
-            [eca-cli.sessions :as sessions]
+            [eca-cli.chats :as chats]
             [eca-cli.state :as state]))
 
 (def ^:private flush-current-text       chat/flush-current-text)
@@ -565,7 +565,7 @@
       (is (nil? cmd))))
 
   (testing "/new with chat-id clears state and returns delete cmd"
-    (with-redefs [sessions/save-chat-id! (fn [& _] nil)]
+    (with-redefs [chats/save-chat-id! (fn [& _] nil)]
       (let [s0 (-> (base-state)
                    (assoc :mode :ready
                           :chat-id "old-chat"
@@ -578,35 +578,35 @@
         (is (empty? (:items s)))
         (is (some? cmd))))))
 
-(deftest slash-sessions-fires-list-cmd-test
-  (testing "/sessions in :ready fires chat/list cmd"
+(deftest slash-chats-fires-list-cmd-test
+  (testing "/chats in :ready fires chat/list cmd"
     (let [s0 (-> (base-state)
                  (assoc :mode :ready)
-                 (assoc :input (ti/set-value (ti/text-input) "/sessions")))
+                 (assoc :input (ti/set-value (ti/text-input) "/chats")))
           [s cmd] (state/update-state s0 (msg/key-press :enter))]
       (is (= :ready (:mode s)))
       (is (some? cmd)))))
 
 (deftest chat-list-loaded-enters-picking-test
-  (testing ":chat-list-loaded with results enters :picking :session"
+  (testing ":chat-list-loaded with results enters :picking :chat"
     (let [s0    (assoc (base-state) :mode :ready)
           chats [{:id "chat-abc" :title "Project A" :messageCount 10}
                  {:id "chat-def" :title "Project B" :messageCount 5}]
           [s _] (state/update-state s0 {:type :chat-list-loaded :chats chats})]
       (is (= :picking (:mode s)))
-      (is (= :session (get-in s [:picker :kind])))
+      (is (= :chat (get-in s [:picker :kind])))
       (is (= 2 (count (get-in s [:picker :all]))))))
 
   (testing ":chat-list-loaded with empty list still enters :picking"
     (let [s0    (assoc (base-state) :mode :ready)
           [s _] (state/update-state s0 {:type :chat-list-loaded :chats []})]
       (is (= :picking (:mode s)))
-      (is (= :session (get-in s [:picker :kind])))
+      (is (= :chat (get-in s [:picker :kind])))
       (is (empty? (get-in s [:picker :all]))))))
 
-(deftest session-picker-enter-fires-open-cmd-test
-  (testing "Enter in session picker returns :ready and fires open-chat cmd"
-    (with-redefs [sessions/save-chat-id! (fn [& _] nil)]
+(deftest chat-picker-enter-fires-open-cmd-test
+  (testing "Enter in chat picker returns :ready and fires open-chat cmd"
+    (with-redefs [chats/save-chat-id! (fn [& _] nil)]
       (let [s0    (assoc (base-state) :mode :ready)
             chats [{:id "chat-abc" :title "My Chat" :messageCount 3}]
             [s-pick _] (state/update-state s0 {:type :chat-list-loaded :chats chats})
@@ -615,8 +615,8 @@
         (is (nil? (:picker s)))
         (is (some? cmd))))))
 
-(deftest session-picker-escape-test
-  (testing "Esc in session picker returns to :ready, no change"
+(deftest chat-picker-escape-test
+  (testing "Esc in chat picker returns to :ready, no change"
     (let [s0    (assoc (base-state) :mode :ready)
           chats [{:id "chat-abc" :title "My Chat" :messageCount 3}]
           [s-pick _] (state/update-state s0 {:type :chat-list-loaded :chats chats})
@@ -711,7 +711,7 @@
           [s _] (state/update-state s0 (msg/key-press :enter))
           sys   (last (filter #(= :system (:type %)) (:items s)))]
       (is (some? sys))
-      (doseq [cmd ["/model" "/agent" "/new" "/sessions"
+      (doseq [cmd ["/model" "/agent" "/new" "/chats"
                    "/clear" "/help" "/quit" "/login"]]
         (is (clojure.string/includes? (:text sys) cmd)
             (str cmd " missing from /help output"))))))

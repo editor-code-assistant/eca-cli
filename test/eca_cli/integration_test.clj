@@ -66,18 +66,22 @@
 (def ^:private itest-workspace "/tmp/eca-cli-itest")
 (def ^:private itest-cmd (str "bb run --workspace " itest-workspace))
 
-(def ^:private sessions-file
+(def ^:private chats-file
+  (str (System/getProperty "user.home") "/.cache/eca/eca-cli-chats.edn"))
+
+(def ^:private legacy-chats-file
   (str (System/getProperty "user.home") "/.cache/eca/eca-cli-sessions.edn"))
 
 (defn- start!
   "Start a fresh eca-cli session, clearing any persisted chat-ids first so tests
-   don't inherit stale sessions (and their accumulated token context).
+   don't inherit stale chats (and their accumulated token context).
    Kills any running session BEFORE rm to avoid a race where eca-cli writes
-   sessions.edn during JVM shutdown after rm has already run."
+   the chats file during JVM shutdown after rm has already run. Removes the
+   legacy file too so the fallback read can't resurrect a stale chat-id."
   [cmd]
   (sh "tmux" "kill-session" "-t" session)
   (Thread/sleep 500)
-  (sh "rm" "-f" sessions-file)
+  (sh "rm" "-f" chats-file legacy-chats-file)
   (new-session! cmd)
   ;; Wait for SAFE *and* a real model name (provider/model format), which
   ;; signals config/updated has arrived and available-models is populated.
@@ -314,24 +318,24 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest phase3-resume-test
-  ;; Startup is always a fresh session. /sessions is the explicit resume path.
+  ;; Startup is always a fresh session. /chats is the explicit resume path.
   ;; Sends a message (persists chat-id), kills, restarts — verifies the new session
-  ;; is clean, then resumes the old chat via /sessions and checks messages replay.
+  ;; is clean, then resumes the old chat via /chats and checks messages replay.
   (start! itest-cmd)
   (try
     (keys! "resume-seed-xyzzy" "Enter")
     (wait-for-ready!)
     (kill!)
     (Thread/sleep 500)
-    ;; Restart WITHOUT clearing sessions — preserves the persisted chat-id for /sessions
+    ;; Restart WITHOUT clearing chats — preserves the persisted chat-id for /chats
     (new-session! itest-cmd)
     (wait-for! #(and (str/includes? % "SAFE") (re-find #"\w+/\w+" %)) 60000)
     (testing "fresh restart shows no old messages"
       (is (not (str/includes? (screen) "resume-seed-xyzzy"))))
-    (testing "previous chat appears in /sessions"
-      (keys! "/sessions" "Enter")
+    (testing "previous chat appears in /chats"
+      (keys! "/chats" "Enter")
       (wait-for! (has "Select chat") 15000))
-    (testing "selecting session replays old messages"
+    (testing "selecting chat replays old messages"
       (keys! "Enter")
       (let [s (wait-for! (has "resume-seed-xyzzy") 15000)]
         (is (str/includes? s "resume-seed-xyzzy"))))
@@ -354,16 +358,16 @@
           (is (str/includes? s new-msg)))))
     (finally (kill!))))
 
-(deftest phase3-sessions-picker-test
+(deftest phase3-chats-picker-test
   (start! itest-cmd)
   (try
-    (keys! "sessions-seed-xyzzy" "Enter")
+    (keys! "chats-seed-xyzzy" "Enter")
     (wait-for-ready!)
-    (testing "/sessions opens session picker"
-      (keys! "/sessions" "Enter")
+    (testing "/chats opens chat picker"
+      (keys! "/chats" "Enter")
       (let [s (wait-for! (has "Select chat") 15000)]
         (is (str/includes? s "Select chat"))))
-    (testing "Escape from sessions picker returns to :ready"
+    (testing "Escape from chats picker returns to :ready"
       (keys! "Escape")
       (let [s (wait-for! (lacks "Select chat") 5000)]
         (is (str/includes? s "SAFE"))))
