@@ -139,3 +139,14 @@
 
 (defn delete-chat! [srv chat-id callback]
   (send-request! srv "chat/delete" {:chatId chat-id} callback))
+
+;; --- Background jobs ---
+
+(defn jobs-list! [srv callback]
+  (send-request! srv "jobs/list" {} callback))
+
+(defn jobs-kill! [srv job-id callback]
+  (send-request! srv "jobs/kill" {:jobId job-id} callback))
+
+(defn jobs-read-output! [srv job-id callback]
+  (send-request! srv "jobs/readOutput" {:jobId job-id} callback))

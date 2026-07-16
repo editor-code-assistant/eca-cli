@@ -13,6 +13,7 @@
             [eca-cli.chat :as chat]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
+            [eca-cli.jobs :as jobs]
             [eca-cli.mcp :as mcp]
             [eca-cli.commands :as commands]))
 
@@ -75,6 +76,9 @@
     "chat/cleared"
     (chat/handle-chat-cleared state notification)
 
+    "jobs/updated"
+    (jobs/handle-jobs-updated state (:params notification))
+
     "tool/serverUpdated"
     (mcp/apply-server-update state (:params notification))
 
@@ -118,6 +122,7 @@
    :chat-id               nil
    :chat-title            nil
    :items                 []
+   :jobs                  {}
    :current-text          ""
    :tool-calls            {}
    :pending-approval      nil
@@ -203,6 +208,7 @@
 
       (= :eca-login-action (:type msg))    (login/handle-eca-login-action state msg)
       (= :eca-login-complete (:type msg))  (login/handle-eca-login-complete state msg)
+      (= :eca-jobs-output (:type msg))     (jobs/handle-jobs-output state msg)
 
       (= :chat-list-loaded (:type msg))
       (let [chats  (:chats msg)
@@ -249,6 +255,10 @@
             (-> state (dissoc :picker) (assoc :mode :ready))
             cmd-name)
           [state nil]))
+
+      (and (= :picking (:mode state))
+           (= :jobs (get-in state [:picker :kind])))
+      (jobs/handle-key state msg)
 
       ;; MCP-picker Enter arm — connect on requires-auth rows; everything else
       ;; falls through to the generic picker dispatch (filter, navigation, Esc).
