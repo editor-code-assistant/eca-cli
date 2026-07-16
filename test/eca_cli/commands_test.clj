@@ -4,7 +4,7 @@
 
 (deftest registry-completeness-test
   (testing "all expected commands present"
-    (doseq [cmd ["/model" "/agent" "/new" "/sessions"
+    (doseq [cmd ["/model" "/agent" "/new" "/chats"
                  "/clear" "/help" "/quit" "/login"]]
       (is (contains? commands/command-registry cmd)
           (str cmd " missing from registry"))))

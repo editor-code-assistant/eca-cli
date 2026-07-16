@@ -7,12 +7,14 @@
             [charm.message :as msg]
             [eca-cli.server :as server]
             [eca-cli.protocol :as protocol]
-            [eca-cli.sessions :as sessions]
+            [eca-cli.chats :as chats]
             [eca-cli.upgrade :as upgrade]
             [eca-cli.view :as view]
             [eca-cli.chat :as chat]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
+            [eca-cli.jobs :as jobs]
+            [eca-cli.mcp :as mcp]
             [eca-cli.commands :as commands]))
 
 ;; Expose last-known state for nREPL inspection
@@ -84,6 +86,12 @@
     "chat/cleared"
     (chat/handle-chat-cleared state notification)
 
+    "jobs/updated"
+    (jobs/handle-jobs-updated state (:params notification))
+
+    "tool/serverUpdated"
+    (mcp/apply-server-update state (:params notification))
+
     [state nil]))
 
 (defn- handle-eca-tick [state msgs]
@@ -124,6 +132,7 @@
    :chat-id               nil
    :chat-title            nil
    :items                 []
+   :jobs                  {}
    :current-text          ""
    :tool-calls            {}
    :pending-approval      nil
@@ -147,6 +156,7 @@
    :scroll-offset         0
    :width                 80
    :height                24
+   :mcps                  {}
    :model                 nil
    :usage                 nil})
 
@@ -233,6 +243,7 @@
 
       (= :eca-login-action (:type msg))    (login/handle-eca-login-action state msg)
       (= :eca-login-complete (:type msg))  (login/handle-eca-login-complete state msg)
+      (= :eca-jobs-output (:type msg))     (jobs/handle-jobs-output state msg)
 
       (= :at-files-loaded (:type msg))
       [(picker/update-at-file-results state (:paths msg)) nil]
@@ -245,9 +256,9 @@
                                  cnt (when messageCount (str messageCount " msgs"))]
                              [(str/join "  •  " (remove nil? [t cnt])) id]))
                          chats)
-            s'     (picker/open-session-picker state pairs)]
+            s'     (picker/open-chat-picker state pairs)]
         [(if error?
-           (-> s' (update :items conj {:type :system :text "⚠ Could not load sessions"}) view/rebuild-lines)
+           (-> s' (update :items conj {:type :system :text "⚠ Could not load chats"}) view/rebuild-lines)
            s')
          nil])
 
@@ -298,6 +309,16 @@
       (let [[s' _] (picker/handle-key state msg)]
         [s' (query-files-cmd (:server s') (:chat-id s')
                              (get-in s' [:picker :query]))])
+
+      (and (= :picking (:mode state))
+           (= :jobs (get-in state [:picker :kind])))
+      (jobs/handle-key state msg)
+
+      ;; MCP-picker Enter arm — connect on requires-auth rows; everything else
+      ;; falls through to the generic picker dispatch (filter, navigation, Esc).
+      (and (msg/key-press? msg) (msg/key-match? msg :enter)
+           (mcp/picker-open? state))
+      (mcp/handle-key state msg)
 
       (= :picking (:mode state))           (picker/handle-key state msg)
       (#{:ready :chatting} (:mode state))  (chat/handle-key state msg)

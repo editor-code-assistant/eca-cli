@@ -1,12 +1,12 @@
 (ns eca-cli.picker
-  "Picker overlay state + key dispatch (model / agent / session / command).
+  "Picker overlay state + key dispatch (model / agent / chat / command).
   Pure transformations on a :picker map under state."
   (:require [clojure.string :as str]
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-cli.protocol :as protocol]
-            [eca-cli.sessions :as sessions]))
+            [eca-cli.chats :as chats]))
 
 (defn printable-char?
   "True when msg is a keypress carrying a single printable character (no
@@ -21,9 +21,10 @@
 
 (defn item-display [kind item]
   (case kind
-    :session (first item)
+    :chat (first item)
     :command (str (first item) "  —  " (second item))
     :at-file (str item)
+    :mcp (:name item)
     item))
 
 (defn open-picker [state kind]
@@ -39,14 +40,14 @@
                           :query    ""})
           (update :input ti/reset)))))
 
-(defn open-session-picker [state session-pairs]
-  (let [labels (mapv first session-pairs)]
+(defn open-chat-picker [state chat-pairs]
+  (let [labels (mapv first chat-pairs)]
     (-> state
         (assoc :mode :picking
-               :picker {:kind     :session
+               :picker {:kind     :chat
                         :list     (cl/item-list labels :height 8)
-                        :all      session-pairs
-                        :filtered session-pairs
+                        :all      chat-pairs
+                        :filtered chat-pairs
                         :query    ""})
         (update :input ti/reset))))
 
@@ -108,7 +109,7 @@
         (assoc-in [:picker :filtered] filtered)
         (update-in [:picker :list] cl/set-items labels))))
 
-;; --- Selection handlers (model / agent / session) ---
+;; --- Selection handlers (model / agent / chat) ---
 ;;
 ;; The :command kind is dispatched by state.clj's update-state directly,
 ;; because picker cannot depend on commands without creating a cycle.
@@ -131,19 +132,19 @@
          nil])
       [state nil])))
 
-(defn- select-session [state]
+(defn- select-chat [state]
   (let [{:keys [list filtered]} (:picker state)
         idx                     (cl/selected-index list)
         [_display chat-id]      (when (and (some? idx) (< idx (count filtered)))
                                   (nth filtered idx))]
     (when chat-id
-      (sessions/save-chat-id! (get-in state [:opts :workspace]) chat-id))
+      (chats/save-chat-id! (get-in state [:opts :workspace]) chat-id))
     [(-> state
          (assoc :mode :ready :items [] :chat-lines [] :scroll-offset 0)
          (assoc :chat-id (or chat-id (:chat-id state)))
          (dissoc :picker)
          (update :input ti/focus))
-     (when chat-id (sessions/open-chat-cmd (:server state) chat-id))]))
+     (when chat-id (chats/open-chat-cmd (:server state) chat-id))]))
 
 (defn- whitespace? [ch]
   (or (= \space ch) (= \newline ch) (= \tab ch)))
@@ -193,7 +194,7 @@
       (and (msg/key-press? msg) (msg/key-match? msg :enter))
       (case kind
         (:model :agent) (select-model-or-agent state kind)
-        :session        (select-session state)
+        :chat           (select-chat state)
         :at-file        (select-at-file state)
         :command        [state nil] ; caller handles
         [state nil])
