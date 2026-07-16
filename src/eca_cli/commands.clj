@@ -10,6 +10,7 @@
             [eca-cli.chats :as chats]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
+            [eca-cli.mcp :as mcp]
             [eca-cli.view :as view]))
 
 (declare command-registry)
@@ -67,6 +68,7 @@
 (def command-registry
   {"/model"    {:doc "Open model picker"                  :handler cmd-open-model-picker}
    "/agent"    {:doc "Open agent picker"                  :handler cmd-open-agent-picker}
+   "/mcp"      {:doc "View MCP server status"             :handler mcp/cmd-open-mcp-panel}
    "/new"      {:doc "Start a fresh chat"                 :handler cmd-new-chat}
    "/chats"    {:doc "Browse and resume previous chats"   :handler cmd-list-chats}
    "/clear"    {:doc "Clear chat display (local only)"    :handler cmd-clear-chat}

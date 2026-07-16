@@ -13,6 +13,7 @@
             [eca-cli.chat :as chat]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
+            [eca-cli.mcp :as mcp]
             [eca-cli.commands :as commands]))
 
 ;; Expose last-known state for nREPL inspection
@@ -73,6 +74,9 @@
 
     "chat/cleared"
     (chat/handle-chat-cleared state notification)
+
+    "tool/serverUpdated"
+    (mcp/handle-tool-server-updated state (:params notification))
 
     [state nil]))
 
@@ -136,6 +140,7 @@
    :scroll-offset         0
    :width                 80
    :height                24
+   :mcps                  {}
    :model                 nil
    :usage                 nil})
 
@@ -244,6 +249,12 @@
             (-> state (dissoc :picker) (assoc :mode :ready))
             cmd-name)
           [state nil]))
+
+      ;; MCP-picker Enter arm — connect on requires-auth rows; everything else
+      ;; falls through to the generic picker dispatch (filter, navigation, Esc).
+      (and (msg/key-press? msg) (msg/key-match? msg :enter)
+           (mcp/picker-open? state))
+      (mcp/handle-key state msg)
 
       (= :picking (:mode state))           (picker/handle-key state msg)
       (#{:ready :chatting} (:mode state))  (chat/handle-key state msg)

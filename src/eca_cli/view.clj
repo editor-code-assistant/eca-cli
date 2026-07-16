@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
+            [eca-cli.mcp :as mcp]
             [eca-cli.view.blocks :as blocks]))
 
 (defn divider [width]
@@ -65,11 +66,15 @@
       (str "🚧 " summary "\n[y] approve  [Y] always  [n] reject"))))
 
 (defn- render-picker [state]
-  (let [{:keys [kind query list]} (:picker state)
-        label (case kind :model "model" :agent "agent" :chat "chat" :command "command" "item")]
-    (str "Select " label " (type to filter): " query "\n"
-         (divider (:width state)) "\n"
-         (cl/list-view list))))
+  (let [{:keys [kind query list]} (:picker state)]
+    (if (= :mcp kind)
+      (str "MCP servers\n"
+           (divider (:width state)) "\n"
+           (str/join "\n" (mcp/render-mcp-panel-lines state)))
+      (let [label (case kind :model "model" :agent "agent" :chat "chat" :command "command" "item")]
+        (str "Select " label " (type to filter): " query "\n"
+             (divider (:width state)) "\n"
+             (cl/list-view list))))))
 
 (defn render-status-bar [state]
   (let [workspace  (-> (get-in state [:opts :workspace] ".")
@@ -78,6 +83,7 @@
         model      (or (:selected-model state) (:model state) "…")
         agent      (:selected-agent state)
         variant    (:selected-variant state)
+        mcps-frag  (mcp/status-bar-fragment state (or (:width state) 80))
         usage      (:usage state)
         tokens     (some-> usage :sessionTokens (str "tok"))
         cost       (some-> usage :sessionCost)
@@ -91,7 +97,7 @@
                          (str "\"" (subs t 0 24) "…\"")
                          (str "\"" t "\""))))
         trust      (if (:trust state) "TRUST" "SAFE")]
-    (str/join "  " (remove nil? [workspace loading model agent variant tokens cost ctx-pct chat-title trust]))))
+    (str/join "  " (remove nil? [workspace loading model agent variant mcps-frag tokens cost ctx-pct chat-title trust]))))
 
 (defn render-login [state]
   (let [{:keys [provider action field-idx]} (:login state)

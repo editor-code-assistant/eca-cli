@@ -128,6 +128,9 @@
 (defn selected-agent-changed! [srv agent]
   (send-notification! srv "chat/selectedAgentChanged" {:agent agent}))
 
+(defn mcp-connect-server! [srv name]
+  (send-notification! srv "mcp/connectServer" {:name name}))
+
 (defn list-chats! [srv callback]
   (send-request! srv "chat/list" {:limit 20} callback))
 
