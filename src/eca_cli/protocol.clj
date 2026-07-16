@@ -140,6 +140,15 @@
 (defn delete-chat! [srv chat-id callback]
   (send-request! srv "chat/delete" {:chatId chat-id} callback))
 
+(defn chat-query-files!
+  "Fuzzy-searches workspace files via ECA. Empty query returns the full set
+  (server-capped). Response: {:files [{:type :file :path string ...}]}."
+  [srv chat-id query callback]
+  (send-request! srv "chat/queryFiles"
+                 (cond-> {:query (or query "")}
+                   chat-id (assoc :chatId chat-id))
+                 callback))
+
 ;; --- Background jobs ---
 
 (defn jobs-list! [srv callback]

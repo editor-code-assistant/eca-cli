@@ -23,6 +23,7 @@
   (case kind
     :chat (first item)
     :command (str (first item) "  —  " (second item))
+    :at-file (str item)
     :mcp (:name item)
     item))
 
@@ -49,6 +50,35 @@
                         :filtered chat-pairs
                         :query    ""})
         (update :input ti/reset))))
+
+(defn open-at-file-picker
+  "Opens the file picker with an empty list. Items arrive asynchronously
+  via :at-files-loaded and are spliced in by update-at-file-results."
+  [state]
+  (assoc state
+         :mode :picking
+         :picker {:kind     :at-file
+                  :list     (cl/item-list [] :height 8)
+                  :all      []
+                  :filtered []
+                  :query    ""}))
+
+(defn update-at-file-results
+  "Splice server-returned file paths into the at-file picker, preserving
+  any query the user has typed since opening."
+  [state paths]
+  (if (= :at-file (get-in state [:picker :kind]))
+    (let [query    (get-in state [:picker :query])
+          filtered (if (seq query)
+                     (filterv #(str/includes? (str/lower-case %)
+                                              (str/lower-case query))
+                              paths)
+                     paths)]
+      (-> state
+          (assoc-in [:picker :all] paths)
+          (assoc-in [:picker :filtered] filtered)
+          (update-in [:picker :list] cl/set-items filtered)))
+    state))
 
 (defn filter-picker [state ch]
   (let [query    (str (get-in state [:picker :query]) ch)
@@ -116,6 +146,44 @@
          (update :input ti/focus))
      (when chat-id (chats/open-chat-cmd (:server state) chat-id))]))
 
+(defn- whitespace? [ch]
+  (or (= \space ch) (= \newline ch) (= \tab ch)))
+
+(defn- insert-at-tag
+  "Insert `@<path>` into the text-input at the current cursor position,
+  always leaving exactly one space after the tag (and a leading space when
+  the char before the cursor is non-whitespace). Cursor ends past that
+  trailing space, so text typed next never extends the `@<path>` token —
+  keeping it matchable by `contexts-for-text` at send time."
+  [input path]
+  (let [value    (ti/value input)
+        pos      (min (count value) (max 0 (or (ti/position input) (count value))))
+        before   (subs value 0 pos)
+        after    (subs value pos)
+        prev-ch  (when (pos? (count before)) (.charAt ^String before (dec (count before))))
+        next-ch  (when (pos? (count after))  (.charAt ^String after 0))
+        lead-sp? (and prev-ch (not (whitespace? prev-ch)))
+        next-ws? (and next-ch (whitespace? next-ch))
+        insert   (str (when lead-sp? " ") "@" path (when-not next-ws? " "))
+        cursor   (+ pos (count insert) (if next-ws? 1 0))]
+    (-> input
+        (ti/set-value (str before insert after))
+        (assoc :pos cursor))))
+
+(defn- select-at-file [state]
+  (let [{:keys [list filtered]} (:picker state)
+        idx                     (cl/selected-index list)
+        path                    (when (and (some? idx) (< idx (count filtered)))
+                                  (nth filtered idx))]
+    (if path
+      [(-> state
+           (update :input #(-> % (insert-at-tag path) ti/focus))
+           (update :pending-contexts (fnil conj []) {:type "file" :path path})
+           (assoc :mode :ready)
+           (dissoc :picker))
+       nil]
+      [(-> state (assoc :mode :ready) (dissoc :picker) (update :input ti/focus)) nil])))
+
 (defn handle-key
   "Dispatch keypresses while :mode is :picking. Returns [new-state cmd-or-nil].
   Returns the original state unchanged for command-picker Enter — caller
@@ -127,6 +195,7 @@
       (case kind
         (:model :agent) (select-model-or-agent state kind)
         :chat           (select-chat state)
+        :at-file        (select-at-file state)
         :command        [state nil] ; caller handles
         [state nil])
 

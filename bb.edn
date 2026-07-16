@@ -15,6 +15,7 @@
                       :task (eca-cli.upgrade/run!)}
          test        {:doc "Run unit tests"
                       :task (do (require '[clojure.test])
+                                (require '[eca-cli.at-refs-test])
                                 (require '[eca-cli.chat-test])
                                 (require '[eca-cli.commands-test])
                                 (require '[eca-cli.jobs-test])
@@ -28,7 +29,8 @@
                                 (require '[eca-cli.paths-test])
                                 (require '[eca-cli.upgrade-test])
                                 (let [{:keys [fail error]}
-                                      (clojure.test/run-tests 'eca-cli.chat-test
+                                      (clojure.test/run-tests 'eca-cli.at-refs-test
+                                                              'eca-cli.chat-test
                                                               'eca-cli.commands-test
                                                               'eca-cli.jobs-test
                                                               'eca-cli.lifecycle-test

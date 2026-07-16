@@ -84,7 +84,7 @@
            (str/join "\n" (mcp/render-mcp-panel-lines state)))
 
       :else
-      (let [label (case kind :model "model" :agent "agent" :chat "chat" :command "command" "item")]
+      (let [label (case kind :model "model" :agent "agent" :chat "chat" :command "command" :at-file "file" "item")]
         (str "Select " label " (type to filter): " query "\n"
              (divider (:width state)) "\n"
              (cl/list-view list))))))

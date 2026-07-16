@@ -101,13 +101,32 @@
 
 ;; --- Outbound prompt ---
 
+(def ^:private at-token-re
+  ;; Match @<non-space-token>, preceded by start-of-string or whitespace.
+  ;; Duplicated from view/blocks.clj's render-time regex (kept local to each
+  ;; namespace until a third call site emerges to justify extraction).
+  #"(?:^|\s)@(\S+)")
+
+(defn- at-paths-in
+  "Return a set of `@path` tokens present in `text` (paths only, no `@`)."
+  [text]
+  (set (map second (re-seq at-token-re (str text)))))
+
+(defn- contexts-for-text
+  "Filter `contexts` to those whose `:path` still appears as an `@path` token
+  in `text`. Drops contexts the user deleted from the message before send."
+  [text contexts]
+  (let [present (at-paths-in text)]
+    (vec (filter #(contains? present (:path %)) contexts))))
+
 (defn send-chat-prompt! [srv chat-id text opts]
   (protocol/chat-prompt!
     srv
     (cond-> {:message text}
-      chat-id       (assoc :chat-id chat-id)
-      (:model opts) (assoc :model (:model opts))
-      (:agent opts) (assoc :agent (:agent opts)))
+      chat-id              (assoc :chat-id chat-id)
+      (:model opts)        (assoc :model (:model opts))
+      (:agent opts)        (assoc :agent (:agent opts))
+      (seq (:contexts opts)) (assoc :contexts (:contexts opts)))
     (fn [result]
       (when-let [new-id (:chat-id result)]
         (chats/save-chat-id! (:workspace opts) new-id))
@@ -411,16 +430,25 @@
         [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines ensure-focus-visible) nil]))))
 
 (defn- enter-submit-prompt [state]
-  (let [text (str/trim (ti/value (:input state)))]
+  (let [text     (str/trim (ti/value (:input state)))
+        contexts (contexts-for-text text (:pending-contexts state))]
     (if (seq text)
-      (let [new-state (-> state
+      (let [opts'     (cond-> (:opts state)
+                        (seq contexts) (assoc :contexts contexts))
+            new-state (-> state
                           (update :items conj {:type :user :text text})
                           (assoc :mode :chatting :pending-message text :echo-pending true)
+                          (assoc :pending-contexts [])
+                          ;; Stash filtered contexts on :opts so the login-retry
+                          ;; path (login/handle-providers-updated, login/handle-
+                          ;; eca-login-action, login/handle-eca-login-complete)
+                          ;; re-sends them after authentication.
+                          (assoc :opts opts')
                           (update :input #(-> % ti/reset ti/blur))
                           (update :input-history conj text)
                           (assoc :history-idx nil)
                           view/rebuild-lines)]
-        (send-chat-prompt! (:server state) (:chat-id state) text (:opts state))
+        (send-chat-prompt! (:server state) (:chat-id state) text opts')
         [new-state nil])
       [state nil])))
 
