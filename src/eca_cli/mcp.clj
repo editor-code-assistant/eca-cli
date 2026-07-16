@@ -61,8 +61,8 @@
 
 ;; --- ECA notification handler ---
 
-(defn handle-tool-server-updated
-  "Handles `tool/serverUpdated`. Non-MCP `:type` values are ignored. MCP servers
+(defn apply-server-update
+  "Applies a `tool/serverUpdated` notification. Non-MCP `:type` values are ignored. MCP servers
   are upserted into `:mcps` keyed by `:name` — subsequent updates replace prior
   entries rather than appending. If the `/mcp` picker is currently open the
   picker's `:all`/`:filtered`/`:list` are refreshed in lockstep, preserving the

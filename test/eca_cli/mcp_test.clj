@@ -20,7 +20,7 @@
 
 (deftest tool-server-updated-handler-test
   (testing "single mcp notification adds entry keyed by name"
-    (let [[s _] (mcp/handle-tool-server-updated
+    (let [[s _] (mcp/apply-server-update
                   (base-state)
                   {:type "mcp" :name "fs" :status "running"
                    :disabled false :hasAuth false
@@ -30,13 +30,13 @@
       (is (= 2 (count (get-in s [:mcps "fs" :tools]))))))
 
   (testing "non-mcp type is ignored"
-    (let [[s _] (mcp/handle-tool-server-updated
+    (let [[s _] (mcp/apply-server-update
                   (base-state)
                   {:type "other" :name "x" :status "running"})]
       (is (empty? (:mcps s)))))
 
   (testing "missing tools/prompts/resources are normalised to []"
-    (let [[s _] (mcp/handle-tool-server-updated
+    (let [[s _] (mcp/apply-server-update
                   (base-state)
                   {:type "mcp" :name "fs" :status "running"})]
       (is (= [] (get-in s [:mcps "fs" :tools])))
@@ -45,10 +45,10 @@
 
 (deftest tool-server-updated-update-not-duplicate-test
   (testing "subsequent notification with same name updates existing entry"
-    (let [[s1 _] (mcp/handle-tool-server-updated
+    (let [[s1 _] (mcp/apply-server-update
                    (base-state)
                    {:type "mcp" :name "fs" :status "starting" :tools []})
-          [s2 _] (mcp/handle-tool-server-updated
+          [s2 _] (mcp/apply-server-update
                    s1
                    {:type "mcp" :name "fs" :status "running"
                     :tools [{:name "read"}]})]
@@ -167,11 +167,30 @@
           (is (= ["bravo"] @sent)
               "Enter targets the one filtered (visible) row, not the original list"))))))
 
+(deftest picker-filters-by-name-only-test
+  (testing "typing filters :mcp rows by :name, not by status/tool text"
+    (let [state      (-> (base-state) (assoc :server :stub :mcps (mcps-fixture)))
+          [opened _] (mcp/cmd-open-mcp-panel state)]
+      (testing "a shared status substring ('running') matches no rows"
+        (let [f (picker/filter-picker opened "running")]
+          (is (= [] (mapv :name (get-in f [:picker :filtered]))))
+          (is (= [] (mcp/render-mcp-panel-lines f)))))
+      (testing "'auth' (only in bravo's status) matches no rows"
+        (let [f (picker/filter-picker opened "auth")]
+          (is (= [] (mapv :name (get-in f [:picker :filtered]))))))
+      (testing "a name substring matches by name"
+        (let [f (picker/filter-picker opened "elt")]
+          (is (= ["delta"] (mapv :name (get-in f [:picker :filtered]))))))
+      (testing "picker :list items stay name strings after a keystroke"
+        (let [f (picker/filter-picker opened "a")]
+          (is (every? string? (cl/items (get-in f [:picker :list])))
+              "labels remain names, not serialized entry maps"))))))
+
 (deftest picker-refreshes-on-server-update-test
   (testing "tool/serverUpdated arriving while picker open refreshes :all/:filtered"
     (let [state    (-> (base-state) (assoc :mcps (mcps-fixture)))
           [opened _] (mcp/cmd-open-mcp-panel state)
-          [updated _] (mcp/handle-tool-server-updated
+          [updated _] (mcp/apply-server-update
                         opened
                         {:type "mcp" :name "bravo" :status "running"
                          :tools [{:name "t1"}]})]
@@ -189,7 +208,7 @@
     (let [state      (-> (base-state) (assoc :mcps (mcps-fixture)))
           [opened _] (mcp/cmd-open-mcp-panel state)
           filtered   (picker/filter-picker opened "b")
-          [updated _] (mcp/handle-tool-server-updated
+          [updated _] (mcp/apply-server-update
                         filtered
                         {:type "mcp" :name "bravo" :status "running"
                          :tools [{:name "t1"}]})]
@@ -205,7 +224,7 @@
           [opened _] (mcp/cmd-open-mcp-panel state)
           ;; user moves cursor to delta (index 2)
           on-delta   (update-in opened [:picker :list] cl/select 2)
-          [updated _] (mcp/handle-tool-server-updated
+          [updated _] (mcp/apply-server-update
                         on-delta
                         {:type "mcp" :name "bravo" :status "running"
                          :tools []})
@@ -215,7 +234,7 @@
 
   (testing "update while picker closed does not synthesise picker keys"
     (let [state      (-> (base-state) (assoc :mcps (mcps-fixture)))
-          [updated _] (mcp/handle-tool-server-updated
+          [updated _] (mcp/apply-server-update
                         state
                         {:type "mcp" :name "bravo" :status "running" :tools []})]
       (is (nil? (:picker updated)))

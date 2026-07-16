@@ -23,6 +23,7 @@
   (case kind
     :chat (first item)
     :command (str (first item) "  —  " (second item))
+    :mcp (:name item)
     item))
 
 (defn open-picker [state kind]

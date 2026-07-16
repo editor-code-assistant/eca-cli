@@ -76,7 +76,7 @@
     (chat/handle-chat-cleared state notification)
 
     "tool/serverUpdated"
-    (mcp/handle-tool-server-updated state (:params notification))
+    (mcp/apply-server-update state (:params notification))
 
     [state nil]))
 
