@@ -151,21 +151,21 @@
 
 (defn- insert-at-tag
   "Insert `@<path>` into the text-input at the current cursor position,
-  ensuring a separator on each side when adjacent to non-whitespace text:
-  - leading space when the char before the cursor is non-whitespace
-  - trailing space when the char after the cursor is non-whitespace
-  Cursor ends just past `@<path>` (before any inserted trailing space)."
+  always leaving exactly one space after the tag (and a leading space when
+  the char before the cursor is non-whitespace). Cursor ends past that
+  trailing space, so text typed next never extends the `@<path>` token —
+  keeping it matchable by `contexts-for-text` at send time."
   [input path]
-  (let [value     (ti/value input)
-        pos       (min (count value) (max 0 (or (ti/position input) (count value))))
-        before    (subs value 0 pos)
-        after     (subs value pos)
-        prev-ch   (when (pos? (count before)) (.charAt ^String before (dec (count before))))
-        next-ch   (when (pos? (count after))  (.charAt ^String after 0))
-        lead-sp?  (and prev-ch (not (whitespace? prev-ch)))
-        trail-sp? (and next-ch (not (whitespace? next-ch)))
-        insert    (str (when lead-sp? " ") "@" path (when trail-sp? " "))
-        cursor    (+ pos (count insert) (if trail-sp? -1 0))]
+  (let [value    (ti/value input)
+        pos      (min (count value) (max 0 (or (ti/position input) (count value))))
+        before   (subs value 0 pos)
+        after    (subs value pos)
+        prev-ch  (when (pos? (count before)) (.charAt ^String before (dec (count before))))
+        next-ch  (when (pos? (count after))  (.charAt ^String after 0))
+        lead-sp? (and prev-ch (not (whitespace? prev-ch)))
+        next-ws? (and next-ch (whitespace? next-ch))
+        insert   (str (when lead-sp? " ") "@" path (when-not next-ws? " "))
+        cursor   (+ pos (count insert) (if next-ws? 1 0))]
     (-> input
         (ti/set-value (str before insert after))
         (assoc :pos cursor))))

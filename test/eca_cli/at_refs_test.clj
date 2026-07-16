@@ -7,6 +7,7 @@
             [charm.message :as msg]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [eca-cli.chat :as chat]
             [eca-cli.login :as login]
             [eca-cli.protocol :as protocol]
             [eca-cli.state :as state]
@@ -79,7 +80,7 @@
           [s _]        (state/update-state s-loaded (msg/key-press :enter))]
       (is (= :ready (:mode s)))
       (is (nil? (:picker s)))
-      (is (= "@src/eca_cli/state.clj" (ti/value (:input s))))
+      (is (= "@src/eca_cli/state.clj " (ti/value (:input s))))
       (is (= [{:type "file" :path "src/eca_cli/state.clj"}]
              (:pending-contexts s))))))
 
@@ -260,17 +261,28 @@
   (testing "Cursor in middle of word: leading + trailing space around @path"
     (let [s (drive-at-select "foobar" 3 ["path.clj"])]
       (is (= "foo @path.clj bar" (ti/value (:input s))))
-      (is (= 13 (ti/position (:input s)))
-          "cursor lands just past `@path.clj`, before the inserted trailing space"))))
+      (is (= 14 (ti/position (:input s)))
+          "cursor lands past the trailing space, so typing can't extend the token"))))
 
 (deftest separator-not-doubled-at-word-boundary-test
-  (testing "Cursor at end of word: leading space only, no trailing"
+  (testing "Cursor at end of word: leading space + trailing space"
     (let [s (drive-at-select "hello" 5 ["path.clj"])]
-      (is (= "hello @path.clj" (ti/value (:input s))))))
+      (is (= "hello @path.clj " (ti/value (:input s))))
+      (is (= 16 (ti/position (:input s))) "cursor past trailing space")))
 
-  (testing "Cursor after whitespace: no leading space added"
+  (testing "Cursor after whitespace: no leading space, trailing space still added"
     (let [s (drive-at-select "hi " 3 ["p.clj"])]
-      (is (= "hi @p.clj" (ti/value (:input s)))))))
+      (is (= "hi @p.clj " (ti/value (:input s)))))))
+
+(deftest context-survives-typing-after-selection-test
+  (testing "typing right after an end-of-input selection keeps the @path token
+            space-bounded, so contexts-for-text preserves the context on send"
+    (let [s0     (drive-at-select "review " 7 ["src/foo.clj"])
+          [s1 _] (state/update-state s0 (msg/key-press "!"))
+          text   (ti/value (:input s1))]
+      (is (= "review @src/foo.clj !" text))
+      (is (= [{:type "file" :path "src/foo.clj"}]
+             (#'chat/contexts-for-text text (:pending-contexts s1)))))))
 
 (defn- fire-cmd
   "Execute a charm cmd map by invoking its :fn — production charm does this
