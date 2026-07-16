@@ -3,8 +3,13 @@
  :tasks {run         {:doc "Run eca-cli"
                       :requires ([eca-cli.core])
                       :task (apply eca-cli.core/-main *command-line-args*)}
-         nrepl       {:doc "Start nREPL for development"
-                      :task (exec 'nrepl.cmdline/-main {:args ["--port" "7888"]})}
+         nrepl       {:doc "Start nREPL for development (Babashka built-in, port 7888)"
+                      :requires ([babashka.nrepl.server])
+                      :task (let [port 7888]
+                              (babashka.nrepl.server/start-server! {:host "127.0.0.1" :port port})
+                              (spit ".nrepl-port" (str port))
+                              (println "nREPL server listening on" (str "127.0.0.1:" port))
+                              (deref (promise)))}
          upgrade-eca {:doc "Download and install the pinned ECA binary"
                       :requires ([eca-cli.upgrade])
                       :task (eca-cli.upgrade/run!)}
@@ -14,22 +19,26 @@
                                 (require '[eca-cli.commands-test])
                                 (require '[eca-cli.jobs-test])
                                 (require '[eca-cli.lifecycle-test])
+                                (require '[eca-cli.mcp-test])
                                 (require '[eca-cli.protocol-test])
                                 (require '[eca-cli.view-test])
                                 (require '[eca-cli.view.blocks-test])
                                 (require '[eca-cli.state-test])
-                                (require '[eca-cli.sessions-test])
+                                (require '[eca-cli.chats-test])
+                                (require '[eca-cli.paths-test])
                                 (require '[eca-cli.upgrade-test])
                                 (let [{:keys [fail error]}
                                       (clojure.test/run-tests 'eca-cli.chat-test
                                                               'eca-cli.commands-test
                                                               'eca-cli.jobs-test
                                                               'eca-cli.lifecycle-test
+                                                              'eca-cli.mcp-test
                                                               'eca-cli.protocol-test
                                                               'eca-cli.view-test
                                                               'eca-cli.view.blocks-test
                                                               'eca-cli.state-test
-                                                              'eca-cli.sessions-test
+                                                              'eca-cli.chats-test
+                                                              'eca-cli.paths-test
                                                               'eca-cli.upgrade-test)]
                                   (System/exit (if (pos? (+ fail error)) 1 0))))}
          itest       {:doc "Run integration tests (requires tmux + ECA on PATH)"

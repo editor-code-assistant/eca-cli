@@ -1,7 +1,8 @@
 (ns eca-cli.upgrade
   (:require [babashka.process :as proc]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [eca-cli.paths :as paths]))
 
 (def eca-version "0.130.0")
 
@@ -18,7 +19,7 @@
        :else (throw (ex-info (str "Unsupported platform: " os-name " " arch) {}))))))
 
 (defn dest-path []
-  (str (System/getProperty "user.home") "/.cache/eca/eca-cli/eca"))
+  (str (paths/eca-binary)))
 
 (defn check-version
   "Returns a warning string if binary version doesn't match eca-version, else nil."

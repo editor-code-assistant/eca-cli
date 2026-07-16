@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
+            [eca-cli.mcp :as mcp]
             [eca-cli.view.blocks :as blocks]))
 
 ;; Lazy resolution to break the jobs ↔ view circular require.
@@ -70,12 +71,20 @@
 
 (defn- render-picker [state]
   (let [{:keys [kind query list]} (:picker state)]
-    (if (= :jobs kind)
+    (cond
+      (= :jobs kind)
       (case (get-in state [:jobs-view :kind])
         :output       ((jobs-fn 'render-output-popup-lines) state)
         :confirm-kill ((jobs-fn 'render-confirm-kill-lines) state)
         ((jobs-fn 'render-jobs-panel-lines) state))
-      (let [label (case kind :model "model" :agent "agent" :session "chat" :command "command" "item")]
+
+      (= :mcp kind)
+      (str "MCP servers\n"
+           (divider (:width state)) "\n"
+           (str/join "\n" (mcp/render-mcp-panel-lines state)))
+
+      :else
+      (let [label (case kind :model "model" :agent "agent" :chat "chat" :command "command" "item")]
         (str "Select " label " (type to filter): " query "\n"
              (divider (:width state)) "\n"
              (cl/list-view list))))))
@@ -87,6 +96,7 @@
         model      (or (:selected-model state) (:model state) "…")
         agent      (:selected-agent state)
         variant    (:selected-variant state)
+        mcps-frag  (mcp/status-bar-fragment state (or (:width state) 80))
         usage      (:usage state)
         tokens     (some-> usage :sessionTokens (str "tok"))
         cost       (some-> usage :sessionCost)
@@ -101,7 +111,7 @@
                          (str "\"" (subs t 0 24) "…\"")
                          (str "\"" t "\""))))
         trust      (if (:trust state) "TRUST" "SAFE")]
-    (str/join "  " (remove nil? [workspace loading model agent variant jobs-frag tokens cost ctx-pct chat-title trust]))))
+    (str/join "  " (remove nil? [workspace loading model agent variant mcps-frag jobs-frag tokens cost ctx-pct chat-title trust]))))
 
 (defn render-login [state]
   (let [{:keys [provider action field-idx]} (:login state)

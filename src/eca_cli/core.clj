@@ -2,6 +2,8 @@
   (:require [babashka.cli :as cli]
             [babashka.nrepl.server :as nrepl-server]
             [charm.program :as program]
+            [clojure.java.io :as io]
+            [eca-cli.paths :as paths]
             [eca-cli.state :as state]
             [eca-cli.view :as view]))
 
@@ -26,7 +28,9 @@
   (let [opts (cli/parse-opts args {:spec cli-spec})]
     (when-let [port (:nrepl opts)]
       (println (str "Starting nREPL server on port " port "..."))
-      (redirect-stdio-to-file! (str (System/getProperty "user.home") "/.cache/eca/eca-cli-nrepl.log"))
+      (let [log (paths/nrepl-log-file)]
+        (io/make-parents log)
+        (redirect-stdio-to-file! (str log)))
       (nrepl-server/start-server! {:host "localhost" :port port :quiet true}))
     (.addShutdownHook (Runtime/getRuntime)
                       (Thread. (fn []

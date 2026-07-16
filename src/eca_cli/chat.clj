@@ -7,7 +7,7 @@
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-cli.protocol :as protocol]
-            [eca-cli.sessions :as sessions]
+            [eca-cli.chats :as chats]
             [eca-cli.view :as view]))
 
 ;; --- State helpers ---
@@ -110,7 +110,7 @@
       (:agent opts) (assoc :agent (:agent opts)))
     (fn [result]
       (when-let [new-id (:chat-id result)]
-        (sessions/save-chat-id! (:workspace opts) new-id))
+        (chats/save-chat-id! (:workspace opts) new-id))
       (.put (:queue srv)
             {:type    :eca-prompt-response
              :chat-id (:chat-id result)
