@@ -4,6 +4,30 @@ All notable changes to eca-cli. Format inspired by [Keep a Changelog](https://ke
 
 ## Unreleased
 
+## Phase 11 — Power Features *(partial)*
+
+`@`-file context injection and the background-jobs panel shipped; `/rollback` + `/fork` remain (see `docs/roadmap.md` Phase 11).
+
+### Added
+
+- `@`-file context injection (#4): typing `@` at start-of-input or after a space opens a fuzzy file picker (`chat/queryFiles`); the selection is inserted inline as `@<path>` and sent as the `contexts` array on the next `chat/prompt`. Inline `@<token>` styled bold in the user-message renderer.
+- `/jobs` background-jobs panel (#3): new `src/eca_cli/jobs.clj` — `:jobs` state slice, `jobs/updated` push handler, `[N jobs]` status-bar slot, on-demand `jobs/readOutput` popup, and a `d`→confirm→`jobs/kill` flow. Push-only refresh, no polling.
+
+## Phase 7 — MCP Integration
+
+### Added
+
+- `/mcp` panel + status-bar slot + `tool/serverUpdated` handler (#2): new `src/eca_cli/mcp.clj` — MCP state slice, event-driven init (one `tool/serverUpdated` per configured server at startup), aggregate-health status-bar slot (`MCPs: 3/4 ⚠`), per-server status rows with tool count, and a `[connect]` affordance dispatching `mcp/connectServer` on `requires-auth` rows.
+
+## Refactor — session/chat vocabulary alignment
+
+Aligns eca-cli's vocabulary with upstream ECA (#7, closes #6). No behaviour change; transparent data migration. `bb test` 86 tests / `bb itest` 25 tests green.
+
+### Changed
+
+- ns `eca-cli.sessions` → `eca-cli.chats`; command `/sessions` → `/chats`; persistence file `eca-cli-sessions.edn` → `eca-cli-chats.edn` with a one-time legacy-fallback read so no resume history is lost; picker `open-session-picker` → `open-chat-picker`, `:kind :session` → `:chat`.
+- **Deliberately unchanged:** run-scoped approval state (`:session-trusted-tools`), server payload keys (`:sessionTokens`/`:sessionCost`), and tmux's own `session` term — these already match upstream.
+
 ## Refactor Phase B — structural cleanup
 
 Finishes the structural debt from the Phase A audit. 85/85 tests green at every commit.

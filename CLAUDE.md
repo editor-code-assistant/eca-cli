@@ -21,7 +21,7 @@ In-app commands (type in input, press Enter):
 /model      open model picker (Ctrl+L also works)
 /agent      open agent picker
 /new        start fresh chat (deletes current chat, clears UI)
-/sessions   browse and resume previous chats
+/chats      browse and resume previous chats
 ```
 
 Requires Babashka 1.12.215+. No separate build step — `bb run` compiles and runs directly.
@@ -81,7 +81,7 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 - `src/eca_cli/protocol.clj` — message constructors, request ID tracking, response correlation
 - `src/eca_cli/state.clj` — Elm state machine, ECA content handlers, all key bindings
 - `src/eca_cli/view.clj` — pure rendering: chat lines, tool icons, approval prompt, status bar
-- `src/eca_cli/sessions.clj` — EDN persistence of workspace → chat-id map
+- `src/eca_cli/chats.clj` — EDN persistence of workspace → chat-id map
 - `src/eca_cli/upgrade.clj` — ECA binary download and version check
 
 ### ECA binary discovery order
@@ -95,7 +95,7 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 
 ### Session persistence
 
-Chat-ids are persisted to `~/.cache/eca/eca-cli-sessions.edn` keyed by workspace path. Each startup begins a fresh session — no auto-resume. Use `/sessions` to explicitly resume a previous chat. `/new` deletes the current chat and removes its entry from the sessions file.
+Chat-ids are persisted to `~/.cache/eca/eca-cli-chats.edn` keyed by workspace path. Each startup begins a fresh session — no auto-resume. Use `/chats` to explicitly resume a previous chat. `/new` deletes the current chat and removes its entry from the chats file.
 
 ### Protocol reference
 
