@@ -12,6 +12,8 @@
 (def ^:private ansi-yellow   "\033[33m")
 (def ^:private ansi-green    "\033[32m")
 (def ^:private ansi-red      "\033[31m")
+(def ^:private ansi-grey     "\033[38;5;245m")
+(def ^:private ansi-dim      "\033[2;38;5;245m")
 (def ^:private ansi-bold-on  "\033[1m")
 (def ^:private ansi-bold-off "\033[22m")
 (def ^:private ansi-reset    "\033[0m")
@@ -54,6 +56,33 @@
     :rejected  (str ansi-red "✗" ansi-reset)
     (str ansi-yellow "◌" ansi-reset)))
 
+(def ^:private diff-max-lines 500)
+
+(defn render-diff
+  "Colourise a server-computed unified-diff string into display lines.
+  Input is the normalized `:edit` map (see `eca-cli.chat/Edit`); only `:diff`
+  is read here. Each line is coloured by its leading character: `-` red
+  (removed), `+` green (added), `@@` dim (hunk header), everything else grey
+  (context). No hunk computation — the server already chose the context.
+  Lines flow through the ANSI/CJK-aware `wrap-text` at `width`. Diffs over 500
+  rendered lines are clipped with a `[truncated]` footer."
+  [{:keys [diff]} width]
+  (let [inner-w (max 1 width)
+        styled  (mapcat
+                  (fn [line]
+                    (let [color (cond
+                                  (str/starts-with? line "@@") ansi-dim
+                                  (str/starts-with? line "+")  ansi-green
+                                  (str/starts-with? line "-")  ansi-red
+                                  :else                        ansi-grey)]
+                      (map #(str color % ansi-reset)
+                           (wrap/wrap-text line inner-w))))
+                  (str/split-lines (str diff)))]
+    (if (> (count styled) diff-max-lines)
+      (conj (vec (take diff-max-lines styled))
+            (str ansi-dim "[truncated]" ansi-reset))
+      (vec styled))))
+
 (defn render-item-lines [item width]
   (let [lines
         (case (:type item)
@@ -78,24 +107,30 @@
           :tool-call
           (let [icon    (render-tool-icon item)
                 name    (:name item)
-                summary (or (:summary item) name)]
+                summary (or (:summary item) name)
+                edit    (:edit item)
+                badge   (when edit
+                          (str "  " ansi-green "+" (:lines-added edit) ansi-reset
+                               " " ansi-red "−" (:lines-removed edit) ansi-reset))]
             (if (:expanded? item)
               (let [steps  (when (seq (:sub-items item))
                              (str "  ▸ " (count (:sub-items item)) " steps"))
                     header (str icon " " name "  " summary (or steps "") "  ▾")
-                    boxes  (concat
-                             (when (:args-text item)
-                               (render-box "Arguments" (:args-text item) width))
-                             (when (:out-text item)
-                               (render-box "Output" (:out-text item) width)))
+                    body   (if edit
+                             (render-diff edit width)
+                             (concat
+                               (when (:args-text item)
+                                 (render-box "Arguments" (:args-text item) width))
+                               (when (:out-text item)
+                                 (render-box "Output" (:out-text item) width))))
                     subs   (when (seq (:sub-items item))
                              (mapcat (fn [sub]
                                        (map #(str "  " %) (render-item-lines sub (- width 2))))
                                      (:sub-items item)))]
-                (vec (concat [header] boxes subs)))
+                (vec (concat [header] body subs)))
               (let [steps (when (seq (:sub-items item))
                             (str "  ▸ " (count (:sub-items item)) " steps"))]
-                [(str icon " " summary (or steps ""))])))
+                [(str icon " " summary (or badge "") (or steps ""))])))
 
           :thinking
           ;; Use › (same width as ▸) so focused swap doesn't change visual line width
