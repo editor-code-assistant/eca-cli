@@ -16,7 +16,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [3](#phase-3-session-continuity) | Session Continuity | Quit and resume, start fresh | ✅ Complete | [detail](roadmap/phase-3-session-continuity.md) |
 | [4](#phase-4-command-system) | Command System | Slash commands as the extensibility seam | ✅ Complete | [detail](roadmap/phase-4-command-system.md) |
 | [5](#phase-5-rich-display) | Rich Display | Expandable tool blocks, thinking, sub-agent nesting | ✅ Complete | [detail](roadmap/phase-5-rich-display.md) |
-| [6](#phase-6-tool-call-diff-display) | Tool-Call Diff Display | Render file-edit tool calls as unified diffs | 📋 Spec'd | [#25](https://github.com/editor-code-assistant/eca-cli/issues/25) |
+| [6](#phase-6-tool-call-diff-display) | Tool-Call Diff Display | Render file-edit tool calls as unified diffs | ✅ Complete | [#25](https://github.com/editor-code-assistant/eca-cli/issues/25) |
 | [7](#phase-7-mcp-integration) | MCP Integration | Status indicator, details panel, server update notifications | ✅ Complete | — |
 | [8](#phase-8-markdown-rendering) | Markdown Rendering | md→ANSI; `url`/OSC-8; wide-table horizontal-scroll | ⬜ Unbuilt | — |
 | [9](#phase-9-message-steering) | Message Steering | Influence a running prompt | ⬜ Unbuilt | — |
