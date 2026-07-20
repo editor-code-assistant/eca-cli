@@ -62,10 +62,11 @@
   `Edit`), or nil when the content carries no file-change payload. Detection is
   by payload presence — `details.type == \"fileChange\"` — never by tool name,
   so edit_file / write_file / apply_patch / any future edit tool are covered
-  automatically. Key path/casing pinned against the live wire: the ECA server
-  camelCases nested detail keys and JSON-encodes the `:fileChange` keyword to a
-  string, so eca-cli receives `{:type \"fileChange\" :path :diff :linesAdded
-  :linesRemoved}` under `content[:details]`."
+  automatically. Key path/casing traced against the ECA server source
+  (`filesystem.clj` fileChange arm → `shared.clj` recursive camelCase → cheshire
+  keyword→string) and REPL-verified by replaying that transform — not yet
+  captured from a live edit_file through the TUI. Expected shape: `{:type
+  \"fileChange\" :path :diff :linesAdded :linesRemoved}` under `content[:details]`."
   [content]
   (let [d (:details content)]
     (when (= "fileChange" (:type d))

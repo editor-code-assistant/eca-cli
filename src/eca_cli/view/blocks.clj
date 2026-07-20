@@ -65,7 +65,8 @@
   (removed), `+` green (added), `@@` dim (hunk header), everything else grey
   (context). No hunk computation — the server already chose the context.
   Lines flow through the ANSI/CJK-aware `wrap-text` at `width`. Diffs over 500
-  rendered lines are clipped with a `[truncated]` footer."
+  rendered lines are clipped with a `[truncated]` footer — realization is
+  bounded to the cap, so a huge edit never wraps its whole body just to drop it."
   [{:keys [diff]} width]
   (let [inner-w (max 1 width)
         styled  (mapcat
@@ -77,11 +78,14 @@
                                   :else                        ansi-grey)]
                       (map #(str color % ansi-reset)
                            (wrap/wrap-text line inner-w))))
-                  (str/split-lines (str diff)))]
-    (if (> (count styled) diff-max-lines)
-      (conj (vec (take diff-max-lines styled))
+                  (str/split-lines (str diff)))
+        ;; Realize at most one line past the cap — `styled` is lazy, so this
+        ;; short-circuits wrapping on huge diffs instead of forcing the whole body.
+        head    (vec (take (inc diff-max-lines) styled))]
+    (if (> (count head) diff-max-lines)
+      (conj (subvec head 0 diff-max-lines)
             (str ansi-dim "[truncated]" ansi-reset))
-      (vec styled))))
+      head)))
 
 (defn render-item-lines [item width]
   (let [lines
