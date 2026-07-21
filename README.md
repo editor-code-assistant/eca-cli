@@ -44,7 +44,7 @@ Type these into the input and press Enter:
 | `/model` | Open model picker (also Ctrl+L) |
 | `/agent` | Open agent picker |
 | `/new` | Start a fresh chat (deletes current) |
-| `/sessions` | Browse and resume previous chats |
+| `/chats` | Browse and resume previous chats |
 | `/clear` | Clear the chat display (local only) |
 | `/help` | Show available commands |
 | `/login` | Manually trigger provider login |
@@ -86,7 +86,7 @@ ECA process stdout
   → view.clj render
 ```
 
-Each feature owns a namespace: `chat.clj`, `commands.clj`, `picker.clj`, `login.clj`, `sessions.clj`. `state.clj` is the dispatcher that delegates to them. See [CLAUDE.md](./CLAUDE.md) for the in-depth architecture overview and [docs/refactor/](./docs/refactor/) for the structural-refactor history.
+Each feature owns a namespace: `chat.clj`, `commands.clj`, `picker.clj`, `login.clj`, `chats.clj`. `state.clj` is the dispatcher that delegates to them. See [CLAUDE.md](./CLAUDE.md) for the in-depth architecture overview and [docs/refactor/](./docs/refactor/) for the structural-refactor history.
 
 ## Development
 
