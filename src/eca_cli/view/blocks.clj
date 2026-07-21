@@ -68,10 +68,19 @@
   rendered lines are clipped with a `[truncated]` footer — realization is
   bounded to the cap, so a huge edit never wraps its whole body just to drop it."
   [{:keys [diff]} width]
-  (let [inner-w (max 1 width)
-        styled  (mapcat
+  (let [inner-w  (max 1 width)
+        ;; Clamp each source line before wrapping. wrap-text's hard-break is
+        ;; super-linear per line, and the diff-max-lines cap can't short-circuit
+        ;; within a single line — so one pathological newline-free line (a
+        ;; minified asset, a huge base64 blob) would hang the render loop. Cap
+        ;; at a few visual rows' worth of chars; the tail is elided.
+        line-cap (* 4 inner-w)
+        styled   (mapcat
                   (fn [line]
-                    (let [color (cond
+                    (let [line  (if (> (count line) line-cap)
+                                  (str (subs line 0 line-cap) "…")
+                                  line)
+                          color (cond
                                   (str/starts-with? line "@@") ansi-dim
                                   (str/starts-with? line "+")  ansi-green
                                   (str/starts-with? line "-")  ansi-red

@@ -133,7 +133,14 @@
 
   (testing "empty / whitespace diff handled without throwing"
     (is (vector? (blocks/render-diff {:diff ""} 80)))
-    (is (vector? (blocks/render-diff {:diff "   "} 80)))))
+    (is (vector? (blocks/render-diff {:diff "   "} 80))))
+
+  (testing "a pathological newline-free line is length-capped (no O(n²) wrap hang)"
+    (let [big   (str "+" (apply str (repeat 1000000 "x")))
+          lines (blocks/render-diff {:diff big} 80)]
+      ;; 4 rows of 80 cols + elision → a handful of lines, not thousands
+      (is (< (count lines) 10))
+      (is (clojure.string/includes? (last lines) "…")))))
 
 (deftest render-item-lines-diff-test
   (let [edit {:path "/tmp/foo.clj" :diff "@@ -1,1 +1,1 @@\n-a\n+b"
