@@ -272,3 +272,21 @@
     (let [s0 (assoc (base-state) :items [])
           [s _] (chat/handle-key s0 (msg/key-press :down :alt true))]
       (is (nil? (:focus-path s))))))
+
+(deftest content->edit-test
+  (testing "fileChange detail normalizes to an :edit map"
+    (is (= {:path "/tmp/foo.clj" :diff "@@ -1 +1 @@\n-a\n+b"
+            :lines-added 12 :lines-removed 3}
+           (chat/content->edit
+             {:type "toolCallRun" :id "1" :name "edit_file"
+              :details {:type "fileChange" :path "/tmp/foo.clj"
+                        :linesAdded 12 :linesRemoved 3
+                        :diff "@@ -1 +1 @@\n-a\n+b"}}))))
+
+  (testing "non-fileChange detail yields nil (no :edit key)"
+    (is (nil? (chat/content->edit
+                {:type "toolCallRun" :id "2" :name "shell"
+                 :details {:type "shellCommand"}}))))
+
+  (testing "missing details yields nil"
+    (is (nil? (chat/content->edit {:type "toolCallRun" :id "3" :name "read_file"})))))

@@ -42,6 +42,39 @@
                                    spawn? (assoc :sub-items []))]
                       (conj items base))))))))
 
+(def Edit
+  "Malli schema for the normalized file-change payload attached to a tool-call
+  item under `:edit`. Present iff the server shipped a `fileChange` detail
+  (`details.type == \"fileChange\"`). It is plain data — no malli runtime
+  dependency is needed to document the shape; `blocks/render-diff` consumes it.
+    :path          absolute file path the edit targets
+    :diff          server-computed unified-diff string (eca-cli only colourises)
+    :lines-added   count of added lines, for the collapsed `+N` badge
+    :lines-removed count of removed lines, for the collapsed `−M` badge"
+  [:map {:closed true}
+   [:path :string]
+   [:diff :string]
+   [:lines-added :int]
+   [:lines-removed :int]])
+
+(defn content->edit
+  "Normalize a server `fileChange` tool-call detail into an `:edit` map (see
+  `Edit`), or nil when the content carries no file-change payload. Detection is
+  by payload presence — `details.type == \"fileChange\"` — never by tool name,
+  so edit_file / write_file / apply_patch / any future edit tool are covered
+  automatically. Key path/casing traced against the ECA server source
+  (`filesystem.clj` fileChange arm → `shared.clj` recursive camelCase → cheshire
+  keyword→string) and REPL-verified by replaying that transform — not yet
+  captured from a live edit_file through the TUI. Expected shape: `{:type
+  \"fileChange\" :path :diff :linesAdded :linesRemoved}` under `content[:details]`."
+  [content]
+  (let [d (:details content)]
+    (when (= "fileChange" (:type d))
+      {:path          (:path d)
+       :diff          (:diff d)
+       :lines-added   (:linesAdded d)
+       :lines-removed (:linesRemoved d)})))
+
 (defn content->item [params]
   (let [content (:content params)]
     (case (:type content)
@@ -177,9 +210,11 @@
                 args-text (when arguments
                             (try (json/generate-string arguments)
                                  (catch Exception _ (pr-str arguments))))
-                tool      {:id id :name name :server server
-                           :summary summary :arguments arguments
-                           :args-text args-text :state :run}]
+                edit      (content->edit content)
+                tool      (cond-> {:id id :name name :server server
+                                   :summary summary :arguments arguments
+                                   :args-text args-text :state :run}
+                            edit (assoc :edit edit))]
             (if (and manualApproval (not trust?))
               (let [s' (-> state
                            (upsert-tool-call tool)
@@ -208,11 +243,13 @@
             out-text (when (seq (str output))
                        (if (> (count output) 8192)
                          (str (subs output 0 8192) "\n[truncated]")
-                         output))]
+                         output))
+            edit     (content->edit content)]
         (-> state
-            (upsert-tool-call {:id id :name name :server server
-                               :summary summary :arguments arguments
-                               :state :called :error? error :out-text out-text})
+            (upsert-tool-call (cond-> {:id id :name name :server server
+                                       :summary summary :arguments arguments
+                                       :state :called :error? error :out-text out-text}
+                                edit (assoc :edit edit)))
             view/rebuild-lines))
 
       "toolCallRejected"

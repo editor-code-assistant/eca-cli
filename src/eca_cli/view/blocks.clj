@@ -12,6 +12,8 @@
 (def ^:private ansi-yellow   "\033[33m")
 (def ^:private ansi-green    "\033[32m")
 (def ^:private ansi-red      "\033[31m")
+(def ^:private ansi-grey     "\033[38;5;245m")
+(def ^:private ansi-dim      "\033[2;38;5;245m")
 (def ^:private ansi-bold-on  "\033[1m")
 (def ^:private ansi-bold-off "\033[22m")
 (def ^:private ansi-reset    "\033[0m")
@@ -54,6 +56,56 @@
     :rejected  (str ansi-red "✗" ansi-reset)
     (str ansi-yellow "◌" ansi-reset)))
 
+(def ^:private diff-max-lines 500)
+
+(defn render-diff
+  "Colourise a server-computed unified-diff string into display lines.
+  Input is the normalized `:edit` map (see `eca-cli.chat/Edit`); only `:diff`
+  is read here. Each line is coloured by its leading character: `-` red
+  (removed), `+` green (added), `@@` dim (hunk header), everything else grey
+  (context). No hunk computation — the server already chose the context.
+  Lines flow through the ANSI/CJK-aware `wrap-text` at `width`. Diffs over 500
+  rendered lines are clipped with a `[truncated]` footer. Cost is bounded in
+  BOTH dimensions — total diff size and per-line length — so this stays O(1) in
+  the size of the underlying edit even though `render-item-lines` re-runs it on
+  every ~50ms render tick while an edit awaits approval."
+  [{:keys [diff]} width]
+  (let [inner-w  (max 1 width)
+        ;; Clamp each source line before wrapping. wrap-text's hard-break is
+        ;; super-linear per line, and the diff-max-lines cap can't short-circuit
+        ;; within a single line — so one pathological newline-free line (a
+        ;; minified asset, a huge base64 blob) would hang the render loop. Cap
+        ;; at a few visual rows' worth of chars; the tail is elided.
+        line-cap (* 4 inner-w)
+        ;; Bound total work BEFORE the eager `str/split-lines` (which fully
+        ;; materializes a String[] — the lazy `take` below can't short-circuit
+        ;; it). At most (diff-max-lines+1) lines of (line-cap+1) chars can ever
+        ;; survive truncation, so scanning past that prefix is pure waste. This
+        ;; keeps a huge server diff from re-splitting megabytes every tick.
+        budget   (* (inc diff-max-lines) (inc line-cap))
+        raw      (str diff)
+        clamped  (if (> (count raw) budget) (subs raw 0 budget) raw)
+        styled   (mapcat
+                  (fn [line]
+                    (let [line  (if (> (count line) line-cap)
+                                  (str (subs line 0 line-cap) "…")
+                                  line)
+                          color (cond
+                                  (str/starts-with? line "@@") ansi-dim
+                                  (str/starts-with? line "+")  ansi-green
+                                  (str/starts-with? line "-")  ansi-red
+                                  :else                        ansi-grey)]
+                      (map #(str color % ansi-reset)
+                           (wrap/wrap-text line inner-w))))
+                  (str/split-lines clamped))
+        ;; Realize at most one line past the cap — `styled` is lazy, so this
+        ;; short-circuits wrapping on huge diffs instead of forcing the whole body.
+        head    (vec (take (inc diff-max-lines) styled))]
+    (if (> (count head) diff-max-lines)
+      (conj (subvec head 0 diff-max-lines)
+            (str ansi-dim "[truncated]" ansi-reset))
+      head)))
+
 (defn render-item-lines [item width]
   (let [lines
         (case (:type item)
@@ -78,24 +130,30 @@
           :tool-call
           (let [icon    (render-tool-icon item)
                 name    (:name item)
-                summary (or (:summary item) name)]
+                summary (or (:summary item) name)
+                edit    (:edit item)
+                badge   (when edit
+                          (str "  " ansi-green "+" (:lines-added edit) ansi-reset
+                               " " ansi-red "−" (:lines-removed edit) ansi-reset))]
             (if (:expanded? item)
               (let [steps  (when (seq (:sub-items item))
                              (str "  ▸ " (count (:sub-items item)) " steps"))
                     header (str icon " " name "  " summary (or steps "") "  ▾")
-                    boxes  (concat
-                             (when (:args-text item)
-                               (render-box "Arguments" (:args-text item) width))
-                             (when (:out-text item)
-                               (render-box "Output" (:out-text item) width)))
+                    body   (if edit
+                             (render-diff edit width)
+                             (concat
+                               (when (:args-text item)
+                                 (render-box "Arguments" (:args-text item) width))
+                               (when (:out-text item)
+                                 (render-box "Output" (:out-text item) width))))
                     subs   (when (seq (:sub-items item))
                              (mapcat (fn [sub]
                                        (map #(str "  " %) (render-item-lines sub (- width 2))))
                                      (:sub-items item)))]
-                (vec (concat [header] boxes subs)))
+                (vec (concat [header] body subs)))
               (let [steps (when (seq (:sub-items item))
                             (str "  ▸ " (count (:sub-items item)) " steps"))]
-                [(str icon " " summary (or steps ""))])))
+                [(str icon " " summary (or badge "") (or steps ""))])))
 
           :thinking
           ;; Use › (same width as ▸) so focused swap doesn't change visual line width

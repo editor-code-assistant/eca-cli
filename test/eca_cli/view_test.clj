@@ -248,3 +248,30 @@
         (is (clojure.string/includes? txt "https://accounts.google.com"))
         (is (clojure.string/includes? txt "browser"))))))
 
+
+(deftest render-approval-test
+  (testing "approval renders the full tool-call block with a diff, then the y/n/Y prompt"
+    (let [edit  {:path "/tmp/foo.clj" :diff "@@ -1,2 +1,2 @@\n-old\n+new\n ctx"
+                 :lines-added 1 :lines-removed 1}
+          state {:mode :approving :width 80
+                 :pending-approval {:tool-call-id "t1"}
+                 :tool-calls {"t1" {:id "t1" :name "edit_file" :summary "foo.clj"
+                                    :state :run :edit edit}}}
+          out   (view/render-approval state)]
+      (is (string? out))
+      (is (clojure.string/includes? out "edit_file"))
+      (is (clojure.string/includes? out "@@"))      ; diff present
+      (is (clojure.string/includes? out "old"))
+      (is (clojure.string/includes? out "new"))
+      (is (clojure.string/includes? out "[y] approve"))
+      ;; prompt sits on its own line, below the diff
+      (is (< (.indexOf out "@@") (.indexOf out "[y] approve")))))
+
+  (testing "non-edit tool call still renders block + prompt (fallback intact)"
+    (let [state {:mode :approving :width 80
+                 :pending-approval {:tool-call-id "t2"}
+                 :tool-calls {"t2" {:id "t2" :name "shell" :summary "ls"
+                                    :state :run :args-text "{\"cmd\":\"ls\"}"}}}
+          out   (view/render-approval state)]
+      (is (clojure.string/includes? out "shell"))
+      (is (clojure.string/includes? out "[y] approve")))))

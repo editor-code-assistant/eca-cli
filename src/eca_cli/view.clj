@@ -63,11 +63,19 @@
         idx    (mod (quot (System/currentTimeMillis) 120) (count frames))]
     (str "◆ " (nth frames idx))))
 
-(defn render-approval [state]
+(defn render-approval
+  "Render the pending tool call through the shared block renderer, force-expanded
+  (so a file edit shows its diff), followed by the `[y/n/Y]` prompt line. One
+  block renderer, two mount points — the diff can never drift between the
+  approval surface and the completed block."
+  [state]
   (when-let [{:keys [tool-call-id]} (:pending-approval state)]
-    (let [tool    (get-in state [:tool-calls tool-call-id])
-          summary (or (:summary tool) (:name tool) "tool call")]
-      (str "🚧 " summary "\n[y] approve  [Y] always  [n] reject"))))
+    (let [tool  (get-in state [:tool-calls tool-call-id])
+          width (:width state)
+          item  (assoc tool :type :tool-call :expanded? true)
+          lines (blocks/render-item-lines item width)]
+      (str (str/join "\n" lines)
+           "\n[y] approve  [Y] always  [n] reject"))))
 
 (defn- render-picker [state]
   (let [{:keys [kind query list]} (:picker state)]
