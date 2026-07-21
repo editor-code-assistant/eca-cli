@@ -65,8 +65,10 @@
   (removed), `+` green (added), `@@` dim (hunk header), everything else grey
   (context). No hunk computation — the server already chose the context.
   Lines flow through the ANSI/CJK-aware `wrap-text` at `width`. Diffs over 500
-  rendered lines are clipped with a `[truncated]` footer — realization is
-  bounded to the cap, so a huge edit never wraps its whole body just to drop it."
+  rendered lines are clipped with a `[truncated]` footer. Cost is bounded in
+  BOTH dimensions — total diff size and per-line length — so this stays O(1) in
+  the size of the underlying edit even though `render-item-lines` re-runs it on
+  every ~50ms render tick while an edit awaits approval."
   [{:keys [diff]} width]
   (let [inner-w  (max 1 width)
         ;; Clamp each source line before wrapping. wrap-text's hard-break is
@@ -75,6 +77,14 @@
         ;; minified asset, a huge base64 blob) would hang the render loop. Cap
         ;; at a few visual rows' worth of chars; the tail is elided.
         line-cap (* 4 inner-w)
+        ;; Bound total work BEFORE the eager `str/split-lines` (which fully
+        ;; materializes a String[] — the lazy `take` below can't short-circuit
+        ;; it). At most (diff-max-lines+1) lines of (line-cap+1) chars can ever
+        ;; survive truncation, so scanning past that prefix is pure waste. This
+        ;; keeps a huge server diff from re-splitting megabytes every tick.
+        budget   (* (inc diff-max-lines) (inc line-cap))
+        raw      (str diff)
+        clamped  (if (> (count raw) budget) (subs raw 0 budget) raw)
         styled   (mapcat
                   (fn [line]
                     (let [line  (if (> (count line) line-cap)
@@ -87,7 +97,7 @@
                                   :else                        ansi-grey)]
                       (map #(str color % ansi-reset)
                            (wrap/wrap-text line inner-w))))
-                  (str/split-lines (str diff)))
+                  (str/split-lines clamped))
         ;; Realize at most one line past the cap — `styled` is lazy, so this
         ;; short-circuits wrapping on huge diffs instead of forcing the whole body.
         head    (vec (take (inc diff-max-lines) styled))]

@@ -131,6 +131,24 @@
       (is (= 501 (count lines)))
       (is (clojure.string/includes? (last lines) "[truncated]"))))
 
+  (testing "truncation boundary is exact: 500 lines untouched, 501 clipped"
+    (let [d500 (clojure.string/join "\n" (map #(str "+" %) (range 500)))
+          d501 (clojure.string/join "\n" (map #(str "+" %) (range 501)))
+          l500 (blocks/render-diff {:diff d500} 80)
+          l501 (blocks/render-diff {:diff d501} 80)]
+      (is (= 500 (count l500)))
+      (is (not-any? #(clojure.string/includes? % "[truncated]") l500))
+      (is (= 501 (count l501)))
+      (is (clojure.string/includes? (last l501) "[truncated]"))))
+
+  (testing "total diff size is bounded before split — a huge multi-line diff stays cheap"
+    ;; Guards the eager str/split-lines DoS: cost must not scale with total
+    ;; diff size. A million-line diff renders the same 501 lines as any large diff.
+    (let [huge  (clojure.string/join "\n" (repeat 1000000 "+x"))
+          lines (blocks/render-diff {:diff huge} 80)]
+      (is (= 501 (count lines)))
+      (is (clojure.string/includes? (last lines) "[truncated]"))))
+
   (testing "empty / whitespace diff handled without throwing"
     (is (vector? (blocks/render-diff {:diff ""} 80)))
     (is (vector? (blocks/render-diff {:diff "   "} 80))))
