@@ -29,6 +29,19 @@
   (server/write-message! (:writer srv)
                          {:jsonrpc "2.0" :method method :params params}))
 
+(defn send-response!
+  "Answers a request the server sent us (e.g. `chat/askQuestion`)."
+  [srv id result]
+  (server/write-message! (:writer srv) {:jsonrpc "2.0" :id id :result result}))
+
+(def method-not-found -32601)
+
+(defn send-error-response!
+  "Answers a server request with an error, e.g. one eca-cli doesn't support,
+  so the server doesn't wait for an answer that never comes."
+  [srv id code message]
+  (server/write-message! (:writer srv) {:jsonrpc "2.0" :id id :error {:code code :message message}}))
+
 ;; --- Message constructors ---
 
 (defn initialize-params
@@ -38,7 +51,9 @@
   (let [name (.getName (java.io.File. workspace-path))]
     {:processId (.pid (java.lang.ProcessHandle/current))
      :clientInfo {:name "eca-cli" :version version/version}
-     :capabilities {:codeAssistant {:chat true}}
+     :capabilities {:codeAssistant {:chat             true
+                                    ;; chat/askQuestion: the ask_user tool, /login choices
+                                    :chatCapabilities {:askQuestion true}}}
      :workspaceFolders [{:uri (str "file://" workspace-path)
                          :name name}]}))
 

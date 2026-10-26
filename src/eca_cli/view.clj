@@ -172,6 +172,47 @@
              (str "  " (key "Y" (theme/merge-styles :success :bold)) " "
                   (theme/paint :key-desc (clip y-desc room))))))))
 
+(defn- prompt-input
+  "The prompt line: the `> ` prefix in the prompt colour, then the text."
+  [input]
+  (str (theme/paint :prompt (:prompt input)) (ti/text-input-view (assoc input :prompt ""))))
+
+(defn render-question
+  "The input area while the server asks a question (`eca-cli.question`): the
+  question, its options (the highlighted one picked by Enter), how to answer,
+  then the prompt when a free answer is allowed."
+  [state]
+  (when-let [{:keys [question options allow-freeform?]} (first (:questions state))]
+    (let [width  (:width state 80)
+          cursor (:question-cursor state 0)
+          more   (dec (count (:questions state)))
+          n      (count options)
+          ;; "❯ " + "N. " + label, labels in one column, descriptions after.
+          label-w (max 1 (min (- width 8) (reduce max 0 (map #(theme/width (:label %)) options))))
+          rows    (map-indexed
+                    (fn [i {:keys [label description]}]
+                      (let [sel? (= i cursor)
+                            num  (str (inc i) ". ")
+                            room (- width 2 (count num) label-w 2)]
+                        (str (if sel? (theme/paint :accent-bold "❯ ") "  ")
+                             (theme/paint :key-desc num)
+                             (theme/paint (if sel? :accent-bold :bold) (theme/pad-right (clip label label-w) label-w))
+                             (when (and (seq description) (> room 3))
+                               (theme/paint :muted (str "  " (clip description room)))))))
+                    options)
+          hint   (str (cond
+                        (and (pos? n) allow-freeform?) "↑↓ Enter to pick, or type an answer"
+                        (pos? n)                       (str "↑↓ Enter or 1-" (min 9 n) " to pick")
+                        :else                          "type your answer, Enter to send")
+                      " · Esc cancels"
+                      (when (pos? more) (str " · " more " more question" (when (> more 1) "s"))))]
+      (str/join "\n"
+                (concat (blocks/prefixed (blocks/question-lines question (- width 2))
+                                         (str (theme/paint :accent-bold "?") " ") "  ")
+                        rows
+                        [(theme/paint :muted (clip hint width))]
+                        (when allow-freeform? [(prompt-input (:input state))]))))))
+
 (defn command-hint
   "While the input starts with a server command that takes arguments, its
   signature (`<required> [optional]`) and description."
@@ -310,11 +351,6 @@
 
       (str heading "  " cancel))))
 
-(defn- prompt-input
-  "The prompt line: the `> ` prefix in the prompt colour, then the text."
-  [input]
-  (str (theme/paint :prompt (:prompt input)) (ti/text-input-view (assoc input :prompt ""))))
-
 (defn- login-input
   "The login field being typed, masked when it's a secret (API keys)."
   [state]
@@ -329,6 +365,9 @@
         input-area (cond
                      (= :approving mode)
                      (or (render-approval state) "")
+
+                     (= :asking mode)
+                     (or (render-question state) "")
 
                      (= :picking mode)
                      (render-picker state)
@@ -354,9 +393,10 @@
                      :connecting (render-connecting state now)
                      :chatting   (render-working state now)
                      :approving  (approval-gutter state)
+                     :asking     (theme/paint :accent "◆ Waiting for your answer")
                      :ready      (or (command-hint state) "")
                      "")
-        rule-role  (case mode :approving :warning :disconnected :error :border)]
+        rule-role  (case mode :approving :warning :asking :accent :disconnected :error :border)]
     (str (render-chat state)
          "\n" gutter
          "\n" (divider (:width state) rule-role)

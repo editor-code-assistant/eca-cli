@@ -12,6 +12,7 @@
             [eca-cli.login :as login]
             [eca-cli.jobs :as jobs]
             [eca-cli.mcp :as mcp]
+            [eca-cli.question :as question]
             [eca-cli.commands :as commands]))
 
 ;; Expose last-known state for nREPL inspection
@@ -88,7 +89,15 @@
     "tool/serverUpdated"
     (mcp/apply-server-update state (:params notification))
 
-    [state nil]))
+    "chat/askQuestion"
+    [(question/handle-ask-question state notification) nil]
+
+    ;; A request (it has an id) eca-cli doesn't support: say so, or the
+    ;; server would wait for an answer forever.
+    (do (when (:id notification)
+          (protocol/send-error-response! (:server state) (:id notification) protocol/method-not-found
+                                         (str "eca-cli does not support " (:method notification))))
+        [state nil])))
 
 (defn- disconnect
   "The server is gone (or refused us): show why and stop taking input. Only
@@ -97,7 +106,7 @@
   (-> state
       chat/flush-current-text
       chat/clear-approvals
-      (assoc :mode :disconnected)
+      (assoc :mode :disconnected :questions [])
       (dissoc :picker :login)
       (update :items conj {:type :system :text report})
       (update :input ti/blur)
@@ -176,6 +185,7 @@
    :tool-calls            {}
    :pending-approval      nil
    :approval-queue        []
+   :questions             []
    :pending-message       nil
    :echo-pending          false
    :init-tasks            {}
@@ -360,6 +370,9 @@
       ;; --- Per-mode dispatch (single-arm delegation) ---
       (= :login (:mode state))      (login/handle-key state msg)
       (= :approving (:mode state))  (chat/handle-approval-key state msg)
+      (= :asking (:mode state))     (if (scroll-msg? msg)
+                                      (chat/handle-key state msg)
+                                      (question/handle-key state msg))
 
       ;; Server gone: scrolling (to read the exit report) is all that's left.
       (= :disconnected (:mode state))

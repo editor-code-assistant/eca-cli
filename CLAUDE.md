@@ -51,6 +51,8 @@ ECA process stdout
 
 Responses to requests (e.g. `chat/prompt` → `{chatId, model}`) are routed through the queue via a callback that calls `.put queue` — so all server messages flow through the same path.
 
+Requests *from* the server (an `:id` and a `:method`, e.g. `chat/askQuestion`) arrive like notifications; their handler answers later with `protocol/send-response!`. One eca-cli doesn't handle gets `send-error-response!` (method not found), never silence: the server would wait forever. Only advertise a capability (`protocol/initialize-params`) once its requests are handled.
+
 ### Startup
 
 `core/parse-args` handles `--help`, `--version` and invalid options (unknown flags and stray arguments exit 1 with a hint) without touching the workspace or the server. Otherwise `core/-main` resolves the ECA binary *before* the TUI takes over the terminal (`upgrade/resolve-binary!`, which may download/update the managed binary with progress on stderr; fatal errors print and exit 1), sends the terminal's `enacs` sequence (`terminal/enable-alt-charset!`, see below), then starts charm.clj.
@@ -74,6 +76,7 @@ The drain loop starts at init and is self-sustaining: the `:eca-tick` handler re
 - `:ready` — input focused, awaiting user message
 - `:chatting` — LLM active, streaming; input blurred
 - `:approving` — a tool call (main chat or sub-agent) waiting on `y`/`n`/`Y`; more may wait in `:approval-queue`
+- `:asking` — the server asked a question (`chat/askQuestion`, `question.clj`), answered from the input area; more may wait in `:questions`. Approvals and questions don't interrupt each other: `chat/settle-mode` picks what comes next once one is answered (then `:chatting` while `:turn-started-at` says a turn runs, else `:ready`). A server `progress: running` marks a turn as running even when the server started it.
 - `:disconnected` — server exited (or failed to spawn / refused `initialize`). The reader thread queues a `:reader-error` whose `:error` is a ready-to-show report (exit code + tail of the server log, `server/exit-report`). Only scrolling and quitting work; quitting skips the protocol `shutdown` (also skipped in `:connecting`).
 
 ### Tool call lifecycle
@@ -99,6 +102,9 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 - `src/eca_cli/server.clj` — process spawn, Content-Length JSON-RPC framing (synchronized writes that return false instead of throwing once the server is gone), reader thread, exit report, queue drain
 - `src/eca_cli/protocol.clj` — message constructors, request ID tracking, response correlation
 - `src/eca_cli/state.clj` — Elm state machine, ECA content handlers, all key bindings
+- `src/eca_cli/chat.clj` — chat content handlers, tool-call lifecycle, approvals queue, chat routing/switching, prompt submission
+- `src/eca_cli/commands.clj` — slash commands: local registry, server commands (`chat/queryCommands`), dispatch, `/` picker items
+- `src/eca_cli/question.clj` — `chat/askQuestion`: question queue, `:asking` keys, answers
 - `src/eca_cli/view.clj` — pure rendering: chat lines (cached, batched), gutter (connecting / working), approval prompt, pickers, login, layout
 - `src/eca_cli/view/blocks.clj` — one renderer per chat item type: messages, tool calls (diffs, argument/output boxes), thinking, hooks, links, system notes
 - `src/eca_cli/view/status.clj` — the status line: segments, priorities, context-window bar, usage/cost/quota

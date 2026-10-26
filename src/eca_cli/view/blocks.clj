@@ -98,7 +98,7 @@
             (paint :diff-hunk "[truncated]"))
       head)))
 
-(defn- prefixed
+(defn prefixed
   "`first-prefix` before the first line, `rest-prefix` before the others."
   [lines first-prefix rest-prefix]
   (if (seq lines)
@@ -191,11 +191,17 @@
                                (map #(str "  " %) (render-item-lines sub (- width 2))))
                              (:sub-items item)))]
         (vec (concat [header] body subs)))
-      (let [badge (when edit
-                    (str "  " (paint :diff-add (str "+" (:lines-added edit)))
-                         " " (paint :diff-del (str "−" (:lines-removed edit)))))
-            label (if (= :run (:state item)) (paint :bold summary) summary)]
-        [(str icon " " label (or badge "") (steps-badge item) (or duration ""))]))))
+      (let [badge  (when edit
+                     (str "  " (paint :diff-add (str "+" (:lines-added edit)))
+                          " " (paint :diff-del (str "−" (:lines-removed edit)))))
+            ;; A question it asked the user (ask_user), answered.
+            answer (cond
+                     (:cancelled? item)   (paint :muted "  ✗ cancelled")
+                     (some? (:answer item)) (str "  " (paint :success "→") " "
+                                                 (let [a (str/replace (str (:answer item)) #"\s+" " ")]
+                                                   (if (> (count a) 60) (str (subs a 0 59) "…") a))))
+            label  (if (= :run (:state item)) (paint :bold summary) summary)]
+        [(str icon " " label (or badge "") (or answer "") (steps-badge item) (or duration ""))]))))
 
 (defn- thinking-lines [item width]
   (let [label   (if (= :thought (:status item))
@@ -222,6 +228,22 @@
                  (when (seq (str (:out-text item)))
                    (render-box "Output" (:out-text item) width))))
       [head])))
+
+(defn question-lines
+  "A question's text (`eca-cli.question`), rendered as markdown."
+  [text width]
+  (vec (markdown/render (str text) (max 1 width))))
+
+(defn- question-item-lines
+  "`? question` then the answer, `cancelled`, or that it waits."
+  [item width]
+  (vec (concat
+         (prefixed (question-lines (:question item) (- width 2)) (str (paint :accent-bold "?") " ") "  ")
+         (cond
+           (:cancelled? item)     [(str "  " (paint :muted "✗ cancelled"))]
+           (some? (:answer item)) (prefixed (wrap/wrap-text (:answer item) (max 1 (- width 4)))
+                                            (str "  " (paint :success "→") " ") "    ")
+           :else                  [(str "  " (paint :muted "waiting for your answer…"))]))))
 
 (defn- focus-line
   "A focused block's first line highlighted, readable on dark and light
@@ -250,6 +272,7 @@
           :tool-call (tool-call-lines item width)
           :thinking  (thinking-lines item width)
           :hook      (hook-lines item width)
+          :question  (question-item-lines item width)
 
           :url
           (let [inner-w (max 1 (- width 2))]

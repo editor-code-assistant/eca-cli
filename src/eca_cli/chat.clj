@@ -245,25 +245,53 @@
 ;; chat or a sub-agent: one is shown (`:pending-approval`), the others wait in
 ;; `:approval-queue`. Each is answered with the chat id it came from.
 
+(defn enter-asking
+  "Ask the first pending question (`eca-cli.question`): it takes over the
+  input, which keeps what the user was typing for afterwards."
+  [state]
+  (if (= :asking (:mode state))
+    state
+    (-> state
+        (assoc :mode :asking :question-cursor 0 :input-draft (ti/value (:input state)))
+        (update :input #(-> % ti/reset ti/focus)))))
+
+(defn settle-mode
+  "After an approval or a question was answered, from :approving or
+  :asking: the next thing waiting for the user, else the running turn
+  (:chatting) or, when it's over, :ready."
+  [state]
+  (cond
+    (not (#{:approving :asking} (:mode state))) state
+    (:pending-approval state)                   (assoc state :mode :approving)
+    (seq (:questions state))                    (enter-asking state)
+    :else
+    (let [mode (if (:turn-started-at state) :chatting :ready)]
+      (cond-> (assoc state :mode mode)
+        (contains? state :input-draft) (-> (update :input ti/set-value (:input-draft state))
+                                           (dissoc :input-draft))
+        (= :ready mode)                (update :input ti/focus)
+        (= :chatting mode)             (update :input ti/blur)))))
+
 (defn request-approval
-  "Ask the user to approve tool call `id` of chat `chat-id`, now or after the
-  ones already waiting."
+  "Ask the user to approve tool call `id` of chat `chat-id`, now or after
+  what's already waiting. A question being answered isn't interrupted."
   [state chat-id id]
   (let [req {:chat-id chat-id :tool-call-id id}]
     (cond
       (= id (get-in state [:pending-approval :tool-call-id]))  state
       (some #(= id (:tool-call-id %)) (:approval-queue state)) state
       (:pending-approval state) (update state :approval-queue (fnil conj []) req)
-      :else (assoc state :mode :approving :pending-approval req))))
+      :else (cond-> (assoc state :pending-approval req)
+              (not= :asking (:mode state)) (assoc :mode :approving)))))
 
 (defn next-approval
-  "The shown approval was answered: show the next waiting one, else go back
-  to the running turn."
+  "The shown approval was answered: show the next waiting one, else whatever
+  waits next (see `settle-mode`)."
   [state]
-  (if-let [[req & more] (seq (:approval-queue state))]
-    (assoc state :mode :approving :pending-approval req :approval-queue (vec more))
-    (cond-> (assoc state :pending-approval nil :approval-queue [])
-      (= :approving (:mode state)) (assoc :mode :chatting))))
+  (settle-mode
+    (if-let [[req & more] (seq (:approval-queue state))]
+      (assoc state :pending-approval req :approval-queue (vec more))
+      (assoc state :pending-approval nil :approval-queue []))))
 
 (defn- settle-approval
   "Tool call `id` is past its approval (it runs, finished or was rejected,
@@ -354,14 +382,27 @@
           view/rebuild-lines)
 
       "progress"
-      (if (= "finished" (:state content))
+      (case (:state content)
+        "finished"
         (-> state
             flush-current-text
             finish-turn
             clear-approvals
-            (assoc :mode :ready :echo-pending false)
-            (update :input ti/focus)
+            (assoc :echo-pending false)
+            ;; A question can outlive the turn (the server's /login asks
+            ;; in the background): still ask it.
+            (as-> s (if (seq (:questions s))
+                      (enter-asking s)
+                      (-> s (assoc :mode :ready) (update :input ti/focus))))
             view/rebuild-lines)
+
+        ;; Also a turn the server started itself (e.g. in a chat it forked
+        ;; for /btw): show it as running.
+        "running"
+        (cond-> state
+          (nil? (:turn-started-at state)) (assoc :turn-started-at (System/currentTimeMillis))
+          (= :ready (:mode state))        (-> (assoc :mode :chatting) (update :input ti/blur)))
+
         state)
 
       ;; One path for the whole lifecycle. The server already applied trust

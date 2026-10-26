@@ -20,7 +20,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [7](#phase-7-mcp-integration) | MCP Integration | Status indicator, details panel, server update notifications | ✅ Complete | — |
 | [8](#phase-8-markdown-rendering) | Markdown Rendering | md→ANSI (bb's nextjournal.markdown), code highlighting, tables, `url` items | ✅ Complete | — |
 | [9](#phase-9-message-steering) | Message Steering | Influence a running prompt | ⬜ Unbuilt | — |
-| [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion`, `chat/queryCommands` autocomplete ✅, log viewer | 🟡 Partial | — |
+| [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion` ✅, `chat/queryCommands` autocomplete ✅, log viewer | 🟡 Partial | — |
 | [11](#phase-11-power-features) | Power Features | `@`-refs ✅ · jobs ✅ · rollback + fork remain | 🟡 Partial | — |
 | [12](#phase-12-context-expansion) | Context Expansion | Full `chat/queryContext` picker (dirs/URLs/cursor/repoMap/MCP-resources); image-attach | 🆕 Planned | — |
 | [13](#phase-13-chat-management) | Chat Management | Rename + per-chat trust, server-side clear, `chat/statusChanged`, history pagination | 🆕 Planned | — |
@@ -374,7 +374,7 @@ Phase 4 built a local registry. ECA also exposes server-side commands via `chat/
 **In-app log viewer (`/logs`).**  
 A panel that reads `~/.cache/eca/eca-cli.log` and shows the tail with auto-scroll, primarily for users / contributors who don't know to tail the file directly. Read-only. Keyboard scrolling, Escape to close. Useful when something goes wrong and the user can't be expected to know the path.
 
-**Status: 🟡 Partial.** Server commands work: `/…` that isn't eca-cli's is sent as a prompt and run by the server, and the `/` picker merges `chat/queryCommands` results (native commands, MCP prompts, custom prompts, skills) with the local registry, eca-cli's names winning. Chats the server forks off (`/fork`, `/btw`) are switched to.
+**Status: 🟡 Partial.** Server commands work: `/…` that isn't eca-cli's is sent as a prompt and run by the server, and the `/` picker merges `chat/queryCommands` results (native commands, MCP prompts, custom prompts, skills) with the local registry, eca-cli's names winning. Chats the server forks off (`/fork`, `/btw`) are switched to. `chat/askQuestion` is handled (`question.clj`, `:asking` mode): ↑/↓ + Enter or 1-9 pick, free typing when allowed, Esc cancels; questions queue, and the answer stays in the chat (on the `ask_user` call's line when the call is shown). Unsupported server requests get a method-not-found error. Remaining: the `/logs` viewer.
 
 ### Stopping criteria
 

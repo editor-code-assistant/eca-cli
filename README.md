@@ -34,7 +34,9 @@ eca-cli
 ## Features
 
 - Chat with any model and agent configured in ECA, with streaming responses rendered as markdown: syntax-highlighted code, tables, lists and links
-- Approve tool calls inline, with coloured diffs for file edits
+- Approve tool calls inline, with coloured diffs for file edits and a breakdown of shell commands; remember approvals for the chat
+- Answer the agent's questions by picking an option or typing your own answer
+- The server's commands, skills and prompts from the `/` picker
 - A status line showing agent, model, context window use, cost and MCP health at a glance
 - Add files as context with `@`
 - Resume previous chats

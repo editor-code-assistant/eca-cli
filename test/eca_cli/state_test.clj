@@ -24,6 +24,7 @@
 
 (defn- base-state []
   {:mode                  :chatting
+   :turn-started-at       1            ; :chatting: a turn is running
    :trust                 false
    :chat-id               "chat1"
    :chat-title            nil
