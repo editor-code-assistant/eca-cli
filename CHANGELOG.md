@@ -14,6 +14,8 @@ Catch-up pass: eca-cli gains the features of the ECA editor clients it was missi
 
 - Shell calls waiting for approval show the command and, when it helps, each chained command coloured by what `Y` would do with it: already remembered, would be remembered, or always asks. `Y` names the commands it remembers and is hidden when there's nothing to remember.
 - `/trust` toggles trust mode for the current chat, right away (`chat/update`); the indicator follows the server's `selectTrust` (e.g. `chat.defaultTrust`, a resumed chat's trust).
+- The server's commands work (Phase 10, partial): `/compact`, `/init`, `/context` (the context breakdown with its per-category legend, completing Phase 20), `/costs`, `/quota`, `/fork`, `/btw`, `/resume`, `/export`, `/doctor`, … plus MCP prompts, custom prompts and skills. The `/` picker lists them (`chat/queryCommands`) next to eca-cli's own, tagged by kind, best name matches first; picking one that takes arguments puts it in the input, with its signature shown above. Typed with arguments, a command both have (`/model x/y`) goes to the server.
+- A chat the server forks off the current one (`/fork`, `/btw`) is shown and remembered; other chats' messages stay out of view.
 
 - Markdown rendering (Phase 8) for replies, prompts and the welcome text: headings, emphasis, inline code, links, nested and task lists, quotes, GFM tables (cells wrap to fit), and fenced code with syntax highlighting. Built on babashka's bundled nextjournal.markdown; falls back to plain text if rendering fails.
 - `theme.clj`: colour roles on the terminal's ANSI palette, so eca-cli follows dark and light themes alike. `NO_COLOR` is honoured.
@@ -33,6 +35,10 @@ Catch-up pass: eca-cli gains the features of the ECA editor clients it was missi
 - `Y` trusted the whole tool on the client: approving one `ls` auto-ran every later shell command. It now asks the server to remember the approval for the chat (`save: "session"`), which for shell and git remembers only the approved commands.
 - Trust mode only auto-approved on the client: it was never sent to the server, didn't cover sub-agents, and overrode hooks that ask on purpose. It's now sent with each prompt and decided by the server. With `chat.defaultTrust` set, eca-cli showed SAFE while the server auto-approved everything.
 - A task tool configured to ask hung the chat (eca#584).
+- Any `/…` that wasn't one of eca-cli's commands was rejected as unknown, server commands included; text merely starting with a path (`/home/me/x is empty`) too.
+- After resuming a chat, the next message landed above the chat's last reply, and the new reply was glued onto it.
+- `@`-file contexts stuck to every later message instead of only the one that mentioned them.
+- Tests wrote to the real chats file; they now use a temp one.
 - About 25 state tests never ran: a missing paren nested them inside another test.
 - Dividers and boxes rendered as `qqqq…` / `xxxx` inside tmux/screen: JLine draws box glyphs through the terminal's alternate charset, which with `screen-256color`/`tmux-256color` terminfo (SO/SI) requires `enacs` first. eca-cli now sends the terminal's `enacs` on startup (`terminal.clj`).
 - "Error: Stream closed" on NixOS/musl: `bb upgrade-eca` installed the glibc-linked build, which can't run there. Linux x86_64 now uses the static build, like the editor plugins.
@@ -57,6 +63,8 @@ Catch-up pass: eca-cli gains the features of the ECA editor clients it was missi
 - User messages sit behind a coloured bar instead of reverse video; consecutive tool calls and thoughts stack without blank lines.
 - Pickers mark the selection in the accent colour, align descriptions in a muted column and show the match count; the MCP and jobs panels use coloured status dots instead of emoji; `/help` lists commands in an aligned column.
 - Chat rendering is cached per item and rebuilt once per batch of server messages, so long chats stay smooth while a reply streams.
+- eca-cli picks a new chat's id itself (as the protocol recommends) instead of learning it from the first prompt's response, so every message can be told apart by chat.
+- Login retries continue the same chat instead of starting a new one.
 
 ## Phase 11 — Power Features *(partial)*
 

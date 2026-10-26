@@ -27,6 +27,21 @@
     :mcp (:name item)
     item))
 
+(defn filter-items
+  "Items whose label contains `query` (case-insensitive), the earliest match
+  first: typing `context` puts `/context` before a command that only
+  mentions context in its description. Ties keep their order."
+  [kind items query]
+  (let [q (str/lower-case (str query))]
+    (if (= "" q)
+      (vec items)
+      (->> items
+           (keep (fn [item]
+                   (when-let [i (str/index-of (str/lower-case (item-display kind item)) q)]
+                     [i item])))
+           (sort-by first)
+           (mapv second)))))
+
 (defn open-picker [state kind]
   (let [items (if (= :model kind) (:available-models state) (:available-agents state))]
     (if (empty? items)
@@ -68,12 +83,7 @@
   any query the user has typed since opening."
   [state paths]
   (if (= :at-file (get-in state [:picker :kind]))
-    (let [query    (get-in state [:picker :query])
-          filtered (if (seq query)
-                     (filterv #(str/includes? (str/lower-case %)
-                                              (str/lower-case query))
-                              paths)
-                     paths)]
+    (let [filtered (filter-items :at-file paths (get-in state [:picker :query]))]
       (-> state
           (assoc-in [:picker :all] paths)
           (assoc-in [:picker :filtered] filtered)
@@ -83,10 +93,7 @@
 (defn filter-picker [state ch]
   (let [query    (str (get-in state [:picker :query]) ch)
         kind     (get-in state [:picker :kind])
-        all      (get-in state [:picker :all])
-        filtered (filterv #(str/includes? (str/lower-case (item-display kind %))
-                                          (str/lower-case query))
-                          all)
+        filtered (filter-items kind (get-in state [:picker :all]) query)
         labels   (mapv #(item-display kind %) filtered)]
     (-> state
         (assoc-in [:picker :query] query)
@@ -97,12 +104,7 @@
   (let [query    (get-in state [:picker :query])
         new-q    (if (seq query) (subs query 0 (dec (count query))) "")
         kind     (get-in state [:picker :kind])
-        all      (get-in state [:picker :all])
-        filtered (if (seq new-q)
-                   (filterv #(str/includes? (str/lower-case (item-display kind %))
-                                            (str/lower-case new-q))
-                            all)
-                   all)
+        filtered (filter-items kind (get-in state [:picker :all]) new-q)
         labels   (mapv #(item-display kind %) filtered)]
     (-> state
         (assoc-in [:picker :query] new-q)

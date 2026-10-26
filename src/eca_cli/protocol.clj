@@ -167,6 +167,16 @@
                    chat-id (assoc :chatId chat-id))
                  callback))
 
+(defn chat-query-commands!
+  "The server's commands (native ones, MCP prompts, custom prompts, skills).
+  Response: {:commands [{:name :description :type :arguments}]}, names
+  without the `/`."
+  [srv chat-id query callback]
+  (send-request! srv "chat/queryCommands"
+                 (cond-> {:query (or query "")}
+                   chat-id (assoc :chatId chat-id))
+                 callback))
+
 ;; --- Background jobs ---
 
 (defn jobs-list! [srv callback]

@@ -20,7 +20,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [7](#phase-7-mcp-integration) | MCP Integration | Status indicator, details panel, server update notifications | ✅ Complete | — |
 | [8](#phase-8-markdown-rendering) | Markdown Rendering | md→ANSI (bb's nextjournal.markdown), code highlighting, tables, `url` items | ✅ Complete | — |
 | [9](#phase-9-message-steering) | Message Steering | Influence a running prompt | ⬜ Unbuilt | — |
-| [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion`, `chat/queryCommands` autocomplete, log viewer | ⬜ Unbuilt | — |
+| [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion`, `chat/queryCommands` autocomplete ✅, log viewer | 🟡 Partial | — |
 | [11](#phase-11-power-features) | Power Features | `@`-refs ✅ · jobs ✅ · rollback + fork remain | 🟡 Partial | — |
 | [12](#phase-12-context-expansion) | Context Expansion | Full `chat/queryContext` picker (dirs/URLs/cursor/repoMap/MCP-resources); image-attach | 🆕 Planned | — |
 | [13](#phase-13-chat-management) | Chat Management | Rename + per-chat trust, server-side clear, `chat/statusChanged`, history pagination | 🆕 Planned | — |
@@ -30,7 +30,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [17](#phase-17-mcp-write-management) | MCP Write Management | MCP CRUD + start/stop/enable/disable/logout, OAuth (L) | 🆕 Planned | — |
 | [18](#phase-18-providers--config) | Providers & Config | Providers panel (auth, logout, cost badges); in-app global-config editor | 🆕 Planned | — |
 | [19](#phase-19-variant-picker) | Variant Picker | Interactive model/agent variant selector | 🆕 Planned | — |
-| [20](#phase-20-context-breakdown) | Context Breakdown | segmented bar + `autoCompactPercentage` marker ✅ · legend remains | 🟡 Partial | — |
+| [20](#phase-20-context-breakdown) | Context Breakdown | segmented bar + `autoCompactPercentage` marker + legend (server `/context`) | ✅ Complete | — |
 | [21](#phase-21-multi-session--remote) | Multi-Session & Remote | Multi-workspace/concurrent servers; remote ECA host connect (L) | 🆕 Planned | — |
 
 **Status legend:** ✅ Complete · 🟡 Partial · 📋 Spec'd (issue open) · ⬜ Unbuilt · 🆕 Planned (numbered, not yet detailed).
@@ -374,6 +374,8 @@ Phase 4 built a local registry. ECA also exposes server-side commands via `chat/
 **In-app log viewer (`/logs`).**  
 A panel that reads `~/.cache/eca/eca-cli.log` and shows the tail with auto-scroll, primarily for users / contributors who don't know to tail the file directly. Read-only. Keyboard scrolling, Escape to close. Useful when something goes wrong and the user can't be expected to know the path.
 
+**Status: 🟡 Partial.** Server commands work: `/…` that isn't eca-cli's is sent as a prompt and run by the server, and the `/` picker merges `chat/queryCommands` results (native commands, MCP prompts, custom prompts, skills) with the local registry, eca-cli's names winning. Chats the server forks off (`/fork`, `/btw`) are switched to.
+
 ### Stopping criteria
 
 - `chat/askQuestion` requests are handled without hanging the reader thread
@@ -450,7 +452,7 @@ Numbered identities frozen in [#24](https://github.com/editor-code-assistant/eca
 
 **Goal:** `usage.contextBreakdown` segmented bar + `autoCompactPercentage` threshold + legend.
 
-**Status: 🟡 Partial.** The status line draws the bar from the breakdown (server colours, sub-cell edge, `│` at the auto-compact threshold) with the occupancy %, as eca-emacs does (`view/status.clj`). Remaining: a per-category legend (eca-emacs shows it as a tooltip; here likely a `/context` panel).
+**Status: ✅ Complete.** The status line draws the bar from the breakdown (server colours, sub-cell edge, `│` at the auto-compact threshold) with the occupancy %, as eca-emacs does (`view/status.clj`). The per-category legend is the server's own `/context` command, reachable since server commands work (Phase 10).
 
 ## Phase 21: Multi-Session & Remote
 

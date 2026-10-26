@@ -328,8 +328,6 @@
       (some? (:trust opts)) (assoc :trust (boolean (:trust opts)))
       (seq (:contexts opts)) (assoc :contexts (:contexts opts)))
     (fn [result]
-      (when-let [new-id (:chat-id result)]
-        (chats/save-chat-id! (:workspace opts) new-id))
       (.put (:queue srv)
             {:type    :eca-prompt-response
              :chat-id (:chat-id result)
@@ -452,26 +450,49 @@
                                                                      :text (:welcomeMessage chat)}))]
     [(if (:welcomeMessage chat) (view/rebuild-lines s') s') nil]))
 
+(defn- this-chat?
+  "Whether a message about `chat-id` concerns the chat on screen (any chat
+  when none is yet)."
+  [state chat-id]
+  (or (nil? (:chat-id state)) (nil? chat-id) (= chat-id (:chat-id state))))
+
+(defn- clear-chat-view [state]
+  (-> state
+      (assoc :items [] :current-text "" :chat-lines [] :scroll-offset 0
+             :subagent-chats {} :tool-calls {} :focus-path nil)
+      clear-approvals))
+
+(defn switch-to-chat
+  "Show chat `chat-id` from now on, e.g. one the server forked off this one
+  (`/fork`, `/btw`): its messages follow. Remembered for the workspace like
+  any chat."
+  [state chat-id title]
+  (chats/save-chat-id! (get-in state [:opts :workspace]) chat-id)
+  (-> state
+      clear-chat-view
+      (assoc :chat-id chat-id :chat-title title :mode :ready :echo-pending false)
+      (dissoc :turn-started-at)
+      (update :input ti/focus)
+      view/rebuild-lines))
+
 (defn handle-chat-opened
-  "ECA `chat/opened` notification: store the chat-id and title on state."
+  "ECA `chat/opened`: the chat on screen got its id or title, or the server
+  opened another chat for us (forked off this one), which is then shown."
   [state notification]
   (let [{:keys [chatId title]} (:params notification)]
-    [(-> state
-         (assoc :chat-id chatId)
-         (assoc :chat-title title))
+    [(if (or (this-chat? state chatId) (contains? (:subagent-chats state) chatId))
+       (cond-> (assoc state :chat-id (or (:chat-id state) chatId))
+         title (assoc :chat-title title))
+       (switch-to-chat state chatId title))
      nil]))
 
 (defn handle-chat-cleared
   "ECA `chat/cleared` notification: when params.messages is truthy, drop
   rendered items + chat-lines + scroll position."
   [state notification]
-  (let [clear-msgs? (get-in notification [:params :messages])]
+  (let [{:keys [chatId messages]} (:params notification)]
     [(cond-> state
-       clear-msgs? (-> (assoc :items [])
-                       (assoc :current-text "")
-                       (assoc :chat-lines [])
-                       (assoc :scroll-offset 0)
-                       (assoc :subagent-chats {})))
+       (and messages (this-chat? state chatId)) clear-chat-view)
      nil]))
 
 (defn handle-content-received
@@ -490,13 +511,36 @@
   it on role:\"user\" messages (the task prompt sent to the sub-agent)."
   [state notification]
   (let [params  (:params notification)
-        content (:content params)]
-    (if-let [parent-idx (get (:subagent-chats state) (:chatId params))]
+        content (:content params)
+        ;; A sub-agent of this chat whose spawn call didn't announce it (no
+        ;; `subagent` details): adopt it into the latest spawn call without
+        ;; one. Otherwise it's dropped below, like any other chat's content.
+        state   (if (and (:parentChatId params)
+                         (= (:parentChatId params) (:chat-id state))
+                         (not (contains? (:subagent-chats state) (:chatId params))))
+                  (if-let [idx (last (keep-indexed #(when (and (= :tool-call (:type %2)) (spawn-call? %2)
+                                                               (nil? (:subagent-chat-id %2)))
+                                                      %1)
+                                                   (:items state)))]
+                    (-> state
+                        (assoc-in [:subagent-chats (:chatId params)] idx)
+                        (assoc-in [:items idx :subagent-chat-id] (:chatId params)))
+                    state)
+                  state)]
+    (cond
+      (get (:subagent-chats state) (:chatId params))
       [(-> state
-           (update-in [:items parent-idx :sub-items] add-sub-content params)
+           (update-in [:items (get (:subagent-chats state) (:chatId params)) :sub-items]
+                      add-sub-content params)
            (track-approval (:chatId params) content)
            view/rebuild-lines)
        nil]
+
+      ;; Another chat (e.g. the one this was forked from): not on screen.
+      (not (this-chat? state (:chatId params)))
+      [state nil]
+
+      :else
       (if (= "user" (:role params))
         (if (= "text" (:type content))
           (cond
@@ -593,28 +637,42 @@
                       :backward (if (nil? cur-idx) (last paths)  (nth paths (mod (dec cur-idx) n))))]
         [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines ensure-focus-visible) nil]))))
 
+(defn submit-prompt
+  "Send `text` as the user's next message; slash commands included, the
+  server runs its own. A new chat gets its id here, as the protocol
+  recommends, so this chat's messages can be told apart from other chats'
+  (e.g. one the server forks off)."
+  [state text]
+  (let [contexts  (contexts-for-text text (:pending-contexts state))
+        chat-id   (or (:chat-id state) (str (random-uuid)))
+        _         (when-not (:chat-id state)
+                    (chats/save-chat-id! (get-in state [:opts :workspace]) chat-id))
+        ;; Stashed on :opts so the login-retry path (login.clj) re-sends them
+        ;; after authentication; dropped again by the next message.
+        opts'     (if (seq contexts)
+                    (assoc (:opts state) :contexts contexts)
+                    (dissoc (:opts state) :contexts))
+        new-state (-> state
+                      ;; A replayed chat (resumed, forked) ends without a
+                      ;; `finished`, leaving its last reply in :current-text.
+                      flush-current-text
+                      (assoc :chat-id chat-id)
+                      (update :items conj {:type :user :text text})
+                      (assoc :mode :chatting :pending-message text :echo-pending true
+                             :turn-started-at (System/currentTimeMillis))
+                      (assoc :pending-contexts [])
+                      (assoc :opts opts')
+                      (update :input #(-> % ti/reset ti/blur))
+                      (update :input-history conj text)
+                      (assoc :history-idx nil)
+                      view/rebuild-lines)]
+    (send-chat-prompt! (:server state) chat-id text opts')
+    [new-state nil]))
+
 (defn- enter-submit-prompt [state]
-  (let [text     (str/trim (ti/value (:input state)))
-        contexts (contexts-for-text text (:pending-contexts state))]
+  (let [text (str/trim (ti/value (:input state)))]
     (if (seq text)
-      (let [opts'     (cond-> (:opts state)
-                        (seq contexts) (assoc :contexts contexts))
-            new-state (-> state
-                          (update :items conj {:type :user :text text})
-                          (assoc :mode :chatting :pending-message text :echo-pending true
-                                 :turn-started-at (System/currentTimeMillis))
-                          (assoc :pending-contexts [])
-                          ;; Stash filtered contexts on :opts so the login-retry
-                          ;; path (login/handle-providers-updated, login/handle-
-                          ;; eca-login-action, login/handle-eca-login-complete)
-                          ;; re-sends them after authentication.
-                          (assoc :opts opts')
-                          (update :input #(-> % ti/reset ti/blur))
-                          (update :input-history conj text)
-                          (assoc :history-idx nil)
-                          view/rebuild-lines)]
-        (send-chat-prompt! (:server state) (:chat-id state) text opts')
-        [new-state nil])
+      (submit-prompt state text)
       [state nil])))
 
 (defn- escape-cancel-chatting [state]

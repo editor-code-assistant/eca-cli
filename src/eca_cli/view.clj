@@ -172,6 +172,20 @@
              (str "  " (key "Y" (theme/merge-styles :success :bold)) " "
                   (theme/paint :key-desc (clip y-desc room))))))))
 
+(defn command-hint
+  "While the input starts with a server command that takes arguments, its
+  signature (`<required> [optional]`) and description."
+  [state]
+  (when-let [[_ name] (re-find #"^/([\w:.-]+)(?:\s|$)" (str (ti/value (:input state))))]
+    (when-let [{:keys [arguments description]} (some #(when (= name (:name %)) %) (:server-commands state))]
+      (when (seq arguments)
+        (let [sig (str/join " " (map (fn [{:keys [name required]}]
+                                       (if required (str "<" name ">") (str "[" name "]")))
+                                     arguments))]
+          (str (theme/paint :accent (str "/" name)) " " (theme/paint :bold sig)
+               (theme/paint :muted (clip (str "  " description)
+                                         (max 1 (- (:width state 80) (theme/width (str "/" name " " sig)) 1))))))))))
+
 (defn approval-gutter
   "`▲ Waiting for your approval`, saying when a sub-agent asks and how many
   more calls wait after this one."
@@ -340,6 +354,7 @@
                      :connecting (render-connecting state now)
                      :chatting   (render-working state now)
                      :approving  (approval-gutter state)
+                     :ready      (or (command-hint state) "")
                      "")
         rule-role  (case mode :approving :warning :disconnected :error :border)]
     (str (render-chat state)

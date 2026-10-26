@@ -1,6 +1,7 @@
 (ns eca-cli.state-test
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is testing use-fixtures]]
+            [eca-cli.test-support :as support]
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
@@ -11,6 +12,8 @@
             [eca-cli.chats :as chats]
             [eca-cli.server :as server]
             [eca-cli.state :as state]))
+
+(use-fixtures :each support/isolated-chats-file)
 
 (def ^:private flush-current-text       chat/flush-current-text)
 (def ^:private upsert-tool-call         chat/upsert-tool-call)
@@ -240,8 +243,8 @@
           [s _] (handle-eca-tick (base-state) msgs)]
       (is (= "hi there" (:current-text s)))))
 
-  (testing "prompt response sets chat-id and model"
-    (let [[s _] (handle-eca-tick (base-state)
+  (testing "prompt response sets chat-id (when the chat had none) and model"
+    (let [[s _] (handle-eca-tick (assoc (base-state) :chat-id nil)
                                  [{:type :eca-prompt-response
                                    :chat-id "new-chat" :model "claude-opus-4-7"
                                    :status "prompting"}])]
@@ -316,7 +319,7 @@
 ;; --- subagent routing ---
 
 (deftest subagent-content-suppressed-test
-  (testing "contentReceived with parentChatId and no registered parent falls through (text → current-text)"
+  (testing "content of a sub-agent no spawn call announced isn't mixed into the main chat"
     (let [base (assoc (base-state) :mode :chatting)
           [s _] (handle-eca-notification
                   base
@@ -325,7 +328,7 @@
                             :parentChatId "chat1"
                             :role         "assistant"
                             :content      {:type "text" :text "verbatim file contents..."}}})]
-      (is (= "verbatim file contents..." (:current-text s)))
+      (is (= "" (:current-text s)))
       (is (empty? (:items s)))))
 
   (testing "contentReceived without parentChatId is processed normally"
@@ -896,14 +899,85 @@
       (is (some? cmd)))))
 
 (deftest unknown-command-test
-  (testing "unrecognised /cmd appends system error containing command text"
+  (testing "a /cmd neither eca-cli nor the server has: a warning, and the server's list is re-fetched"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready)
+                 (assoc :mode :ready :server-commands [{:name "compact" :type "native"}])
                  (update :input #(ti/set-value % "/foobarxyzzy")))
-          [s _] (state/update-state s0 (msg/key-press :enter))]
+          [s cmd] (state/update-state s0 (msg/key-press :enter))]
       (is (some #(and (= :system (:type %))
                       (clojure.string/includes? (:text %) "/foobarxyzzy"))
-                (:items s))))))
+                (:items s)))
+      (is (some? cmd)))))
+
+(deftest server-command-test
+  (let [sent    (atom [])
+        enter   (fn [s text] (with-redefs [protocol/chat-prompt! (fn [_ params _] (swap! sent conj params))]
+                               (state/update-state (-> s (assoc :mode :ready)
+                                                       (update :input #(ti/set-value % text)))
+                                                   (msg/key-press :enter))))
+        cmds    [{:name "compact" :type "native" :arguments [{:name "additional-input"}]}
+                 {:name "model" :type "native" :arguments [{:name "full-model"}]}]]
+    (testing "a server command is sent as the prompt, shown like a message"
+      (reset! sent [])
+      (let [[s _] (enter (assoc (base-state) :server-commands cmds) "/compact keep the API notes")]
+        (is (= "/compact keep the API notes" (:message (first @sent))))
+        (is (= :chatting (:mode s)))
+        (is (= {:type :user :text "/compact keep the API notes"} (peek (:items s))))))
+    (testing "eca-cli's command without arguments runs locally"
+      (reset! sent [])
+      (let [[s _] (enter (assoc (base-state) :server-commands cmds :available-models ["a/b"]) "/model")]
+        (is (= [] @sent))
+        (is (= :model (get-in s [:picker :kind])))))
+    (testing "with arguments, a name the server also has goes to the server"
+      (reset! sent [])
+      (enter (assoc (base-state) :server-commands cmds) "/model x/y")
+      (is (= "/model x/y" (:message (first @sent)))))
+    (testing "the server's list not loaded yet: the server decides"
+      (reset! sent [])
+      (enter (base-state) "/init")
+      (is (= "/init" (:message (first @sent)))))
+    (testing "text that only starts with a slash (a path) is a message"
+      (reset! sent [])
+      (enter (assoc (base-state) :server-commands cmds) "/home/me/notes.md is empty, why?")
+      (is (= "/home/me/notes.md is empty, why?" (:message (first @sent)))))
+    (testing "a new chat gets its id on the first message"
+      (reset! sent [])
+      (let [[s _] (enter (assoc (base-state) :chat-id nil) "hello")]
+        (is (string? (:chat-id s)))
+        (is (= (:chat-id s) (:chat-id (first @sent))))))
+    (testing "a replayed chat's last reply stays above the next message"
+      (reset! sent [])
+      (let [[s _] (enter (assoc (base-state) :current-text "pong") "ping")]
+        (is (= [{:type :assistant-text :text "pong"} {:type :user :text "ping"}] (:items s)))
+        (is (= "" (:current-text s)))))
+    (testing "the prompt's response doesn't take the view back from a chat it forked to"
+      (let [[s _] (state/update-state (assoc (base-state) :chat-id "forked")
+                                      {:type :eca-tick
+                                       :msgs [{:type :eca-prompt-response :chat-id "chat1"
+                                               :model "m" :status "prompting"}]})]
+        (is (= "forked" (:chat-id s)))))))
+
+(deftest command-picker-server-commands-test
+  (let [s0 (-> (base-state) (assoc :mode :ready))
+        [s _] (state/update-state s0 (msg/key-press "/"))
+        [s _] (state/update-state s {:type :commands-loaded
+                                     :commands [{:name "compact" :type "native" :description "Summarize"
+                                                 :arguments [{:name "additional-input"}]}
+                                                {:name "review" :type "skill" :description "Review code"
+                                                 :arguments []}
+                                                {:name "model" :type "native" :description "server model"}]})
+        names (set (map first (get-in s [:picker :all])))]
+    (testing "the picker lists the server's commands next to eca-cli's, eca-cli's winning"
+      (is (contains? names "/compact"))
+      (is (contains? names "/review"))
+      (is (= 1 (count (filter #{"/model"} (map first (get-in s [:picker :all])))))))
+    (testing "skills and prompts are tagged"
+      (is (some #(= ["/review" "skill · Review code"] (take 2 %)) (get-in s [:picker :all]))))
+    (testing "picking one that takes arguments puts it in the input for them"
+      (let [s1    (reduce #(first (state/update-state %1 (msg/key-press %2))) s ["c" "o" "m" "p"])
+            [s2 _] (state/update-state s1 (msg/key-press :enter))]
+        (is (= :ready (:mode s2)))
+        (is (= "/compact " (ti/value (:input s2))))))))
 
 (deftest slash-model-via-registry-test
   (testing "/model via direct Enter still opens model picker"
@@ -994,16 +1068,15 @@
       (is (= "tc1" (get-in s [:pending-approval :tool-call-id]))))))
 
 (deftest subagent-fallthrough-test
-  (testing "contentReceived with parentChatId and no registered parent falls through to main flow"
+  (testing "an unannounced sub-agent's progress can't end the main turn"
     (let [base  (assoc (base-state) :mode :chatting :subagent-chats {})
           [s _] (handle-eca-notification
                   base {:method "chat/contentReceived"
                         :params {:chatId       "unregistered-sub"
                                  :parentChatId "chat1"
-                                 :role         "assistant"
-                                 :content      {:type "text" :text "fallthrough"}}})]
-      ;; text content goes to :current-text (not :items) via normal handle-content
-      (is (= "fallthrough" (:current-text s))))))
+                                 :role         "system"
+                                 :content      {:type "progress" :state "finished"}}})]
+      (is (= :chatting (:mode s))))))
 
 (deftest hook-item-test
   (testing "hookActionStarted creates :hook item with :running status"

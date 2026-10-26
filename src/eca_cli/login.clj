@@ -65,13 +65,14 @@
       (let [pending   (:pending-message state)
             srv       (:server state)
             opts      (:opts state)
+            chat-id   (:chat-id state)
             new-state (-> state
-                          (assoc :mode :chatting)
+                          (assoc :mode :chatting :echo-pending (boolean pending))
                           (dissoc :login)
                           (update :input ti/blur))]
         [new-state (when pending
                      (program/cmd (fn []
-                                    (chat/send-chat-prompt! srv nil pending opts)
+                                    (chat/send-chat-prompt! srv chat-id pending opts)
                                     nil)))])
       [state nil])))
 
@@ -92,8 +93,12 @@
       (= "done" (:action action))
       (do
         (when pending
-          (chat/send-chat-prompt! (:server state) nil pending (:opts state)))
-        [(-> state (assoc :mode :chatting) (dissoc :login) (update :input ti/blur)) nil])
+          (chat/send-chat-prompt! (:server state) (:chat-id state) pending (:opts state)))
+        [(-> state
+             (assoc :mode :chatting :echo-pending (boolean pending))
+             (dissoc :login)
+             (update :input ti/blur))
+         nil])
 
       :else
       (let [needs-input? (or (= "input" (:action action))
@@ -112,8 +117,12 @@
 (defn handle-eca-login-complete [state msg]
   (let [pending (:pending-message msg)]
     (when pending
-      (chat/send-chat-prompt! (:server state) nil pending (:opts state)))
-    [(-> state (assoc :mode :chatting) (dissoc :login) (update :input ti/blur)) nil]))
+      (chat/send-chat-prompt! (:server state) (:chat-id state) pending (:opts state)))
+    [(-> state
+         (assoc :mode :chatting :echo-pending (boolean pending))
+         (dissoc :login)
+         (update :input ti/blur))
+     nil]))
 
 ;; --- :login mode key dispatch ---
 

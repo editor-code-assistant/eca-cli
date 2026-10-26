@@ -135,11 +135,18 @@
                           [(disconnect s (:error m)) cmd]
 
                           (= :eca-initialize-response (:type m))
-                          [(handle-initialize-response s (:response m)) cmd]
+                          (let [s' (handle-initialize-response s (:response m))]
+                            ;; Ready: fetch the server's commands for the `/` picker.
+                            [s' (cond-> cmd
+                                  (and (= :connecting (:mode s)) (= :ready (:mode s')))
+                                  (program/batch (commands/query-commands-cmd (:server s') nil)))])
 
                           (= :eca-prompt-response (:type m))
+                          ;; The chat id is ours (submit-prompt); the response
+                          ;; may come after the view moved to another chat
+                          ;; (e.g. this prompt was /fork), so don't take it back.
                           (let [s' (cond-> s
-                                     (:chat-id m) (assoc :chat-id (:chat-id m))
+                                     (and (:chat-id m) (nil? (:chat-id s))) (assoc :chat-id (:chat-id m))
                                      (:model m)   (assoc :model (:model m)))]
                             (if (= "login" (:status m))
                               [s' (program/batch cmd (login/start-login-cmd (:server s') (:pending-message s')))]
@@ -173,6 +180,7 @@
    :echo-pending          false
    :init-tasks            {}
    :pending-contexts      []
+   :server-commands       []
    :available-models      []
    :available-agents      []
    :available-variants    []
@@ -314,6 +322,9 @@
       (= :at-files-loaded (:type msg))
       [(picker/update-at-file-results state (:paths msg)) nil]
 
+      (= :commands-loaded (:type msg))
+      [(commands/apply-server-commands state (:commands msg)) nil]
+
       (= :chat-list-loaded (:type msg))
       (let [chats  (:chats msg)
             error? (:error? msg)
@@ -339,7 +350,8 @@
       (commands/dispatch-command state (str/trim (ti/value (:input state))))
 
       (autocomplete-slash? state msg)
-      [(commands/open-command-picker state) nil]
+      [(commands/open-command-picker state)
+       (commands/query-commands-cmd (:server state) (:chat-id state))]
 
       (autocomplete-at? state msg)
       [(picker/open-at-file-picker state)
@@ -360,12 +372,12 @@
            (= :command (get-in state [:picker :kind])))
       (let [{:keys [list filtered]} (:picker state)
             idx                     (cl/selected-index list)
-            [cmd-name _]            (when (and (some? idx) (< idx (count filtered)))
+            item                    (when (and (some? idx) (< idx (count filtered)))
                                       (nth filtered idx))]
-        (if cmd-name
-          (commands/run-handler-from-picker
+        (if item
+          (commands/run-picker-selection
             (-> state (dissoc :picker) (assoc :mode :ready))
-            cmd-name)
+            item)
           [state nil]))
 
       ;; --- At-file picker: re-query server on filter typing ---

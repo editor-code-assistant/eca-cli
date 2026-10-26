@@ -134,7 +134,13 @@ Same as eca-emacs:
 
 ### Session persistence
 
-Chat-ids are persisted to `~/.local/state/eca/eca-cli-chats.edn` (`$XDG_STATE_HOME`) keyed by workspace path. Each startup begins a fresh session — no auto-resume. Use `/chats` to explicitly resume a previous chat. `/new` deletes the current chat and removes its entry from the chats file.
+eca-cli generates a new chat's id itself (`chat/submit-prompt`, as the protocol recommends) and persists it to `~/.local/state/eca/eca-cli-chats.edn` (`$XDG_STATE_HOME`) keyed by workspace path; tests redirect that file (`test-support/isolated-chats-file`). Each startup begins a fresh session — no auto-resume. Use `/chats` to explicitly resume a previous chat. `/new` deletes the current chat and removes its entry from the chats file.
+
+Chat routing: `chat/contentReceived` is shown only for the chat on screen, or nested under a spawn call for its sub-agents; other chats' messages are dropped. `chat/opened` for another chat (the server forked one off this one: `/fork`, `/btw`) switches the view to it (`chat/switch-to-chat`); the `chat/prompt` response never takes `:chat-id` back. `chat/cleared` only applies to the chat on screen.
+
+### Slash commands
+
+`commands/dispatch-command` handles Enter on `/…`: eca-cli's registry first (with arguments, a name the server also has goes to the server, e.g. `/model x/y`); otherwise the text is sent as a prompt and the server runs its own command (`/compact`, `/fork`, MCP prompts, skills…). Text that only starts with a slash (a path) is a message. A name neither knows is rejected only once the server's list is loaded. The list comes from `chat/queryCommands` into `:server-commands`: fetched after `initialize` and whenever the `/` picker opens.
 
 ### Protocol reference
 

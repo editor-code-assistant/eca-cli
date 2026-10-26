@@ -1,9 +1,13 @@
 (ns eca-cli.commands-test
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is testing use-fixtures]]
+            [eca-cli.test-support :as support]
             [eca-cli.commands :as commands]
+            [eca-cli.picker :as picker]
             [eca-cli.protocol :as protocol]
             [eca-cli.theme :as theme]))
+
+(use-fixtures :each support/isolated-chats-file)
 
 (deftest help-test
   (let [[s _]  (commands/cmd-show-help {:items []})
@@ -12,7 +16,18 @@
     (is (= :info (:level item)) "an informational note, not a warning")
     (is (= "Available commands:" (first lines)))
     (testing "descriptions aligned in one column"
-      (is (= 1 (count (set (map #(count (re-find #"^\S+\s+" %)) (rest lines)))))))))
+      (is (= 1 (count (set (map #(count (re-find #"^\S+\s+" %)) (filter #(str/starts-with? % "/") lines)))))))
+    (testing "points at the server's commands"
+      (is (str/includes? (last lines) "type / to browse")))))
+
+(deftest picker-ranking-test
+  (let [items [["/compact" "Summarize to reduce context."] ["/context" "Context window usage"]
+               ["/costs" "Total costs"]]]
+    (testing "a name match ranks above a description match"
+      (is (= ["/context" "/compact"] (map first (picker/filter-items :command items "context")))))
+    (testing "ties keep their order; no query keeps everything"
+      (is (= ["/compact" "/context" "/costs"] (map first (picker/filter-items :command items "co"))))
+      (is (= 3 (count (picker/filter-items :command items "")))))))
 
 (deftest toggle-trust-test
   (let [sent (atom [])]

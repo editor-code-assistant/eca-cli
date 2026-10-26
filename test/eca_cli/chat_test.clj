@@ -3,12 +3,16 @@
   config/updated). Other chat fns (handle-content, content->item, etc.)
   are still exercised via state-test for now."
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is testing use-fixtures]]
+            [eca-cli.test-support :as support]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-cli.chat :as chat]
+            [eca-cli.chats :as chats]
             [eca-cli.protocol :as protocol]
             [eca-cli.view :as view]))
+
+(use-fixtures :each support/isolated-chats-file)
 
 (defn- base-state []
   {:mode                  :chatting
@@ -141,7 +145,7 @@
 (deftest chat-opened-handler-test
   (testing "chat/opened stores chat-id and title"
     (let [[s _] (chat/handle-chat-opened
-                  (base-state)
+                  (assoc (base-state) :chat-id nil)
                   {:method "chat/opened"
                    :params {:chatId "new-chat-123" :title "My Project Chat"}})]
       (is (= "new-chat-123" (:chat-id s)))
@@ -149,11 +153,46 @@
 
   (testing "chat/opened with no title stores nil"
     (let [[s _] (chat/handle-chat-opened
-                  (base-state)
+                  (assoc (base-state) :chat-id nil)
                   {:method "chat/opened"
                    :params {:chatId "chat-no-title"}})]
       (is (= "chat-no-title" (:chat-id s)))
       (is (nil? (:chat-title s))))))
+
+(deftest chat-opened-switch-test
+  (testing "a chat the server opened off this one (/fork, /btw) is shown from now on"
+    (let [saved (atom nil)]
+      (with-redefs [chats/save-chat-id! (fn [_ id] (reset! saved id))]
+        (let [s0    (assoc (base-state) :mode :chatting :turn-started-at 1
+                           :items [{:type :user :text "/fork"}]
+                           :pending-approval {:chat-id "chat1" :tool-call-id "t"})
+              [s _] (chat/handle-chat-opened s0 {:method "chat/opened"
+                                                 :params {:chatId "forked" :title "Fork of x"}})]
+          (is (= "forked" (:chat-id s)))
+          (is (= "Fork of x" (:chat-title s)))
+          (is (= [] (:items s)) "its own messages follow")
+          (is (= :ready (:mode s)) "the turn that forked ends in the other chat")
+          (is (nil? (:pending-approval s)))
+          (is (= "forked" @saved) "remembered for the workspace")))))
+  (testing "the same chat: just its title"
+    (let [[s _] (chat/handle-chat-opened (assoc (base-state) :items [{:type :user :text "hi"}])
+                                         {:method "chat/opened" :params {:chatId "chat1" :title "T"}})]
+      (is (= 1 (count (:items s))))
+      (is (= "T" (:chat-title s))))))
+
+(deftest content-routing-test
+  (let [receive (fn [s params] (first (chat/handle-content-received s {:method "chat/contentReceived"
+                                                                       :params params})))]
+    (testing "another chat's content stays out of this one"
+      (let [s (receive (base-state) {:chatId "other" :role "assistant" :content {:type "text" :text "x"}})]
+        (is (= "" (:current-text s)))))
+    (testing "an unannounced sub-agent of this chat is adopted by the latest spawn call"
+      (let [s0 (assoc (base-state) :items [{:type :tool-call :id "sp" :name "spawn_agent" :server "eca"
+                                            :state :running :sub-items []}])
+            s  (receive s0 {:chatId "sub-9" :parentChatId "chat1" :role "assistant"
+                            :content {:type "text" :text "found"}})]
+        (is (= {"sub-9" 0} (:subagent-chats s)))
+        (is (= "found" (get-in s [:items 0 :sub-items 0 :text])))))))
 
 (deftest chat-cleared-handler-test
   (testing "chat/cleared with messages:true clears items and scroll"
@@ -163,9 +202,15 @@
           [s _] (chat/handle-chat-cleared
                   s0
                   {:method "chat/cleared"
-                   :params {:chatId "x" :messages true}})]
+                   :params {:chatId "chat1" :messages true}})]
       (is (empty? (:items s)))
       (is (= 0 (:scroll-offset s)))))
+
+  (testing "another chat being cleared leaves this one alone"
+    (let [s0    (assoc (base-state) :items [{:type :user :text "hi"}])
+          [s _] (chat/handle-chat-cleared s0 {:method "chat/cleared"
+                                              :params {:chatId "other" :messages true}})]
+      (is (= 1 (count (:items s))))))
 
   (testing "chat/cleared with messages:false leaves items intact"
     (let [s0 (assoc (base-state)

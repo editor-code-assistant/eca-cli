@@ -51,7 +51,7 @@ Run `eca-cli --help` for details.
 
 ### Commands
 
-Type `/` in an empty input to pick one.
+Type `/` in an empty input to pick one. The picker also lists the ECA server's own commands (`/compact`, `/init`, `/context`, `/costs`, `/fork`, `/resume`, …), your skills and prompts.
 
 | Command | Action |
 |---|---|

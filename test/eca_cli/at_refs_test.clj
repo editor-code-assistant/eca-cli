@@ -6,13 +6,16 @@
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is testing use-fixtures]]
+            [eca-cli.test-support :as support]
             [eca-cli.chat :as chat]
             [eca-cli.login :as login]
             [eca-cli.protocol :as protocol]
             [eca-cli.state :as state]
             [eca-cli.theme :as theme]
             [eca-cli.view.blocks :as blocks]))
+
+(use-fixtures :each support/isolated-chats-file)
 
 (defn- base-state []
   {:mode                  :ready

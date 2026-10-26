@@ -7,6 +7,7 @@
             [charm.components.text-input :as ti]
             [eca-cli.protocol :as protocol]
             [eca-cli.server :as server]
+            [eca-cli.chat :as chat]
             [eca-cli.chats :as chats]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
@@ -57,7 +58,8 @@
         lines (map (fn [[name {:keys [doc]}]]
                      (str (theme/paint :accent (theme/pad-right name w)) "  " doc))
                    cmds)
-        text  (str/join "\n" (into ["Available commands:"] lines))]
+        text  (str/join "\n" (concat ["Available commands:"] lines
+                                     ["" "The server's commands, skills and prompts too: type / to browse them all."]))]
     [(update state :items conj {:type :system :level :info :text text}) nil]))
 
 (defn cmd-quit
@@ -110,9 +112,66 @@
    "/quit"     {:doc "Exit eca-cli"                        :handler cmd-quit}
    "/login"    {:doc "Manually trigger provider login"    :handler cmd-login}})
 
+;; --- Server commands ---
+;;
+;; The server has commands of its own (`/compact`, `/init`, `/costs`, `/fork`,
+;; …), plus MCP prompts, custom prompts and skills. They run by sending their
+;; text as a prompt. `chat/queryCommands` lists them for the `/` picker; the
+;; list is cached in :server-commands (names without the `/`).
+
+(defn query-commands-cmd
+  "Fetch the server's commands, delivered as :commands-loaded (`nil`
+  :commands when the server didn't answer: what's known is kept)."
+  [srv chat-id]
+  (program/cmd
+    (fn []
+      (let [p (promise)]
+        (protocol/chat-query-commands! srv chat-id "" (fn [r] (deliver p (get-in r [:result :commands]))))
+        {:type :commands-loaded :commands (deref p 5000 nil)}))))
+
+(def ^:private type-badge
+  {"skill" "skill" "mcpPrompt" "mcp" "customPrompt" "prompt"})
+
+(defn- server-command-item
+  "Picker item for a server command: [\"/name\" description command]."
+  [{:keys [name description type] :as cmd}]
+  [(str "/" name)
+   (str (some-> (type-badge type) (str " · ")) (or description ""))
+   cmd])
+
+(defn command-items
+  "Picker items: eca-cli's commands and the server's, by name. Where both
+  have one (`/model`), eca-cli's wins."
+  [state]
+  (let [local  (map (fn [[name {:keys [doc]}]] [name doc]) command-registry)
+        names  (set (map first local))
+        remote (->> (:server-commands state)
+                    (map server-command-item)
+                    (remove #(names (first %))))]
+    (vec (sort-by first (concat local remote)))))
+
+(defn- set-command-items
+  "Replace the command picker's items, keeping what the user typed."
+  [state items]
+  (let [filtered (picker/filter-items :command items (get-in state [:picker :query]))]
+    (-> state
+        (assoc-in [:picker :all] items)
+        (assoc-in [:picker :filtered] filtered)
+        (update-in [:picker :list] cl/set-items (mapv #(picker/item-display :command %) filtered)))))
+
+(defn apply-server-commands
+  "The server's commands arrived: keep them, and show them if the command
+  picker is open."
+  [state commands]
+  (if (nil? commands)
+    state
+    (let [s (assoc state :server-commands (vec commands))]
+      (if (and (= :picking (:mode s)) (= :command (get-in s [:picker :kind])))
+        (set-command-items s (command-items s))
+        s))))
+
 (defn open-command-picker [state]
-  (let [all (mapv (fn [[name {:keys [doc]}]] [name doc])
-                  (sort-by key command-registry))]
+  (let [all (command-items state)]
     (-> state
         (assoc :mode :picking
                :picker {:kind     :command
@@ -127,24 +186,60 @@
      (= :ready (:mode new-state)) (update :input #(-> % ti/reset ti/focus)))
    cmd])
 
-(defn dispatch-command [state text]
-  (if-let [{:keys [handler]} (get command-registry text)]
-    (let [[new-state cmd] (handler state)]
-      (finalize-handler-result new-state cmd))
-    [(-> state
-         (update :items conj {:type :system
-                              :text (str "⚠ Unknown command: " text
-                                         "  (type /help to see available commands)")})
-         (update :input #(-> % ti/reset ti/focus))
-         view/rebuild-lines)
-     nil]))
+(defn- parse-command
+  "`/name args…` → [\"/name\" args-or-nil]. Nil when the text only starts
+  with a slash, like a path (`/home/me/notes.md is empty`)."
+  [text]
+  (when-let [[_ name args] (re-matches #"(?s)(/[\w:.-]+)(?:\s+(.*))?" (str/trim text))]
+    [name (not-empty (some-> args str/trim))]))
 
-(defn run-handler-from-picker
-  "Run a registry handler from the command-picker selection arm.
-  Equivalent to dispatch-command but takes a base state already cleared of the picker."
-  [state cmd-name]
-  (if-let [{:keys [handler]} (get command-registry cmd-name)]
-    (let [[new-state cmd] (handler state)]
-      (finalize-handler-result new-state cmd))
-    [state nil]))
+(defn- server-command [state name]
+  (let [n (subs name 1)]
+    (some #(when (= n (:name %)) %) (:server-commands state))))
+
+(defn dispatch-command
+  "Enter on input starting with `/`. eca-cli's own commands run here (given
+  arguments, a name the server also has goes to the server: `/model x/y`);
+  the server's are sent as a prompt; text that isn't a command at all is an
+  ordinary message."
+  [state text]
+  (let [[name args] (parse-command text)
+        local       (get command-registry name)
+        remote      (when name (server-command state name))]
+    (cond
+      (nil? name)
+      (chat/submit-prompt state (str/trim text))
+
+      (and local (or (nil? args) (nil? remote)))
+      (let [[new-state cmd] ((:handler local) state)]
+        (finalize-handler-result new-state cmd))
+
+      ;; Not listed yet (still loading): let the server decide.
+      (or remote (empty? (:server-commands state)))
+      (chat/submit-prompt state (str/trim text))
+
+      :else
+      [(-> state
+           (update :items conj {:type :system
+                                :text (str "⚠ Unknown command: " name
+                                           "  (type / to browse commands)")})
+           (update :input #(-> % ti/reset ti/focus))
+           view/rebuild-lines)
+       ;; It may have just appeared (an MCP server finished starting).
+       (query-commands-cmd (:server state) (:chat-id state))])))
+
+(defn run-picker-selection
+  "Enter on a command-picker item, the picker already closed. A server
+  command taking arguments goes to the input for them, the others run."
+  [state [name _doc cmd]]
+  (cond
+    (get command-registry name)
+    (let [[new-state c] ((:handler (get command-registry name)) state)]
+      (finalize-handler-result new-state c))
+
+    (seq (:arguments cmd))
+    [(update state :input #(-> % (ti/set-value (str name " ")) ti/focus)) nil]
+
+    :else
+    (chat/submit-prompt state name)))
 
