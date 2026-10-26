@@ -75,6 +75,23 @@
        :lines-added   (:linesAdded d)
        :lines-removed (:linesRemoved d)})))
 
+(def ^:private max-tool-output 8192)
+
+(defn tool-output-text
+  "Display text of a `toolCalled` result: its `outputs` text parts (a plain
+  string on some server paths), or a legacy single `output`. Capped at 8 KB;
+  nil when empty."
+  [content]
+  (let [outputs (:outputs content)
+        text    (cond
+                  (string? outputs)     outputs
+                  (sequential? outputs) (some->> outputs (keep :text) seq (str/join "\n"))
+                  :else                 (:output content))]
+    (when (seq (str text))
+      (if (> (count text) max-tool-output)
+        (str (subs text 0 max-tool-output) "\n[truncated]")
+        text))))
+
 (defn content->item [params]
   (let [content (:content params)]
     (case (:type content)
@@ -82,21 +99,63 @@
       {:type :assistant-text :text (:text content)}
 
       ("toolCallPrepare" "toolCallRunning" "toolCallRun" "toolCalled" "toolCallRejected")
-      {:type :tool-call :id (:id content) :name (:name content)
-       :server (:server content) :summary (:summary content)
-       :state (case (:type content)
-                "toolCallPrepare"  :preparing
-                "toolCallRun"      :run
-                "toolCallRunning"  :running
-                "toolCalled"       :called
-                "toolCallRejected" :rejected)
-       :expanded? false :focused? false}
+      (cond-> {:type :tool-call :id (:id content) :name (:name content)
+               :server (:server content) :summary (:summary content)
+               :state (case (:type content)
+                        "toolCallPrepare"  :preparing
+                        "toolCallRun"      :run
+                        "toolCallRunning"  :running
+                        "toolCalled"       :called
+                        "toolCallRejected" :rejected)
+               :expanded? false :focused? false}
+        (= "toolCalled" (:type content))
+        (assoc :error? (:error content)
+               :out-text (tool-output-text content)
+               :total-ms (:totalTimeMs content)))
 
       "reasonStarted"
       {:type :thinking :id (:id content) :text "" :status :thinking
        :expanded? false :focused? false}
 
       nil)))
+
+(defn- update-by-id
+  "Apply `f` to the last item in `items` with this `type` and `id`."
+  [items type id f]
+  (if-let [i (last (keep-indexed #(when (and (= type (:type %2)) (= id (:id %2))) %1) items))]
+    (update items i f)
+    items))
+
+(defn add-sub-content
+  "Fold one content event of a sub-agent chat into the spawn call's
+  sub-items: text chunks extend the last text item, a tool call is a single
+  item updated through its lifecycle, thoughts accumulate their text."
+  [subs params]
+  (let [subs    (vec subs)
+        content (:content params)]
+    (case (:type content)
+      "text"
+      (let [prev (peek subs)
+            role (:role params)]
+        (if (and (= :assistant-text (:type prev)) (= role (:role prev)))
+          (conj (pop subs) (update prev :text str (:text content)))
+          (conj subs {:type :assistant-text :role role :text (str (:text content))})))
+
+      "reasonText"
+      (update-by-id subs :thinking (:id content) #(update % :text str (:text content)))
+
+      "reasonFinished"
+      (update-by-id subs :thinking (:id content)
+                    #(assoc % :status :thought :total-ms (:totalTimeMs content)))
+
+      (if-let [item (content->item params)]
+        (if (and (= :tool-call (:type item))
+                 (some #(and (= :tool-call (:type %)) (= (:id item) (:id %))) subs))
+          (update-by-id subs :tool-call (:id item)
+                        #(merge % (cond-> (dissoc item :expanded? :focused?)
+                                    (nil? (:summary item)) (dissoc :summary))))
+          (conj subs item))
+        subs))))
 
 (defn focusable-paths [items]
   (into []
@@ -171,6 +230,15 @@
 
 ;; --- ECA content handler ---
 
+(defn- finish-turn
+  "Record how long the turn took (status line) once the prompt finished."
+  [state]
+  (if-let [t0 (:turn-started-at state)]
+    (-> state
+        (assoc :last-turn-ms (- (System/currentTimeMillis) t0))
+        (dissoc :turn-started-at))
+    state))
+
 (defn handle-content [state params]
   (let [content (:content params)]
     (case (:type content)
@@ -183,6 +251,7 @@
       (if (= "finished" (:state content))
         (-> state
             flush-current-text
+            finish-turn
             (assoc :mode :ready :echo-pending false)
             (update :input ti/focus)
             view/rebuild-lines)
@@ -239,16 +308,14 @@
           view/rebuild-lines)
 
       "toolCalled"
-      (let [{:keys [id name server summary arguments output error]} content
-            out-text (when (seq (str output))
-                       (if (> (count output) 8192)
-                         (str (subs output 0 8192) "\n[truncated]")
-                         output))
-            edit     (content->edit content)]
+      (let [{:keys [id name server summary arguments error totalTimeMs]} content
+            edit (content->edit content)]
         (-> state
             (upsert-tool-call (cond-> {:id id :name name :server server
                                        :summary summary :arguments arguments
-                                       :state :called :error? error :out-text out-text}
+                                       :state :called :error? error
+                                       :out-text (tool-output-text content)
+                                       :total-ms totalTimeMs}
                                 edit (assoc :edit edit)))
             view/rebuild-lines))
 
@@ -280,9 +347,15 @@
           (update :items
                   (fn [items]
                     (mapv #(if (and (= :thinking (:type %)) (= (:id content) (:id %)))
-                             (assoc % :status :thought)
+                             (assoc % :status :thought :total-ms (:totalTimeMs content))
                              %)
                           items)))
+          view/rebuild-lines)
+
+      "url"
+      (-> state
+          flush-current-text
+          (update :items conj {:type :url :title (:title content) :url (:url content)})
           view/rebuild-lines)
 
       "hookActionStarted"
@@ -363,11 +436,7 @@
         content (:content params)]
     (if-let [parent-idx (get (:subagent-chats state) (:chatId params))]
       [(-> state
-           (update-in [:items parent-idx :sub-items]
-                      (fn [subs]
-                        (if-let [item (content->item params)]
-                          (conj (or subs []) item)
-                          (or subs []))))
+           (update-in [:items parent-idx :sub-items] add-sub-content params)
            view/rebuild-lines)
        nil]
       (if (= "user" (:role params))
@@ -474,7 +543,8 @@
                         (seq contexts) (assoc :contexts contexts))
             new-state (-> state
                           (update :items conj {:type :user :text text})
-                          (assoc :mode :chatting :pending-message text :echo-pending true)
+                          (assoc :mode :chatting :pending-message text :echo-pending true
+                                 :turn-started-at (System/currentTimeMillis))
                           (assoc :pending-contexts [])
                           ;; Stash filtered contexts on :opts so the login-retry
                           ;; path (login/handle-providers-updated, login/handle-

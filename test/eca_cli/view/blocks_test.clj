@@ -1,5 +1,6 @@
 (ns eca-cli.view.blocks-test
   (:require [clojure.test :refer [deftest is testing]]
+            [eca-cli.theme :as theme]
             [eca-cli.view.blocks :as blocks]))
 
 (deftest render-tool-icon-test
@@ -13,27 +14,29 @@
   ;; All icons must be ANSI-wrapped (no bare emoji → consistent 1-col width for JLine diff)
   (is (clojure.string/starts-with? (blocks/render-tool-icon {:state :called}) "\033[")))
 
+(defn- plain [lines] (mapv theme/strip-ansi lines))
+
 (deftest render-item-lines-test
-  (testing ":user item — 3 lines with symbol and reverse-video highlight"
+  (testing ":user item — 3 lines, the message behind a coloured bar"
     (let [lines (blocks/render-item-lines {:type :user :text "hello"} 80)]
-      (is (= 3 (count lines)))
-      (is (= "" (first lines)))
-      (is (clojure.string/includes? (second lines) "❯"))
-      (is (clojure.string/includes? (second lines) "hello"))
-      (is (= "" (last lines)))))
+      (is (= ["" "┃ hello" ""] (plain lines)))
+      (is (clojure.string/starts-with? (second lines) (theme/sgr :user-bar)))))
+
+  (testing ":user item — every wrapped line carries the bar; markdown applies"
+    (is (= ["" "┃ one two" "┃ three" ""]
+           (plain (blocks/render-item-lines {:type :user :text "one **two** three"} 10)))))
 
   (testing ":assistant-text item — ◆ prefix on first line, indent on rest"
-    (let [lines (blocks/render-item-lines {:type :assistant-text :text "line1\nline2"} 80)]
-      (is (= 2 (count lines)))
-      (is (clojure.string/starts-with? (first lines) "◆ "))
-      (is (clojure.string/includes? (first lines) "line1"))
-      (is (clojure.string/starts-with? (second lines) "  "))
-      (is (clojure.string/includes? (second lines) "line2"))))
+    (let [lines (plain (blocks/render-item-lines {:type :assistant-text :text "line1\nline2"} 80))]
+      (is (= ["◆ line1" "  line2"] lines))))
+
+  (testing ":assistant-text renders markdown"
+    (is (= ["◆ • a" "  • b"]
+           (plain (blocks/render-item-lines {:type :assistant-text :text "- a\n- b"} 80)))))
 
   (testing ":streaming-text item — ◆ prefix"
-    (let [lines (blocks/render-item-lines {:type :streaming-text :text "streaming"} 80)]
-      (is (= 1 (count lines)))
-      (is (clojure.string/starts-with? (first lines) "◆ "))))
+    (let [lines (plain (blocks/render-item-lines {:type :streaming-text :text "streaming"} 80))]
+      (is (= ["◆ streaming"] lines))))
 
   (testing ":tool-call with summary"
     (let [lines (blocks/render-item-lines {:type :tool-call :state :called :summary "read foo.clj"} 80)]
@@ -107,6 +110,54 @@
                                 :summary "foo.clj" :expanded? false :focused? false}]} 80)]
       (is (> (count lines) 1))
       (is (some #(clojure.string/starts-with? % "  ") (rest lines))))))
+
+(deftest format-duration-test
+  (is (nil? (blocks/format-duration 850)) "under a second is noise")
+  (is (nil? (blocks/format-duration nil)))
+  (is (= "12s" (blocks/format-duration 12400)))
+  (is (= "2m" (blocks/format-duration 120000)))
+  (is (= "2m 5s" (blocks/format-duration 125000))))
+
+(deftest activity-details-test
+  (testing "a finished tool call shows how long it took"
+    (is (= ["✓ $ bb test  12s"]
+           (plain (blocks/render-item-lines
+                    {:type :tool-call :state :called :summary "$ bb test" :total-ms 12000} 80)))))
+  (testing "a tool call awaiting approval has its summary in bold"
+    (is (clojure.string/includes?
+          (first (blocks/render-item-lines {:type :tool-call :state :run :summary "rm -rf"} 80))
+          (str (theme/sgr {:bold true}) "rm -rf"))))
+  (testing "thoughts show their duration"
+    (is (= ["▸ Thought for 3s"]
+           (plain (blocks/render-item-lines {:type :thinking :status :thought :total-ms 3000} 80))))
+    (is (= ["▸ Thinking…"]
+           (plain (blocks/render-item-lines {:type :thinking :status :thinking} 80)))))
+  (testing "expanded tool call shows its output"
+    (let [lines (plain (blocks/render-item-lines
+                         {:type :tool-call :state :called :name "shell" :summary "ls"
+                          :out-text "a.txt" :expanded? true} 40))]
+      (is (some #(clojure.string/includes? % "Output") lines))
+      (is (some #(clojure.string/includes? % "a.txt") lines)))))
+
+(deftest url-item-test
+  (is (= ["↗ ECA docs" "  https://eca.dev"]
+         (plain (blocks/render-item-lines {:type :url :title "ECA docs" :url "https://eca.dev"} 80))))
+  (is (= ["↗ https://eca.dev"]
+         (plain (blocks/render-item-lines {:type :url :title "" :url "https://eca.dev"} 80)))))
+
+(deftest system-item-test
+  (testing "a ⚠ already in the text is not doubled"
+    (is (= ["⚠ No models available"]
+           (plain (blocks/render-item-lines {:type :system :text "⚠ No models available"} 80)))))
+  (testing "multi-line system text keeps its indentation"
+    (is (= ["⚠ Last lines:" "  │ boom"]
+           (plain (blocks/render-item-lines {:type :system :text "Last lines:\n│ boom"} 80))))))
+
+(deftest focus-test
+  (testing "the focused block's first line is highlighted as one plain run"
+    (let [[line] (blocks/render-item-lines
+                   {:type :tool-call :state :called :summary "read" :focused? true} 20)]
+      (is (= (str (theme/sgr :focus) "✓ read" theme/reset) line)))))
 
 (def ^:private ansi-red   "\033[31m")
 (def ^:private ansi-green "\033[32m")

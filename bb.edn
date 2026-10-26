@@ -30,16 +30,21 @@
                                 (require '[eca-cli.dist-test])
                                 (require '[eca-cli.jobs-test])
                                 (require '[eca-cli.lifecycle-test])
+                                (require '[eca-cli.markdown-test])
+                                (require '[eca-cli.markdown.highlight-test])
                                 (require '[eca-cli.mcp-test])
                                 (require '[eca-cli.protocol-test])
                                 (require '[eca-cli.view-test])
                                 (require '[eca-cli.view.blocks-test])
+                                (require '[eca-cli.view.status-test])
                                 (require '[eca-cli.state-test])
                                 (require '[eca-cli.chats-test])
                                 (require '[eca-cli.paths-test])
                                 (require '[eca-cli.server-test])
                                 (require '[eca-cli.terminal-test])
+                                (require '[eca-cli.theme-test])
                                 (require '[eca-cli.upgrade-test])
+                                (require '[eca-cli.wrap-test])
                                 (let [{:keys [fail error]}
                                       (clojure.test/run-tests 'eca-cli.at-refs-test
                                                               'eca-cli.chat-test
@@ -48,16 +53,21 @@
                                                               'eca-cli.dist-test
                                                               'eca-cli.jobs-test
                                                               'eca-cli.lifecycle-test
+                                                              'eca-cli.markdown-test
+                                                              'eca-cli.markdown.highlight-test
                                                               'eca-cli.mcp-test
                                                               'eca-cli.protocol-test
                                                               'eca-cli.view-test
                                                               'eca-cli.view.blocks-test
+                                                              'eca-cli.view.status-test
                                                               'eca-cli.state-test
                                                               'eca-cli.chats-test
                                                               'eca-cli.paths-test
                                                               'eca-cli.server-test
                                                               'eca-cli.terminal-test
-                                                              'eca-cli.upgrade-test)]
+                                                              'eca-cli.theme-test
+                                                              'eca-cli.upgrade-test
+                                                              'eca-cli.wrap-test)]
                                   (System/exit (if (pos? (+ fail error)) 1 0))))}
          itest       {:doc "Run integration tests (requires tmux and a configured LLM provider; kills running `eca` processes)"
                       :extra-paths ["test"]

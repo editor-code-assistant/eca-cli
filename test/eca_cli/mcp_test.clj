@@ -6,8 +6,10 @@
             [clojure.test :refer [deftest is testing]]
             [eca-cli.commands :as commands]
             [eca-cli.mcp :as mcp]
+            [eca-cli.paths :as paths]
             [eca-cli.picker :as picker]
-            [eca-cli.protocol :as protocol]))
+            [eca-cli.protocol :as protocol]
+            [eca-cli.theme :as theme]))
 
 (defn- base-state []
   {:mode :ready
@@ -60,30 +62,31 @@
 
 (deftest status-bar-fragment-empty-test
   (testing "empty :mcps → nil (slot hidden)"
-    (is (nil? (mcp/status-bar-fragment (base-state) 160)))
-    (is (nil? (mcp/status-bar-fragment (base-state) 80)))))
+    (is (nil? (mcp/status-bar-fragment (base-state))))))
 
-(deftest status-bar-fragment-wide-test
-  (let [state (assoc (base-state)
-                     :mcps {"a" {:status "running"}
-                            "b" {:status "running"}
-                            "c" {:status "running"}
-                            "d" {:status "failed"}})]
-    (testing "width 160, 3/4 running → ⚠ sentinel"
-      (is (= "MCPs: 3/4 ⚠" (mcp/status-bar-fragment state 160))))
-    (testing "width 120 (boundary, wide path)"
-      (is (= "MCPs: 3/4 ⚠" (mcp/status-bar-fragment state 120))))
-    (testing "width 80 → compact, no sentinel"
-      (is (= "M:3/4" (mcp/status-bar-fragment state 80))))
-    (testing "width 100 (narrow)"
-      (is (= "M:3/4" (mcp/status-bar-fragment state 100)))))
+(deftest status-bar-fragment-test
+  (testing "running/enabled, the dot coloured by the worst state"
+    (let [frag (mcp/status-bar-fragment
+                 (assoc (base-state) :mcps {"a" {:status "running"} "b" {:status "running"}
+                                            "c" {:status "running"} "d" {:status "failed"}}))]
+      (is (= "● MCP 3/4" (theme/strip-ansi frag)))
+      (is (str/starts-with? frag (theme/sgr :error)))))
+  (testing "all running → success"
+    (is (str/starts-with? (mcp/status-bar-fragment
+                            (assoc (base-state) :mcps {"a" {:status "running"}}))
+                          (theme/sgr :success))))
+  (testing "disabled servers are left out of the count"
+    (is (= "● MCP 1/1" (theme/strip-ansi (mcp/status-bar-fragment
+                                           (assoc (base-state) :mcps {"a" {:status "running"}
+                                                                      "b" {:status "disabled"}})))))))
 
-  (testing "all running, wide → ✓ sentinel"
-    (let [state (assoc (base-state)
-                       :mcps {"a" {:status "running"}
-                              "b" {:status "running"}})]
-      (is (= "MCPs: 2/2 ✓" (mcp/status-bar-fragment state 160)))
-      (is (= "M:2/2" (mcp/status-bar-fragment state 80))))))
+(deftest health-test
+  (is (= :error   (mcp/health {"a" {:status "failed"} "b" {:status "starting"}})))
+  (is (= :warning (mcp/health {"a" {:status "running"} "b" {:status "requires-auth"}})))
+  (is (= :warning (mcp/health {"a" {:status "starting"}})))
+  (is (= :success (mcp/health {"a" {:status "running"} "b" {:status "disabled"}})))
+  (is (= :muted   (mcp/health {"a" {:status "stopped"}})))
+  (is (= :muted   (mcp/health {"a" {:status "disabled"}}))))
 
 ;; --- panel render ---
 
@@ -96,15 +99,21 @@
                                        :tools []}
                               "bravo" {:name "bravo" :status "failed"
                                        :tools [{:name "b1"} {:name "b2"}]}})
-          lines (mcp/render-mcp-panel-lines state)]
+          styled (mcp/render-mcp-panel-lines state)
+          lines  (mapv theme/strip-ansi styled)]
       (is (= 3 (count lines)))
-      (is (str/starts-with? (nth lines 0) "🟠 alpha"))
+      (is (str/starts-with? (nth lines 0) "● alpha"))
       (is (str/includes? (nth lines 0) "[connect]"))
-      (is (str/starts-with? (nth lines 1) "🔴 bravo"))
+      (is (str/starts-with? (nth lines 1) "● bravo"))
       (is (str/includes? (nth lines 1) "2 tools"))
-      (is (str/includes? (nth lines 1) "check ~/.cache/eca/eca-cli.log"))
-      (is (str/starts-with? (nth lines 2) "🟢 zeta"))
-      (is (str/includes? (nth lines 2) "1 tools")))))
+      (is (str/includes? (nth lines 1) (str "check " (paths/home-relative (paths/log-file))))
+          "points at the server log eca-cli writes")
+      (is (str/starts-with? (nth lines 2) "● zeta"))
+      (is (str/includes? (nth lines 2) "1 tools"))
+      (testing "the status dot carries the colour"
+        (is (str/starts-with? (nth styled 0) (theme/sgr :warning)))
+        (is (str/starts-with? (nth styled 1) (theme/sgr :error)))
+        (is (str/starts-with? (nth styled 2) (theme/sgr :success)))))))
 
 ;; --- /mcp command + connect dispatch ---
 
@@ -159,7 +168,7 @@
           filtered   (picker/filter-picker opened "b")
           lines      (mcp/render-mcp-panel-lines filtered)]
       (is (= 1 (count lines)))
-      (is (str/starts-with? (first lines) "🟠 bravo"))
+      (is (str/starts-with? (theme/strip-ansi (first lines)) "● bravo"))
       (with-redefs [protocol/mcp-connect-server!
                     (fn [_srv n] (swap! sent conj n))]
         (let [[_ cmd] (mcp/handle-key filtered (msg/key-press :enter))]

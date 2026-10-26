@@ -1,60 +1,53 @@
 (ns eca-cli.view.blocks
   "Per-item block renderers for the chat area: assistant text, user message,
   tool call (collapsed + expanded with arguments / output / sub-items),
-  thinking, hook, system. Each item type maps to a vector of pre-wrapped
-  display lines in `render-item-lines`. ANSI styling constants live here
-  because they're block-level styling concerns."
+  thinking, hook, system, link. Each item type maps to a vector of pre-wrapped
+  display lines in `render-item-lines`. Message text goes through the
+  markdown renderer; colours come from `eca-cli.theme` roles."
   (:require [clojure.string :as str]
+            [eca-cli.markdown :as markdown]
+            [eca-cli.theme :as theme]
             [eca-cli.wrap :as wrap]))
 
-(def ^:private ansi-focus    "\033[48;5;238m")
-(def ^:private ansi-thinking "\033[3;38;5;245m")
-(def ^:private ansi-yellow   "\033[33m")
-(def ^:private ansi-green    "\033[32m")
-(def ^:private ansi-red      "\033[31m")
-(def ^:private ansi-grey     "\033[38;5;245m")
-(def ^:private ansi-dim      "\033[2;38;5;245m")
-(def ^:private ansi-bold-on  "\033[1m")
-(def ^:private ansi-bold-off "\033[22m")
-(def ^:private ansi-reset    "\033[0m")
+(defn- paint [role s] (theme/paint role s))
 
-(def ^:private at-token-re
-  ;; Match @<non-space-token>, preceded by start-of-line or whitespace.
-  ;; Group 1 captures the leading boundary so we can preserve it in the
-  ;; replacement.
-  #"(^|\s)@(\S+)")
-
-(defn- stylize-at-tokens [s]
-  (str/replace s at-token-re
-               (fn [[_ lead path]]
-                 (str lead ansi-bold-on "@" path ansi-bold-off))))
+(defn format-duration
+  "`850ms` → nil (not worth showing), `12s`, `2m 5s`."
+  [ms]
+  (when (and (number? ms) (>= ms 1000))
+    (let [secs (quot (long ms) 1000)]
+      (if (< secs 60)
+        (str secs "s")
+        (str (quot secs 60) "m" (when (pos? (mod secs 60)) (str " " (mod secs 60) "s")))))))
 
 (defn- render-box [label text width]
   (let [box-w   (max 4 (- width 2))
         inner-w (max 1 (- box-w 4))
         fill-n  (max 0 (- box-w 4 (count label) 1))
-        top     (str "  ┌─ " label " " (apply str (repeat fill-n "─")) "┐")
-        bot     (str "  └" (apply str (repeat (- box-w 2) "─")) "┘")
+        top     (str "  " (paint :border "┌─ ") (paint :muted label)
+                     (paint :border (str " " (apply str (repeat fill-n "─")) "┐")))
+        bot     (str "  " (paint :border (str "└" (apply str (repeat (- box-w 2) "─")) "┘")))
+        side    (paint :border "│")
         lines   (when (seq (str text))
                   (mapcat (fn [line]
                             (let [wrapped (wrap/wrap-text line inner-w)]
                               (mapv (fn [l]
-                                      (let [pad (apply str (repeat (max 0 (- inner-w (count l))) " "))]
-                                        (str "  │ " l pad " │")))
+                                      (let [pad (apply str (repeat (max 0 (- inner-w (theme/width l))) " "))]
+                                        (str "  " side " " l pad " " side)))
                                     wrapped)))
                           (str/split-lines (str text))))]
     (vec (concat [top] lines [bot]))))
 
 (defn render-tool-icon [tool-call]
   (case (:state tool-call)
-    :preparing (str ansi-yellow "◌" ansi-reset)
-    :run       (str ansi-yellow "▸" ansi-reset)
-    :running   (str ansi-yellow "◌" ansi-reset)
+    :preparing (paint :muted "◌")
+    :run       (paint :warning "▸")
+    :running   (paint :accent "◌")
     :called    (if (:error? tool-call)
-                 (str ansi-red "✗" ansi-reset)
-                 (str ansi-green "✓" ansi-reset))
-    :rejected  (str ansi-red "✗" ansi-reset)
-    (str ansi-yellow "◌" ansi-reset)))
+                 (paint :error "✗")
+                 (paint :success "✓"))
+    :rejected  (paint :error "✗")
+    (paint :muted "◌")))
 
 (def ^:private diff-max-lines 500)
 
@@ -87,109 +80,134 @@
         clamped  (if (> (count raw) budget) (subs raw 0 budget) raw)
         styled   (mapcat
                   (fn [line]
-                    (let [line  (if (> (count line) line-cap)
-                                  (str (subs line 0 line-cap) "…")
-                                  line)
-                          color (cond
-                                  (str/starts-with? line "@@") ansi-dim
-                                  (str/starts-with? line "+")  ansi-green
-                                  (str/starts-with? line "-")  ansi-red
-                                  :else                        ansi-grey)]
-                      (map #(str color % ansi-reset)
-                           (wrap/wrap-text line inner-w))))
+                    (let [line (if (> (count line) line-cap)
+                                 (str (subs line 0 line-cap) "…")
+                                 line)
+                          role (cond
+                                 (str/starts-with? line "@@") :diff-hunk
+                                 (str/starts-with? line "+")  :diff-add
+                                 (str/starts-with? line "-")  :diff-del
+                                 :else                        :diff-ctx)]
+                      (map #(paint role %) (wrap/wrap-text line inner-w))))
                   (str/split-lines clamped))
         ;; Realize at most one line past the cap — `styled` is lazy, so this
         ;; short-circuits wrapping on huge diffs instead of forcing the whole body.
         head    (vec (take (inc diff-max-lines) styled))]
     (if (> (count head) diff-max-lines)
       (conj (subvec head 0 diff-max-lines)
-            (str ansi-dim "[truncated]" ansi-reset))
+            (paint :diff-hunk "[truncated]"))
       head)))
+
+(defn- prefixed
+  "`first-prefix` before the first line, `rest-prefix` before the others."
+  [lines first-prefix rest-prefix]
+  (if (seq lines)
+    (into [(str first-prefix (first lines))] (map #(str rest-prefix %)) (rest lines))
+    []))
+
+(declare render-item-lines)
+
+(defn- steps-badge [item]
+  (when (seq (:sub-items item))
+    (paint :muted (str "  ▸ " (count (:sub-items item)) " steps"))))
+
+(defn- tool-call-lines [item width]
+  (let [icon     (render-tool-icon item)
+        name     (:name item)
+        summary  (or (:summary item) name)
+        edit     (:edit item)
+        duration (some->> (format-duration (:total-ms item)) (str "  ") (paint :muted))]
+    (if (:expanded? item)
+      (let [header (str icon " " (paint :bold name) "  " (paint :muted summary)
+                        (steps-badge item) (or duration "") "  " (paint :muted "▾"))
+            body   (if edit
+                     (render-diff edit width)
+                     (concat
+                       (when (:args-text item)
+                         (render-box "Arguments" (:args-text item) width))
+                       (when (:out-text item)
+                         (render-box "Output" (:out-text item) width))))
+            subs   (when (seq (:sub-items item))
+                     (mapcat (fn [sub]
+                               (map #(str "  " %) (render-item-lines sub (- width 2))))
+                             (:sub-items item)))]
+        (vec (concat [header] body subs)))
+      (let [badge (when edit
+                    (str "  " (paint :diff-add (str "+" (:lines-added edit)))
+                         " " (paint :diff-del (str "−" (:lines-removed edit)))))
+            label (if (= :run (:state item)) (paint :bold summary) summary)]
+        [(str icon " " label (or badge "") (steps-badge item) (or duration ""))]))))
+
+(defn- thinking-lines [item width]
+  (let [label   (if (= :thought (:status item))
+                  (str "Thought" (some->> (format-duration (:total-ms item)) (str " for ")))
+                  "Thinking…")
+        icon    (if (:expanded? item) "▾" "▸")
+        header  (paint :thinking (str icon " " label))]
+    (if (:expanded? item)
+      (let [inner-w (max 1 (- width 2))
+            body    (when (seq (:text item))
+                      (mapcat #(map (fn [l] (str "  " (paint :thinking l)))
+                                    (wrap/wrap-text % inner-w))
+                              (str/split-lines (:text item))))]
+        (vec (cons header (or (seq body) [""]))))
+      [header])))
+
+(defn- hook-lines [item width]
+  (let [status (:status item)
+        icon   (case status :failed (paint :error "✗") (paint :warning "⚑"))
+        label  (case status :running "running…" :ok "ok" :failed "failed" "…")
+        head   (str icon " " (:name item) "  " (paint :muted label))]
+    (if (:expanded? item)
+      (vec (cons (str head "  " (paint :muted "▾"))
+                 (when (seq (str (:out-text item)))
+                   (render-box "Output" (:out-text item) width))))
+      [head])))
+
+(defn- focus-line
+  "A focused block's first line highlighted, readable on dark and light
+  terminals alike (reverse video of a mid grey). Not padded to the width:
+  JLine turns trailing spaces into an erase, which drops the reverse video."
+  [line]
+  (paint :focus (theme/strip-ansi line)))
 
 (defn render-item-lines [item width]
   (let [lines
         (case (:type item)
           :user
-          ;; " ❯ " prefix = 4 cols, trailing " " = 1 col → inner budget = width - 5
-          (let [inner-w (max 1 (- width 5))
-                wrapped (wrap/wrap-text (stylize-at-tokens (str (:text item))) inner-w)]
-            (into [""]
-                  (conj (mapv #(str "\033[7m ❯ " % " \033[0m") wrapped)
-                        "")))
+          ;; "┃ " bar = 2 cols on every line, like the user turn border in
+          ;; ECA's webview. Blank lines frame the message.
+          (let [body (markdown/render (:text item) (max 1 (- width 2)) {:at-refs? true})
+                bar  (paint :user-bar "┃")]
+            (-> [""]
+                (into (map #(if (= "" %) bar (str bar " " %))) (if (seq body) body [""]))
+                (conj "")))
 
           (:assistant-text :streaming-text)
-          ;; "◆ " prefix = 2 cols; continuation "  " = 2 cols → inner budget = width - 2
-          (let [inner-w (max 1 (- width 2))
-                lines   (str/split-lines (str (:text item)))
-                wrapped (mapcat #(wrap/wrap-text % inner-w) lines)]
-            (if (seq wrapped)
-              (into [(str "◆ " (first wrapped))]
-                    (map #(str "  " %) (rest wrapped)))
-              []))
+          ;; "◆ " marker = 2 cols; continuation lines indent 2.
+          (prefixed (markdown/render (:text item) (max 1 (- width 2)))
+                    (str (paint :assistant "◆") " ") "  ")
 
-          :tool-call
-          (let [icon    (render-tool-icon item)
-                name    (:name item)
-                summary (or (:summary item) name)
-                edit    (:edit item)
-                badge   (when edit
-                          (str "  " ansi-green "+" (:lines-added edit) ansi-reset
-                               " " ansi-red "−" (:lines-removed edit) ansi-reset))]
-            (if (:expanded? item)
-              (let [steps  (when (seq (:sub-items item))
-                             (str "  ▸ " (count (:sub-items item)) " steps"))
-                    header (str icon " " name "  " summary (or steps "") "  ▾")
-                    body   (if edit
-                             (render-diff edit width)
-                             (concat
-                               (when (:args-text item)
-                                 (render-box "Arguments" (:args-text item) width))
-                               (when (:out-text item)
-                                 (render-box "Output" (:out-text item) width))))
-                    subs   (when (seq (:sub-items item))
-                             (mapcat (fn [sub]
-                                       (map #(str "  " %) (render-item-lines sub (- width 2))))
-                                     (:sub-items item)))]
-                (vec (concat [header] body subs)))
-              (let [steps (when (seq (:sub-items item))
-                            (str "  ▸ " (count (:sub-items item)) " steps"))]
-                [(str icon " " summary (or badge "") (or steps ""))])))
+          :tool-call (tool-call-lines item width)
+          :thinking  (thinking-lines item width)
+          :hook      (hook-lines item width)
 
-          :thinking
-          ;; Use › (same width as ▸) so focused swap doesn't change visual line width
-          (let [status  (:status item)
-                icon    (if (:focused? item) "›" "▸")
-                label   (if (= :thought status) "Thought" "Thinking…")]
-            (if (:expanded? item)
-              (let [header  (str ansi-thinking icon " " label "  ▾" ansi-reset)
-                    inner-w (max 1 (- width 2))
-                    body    (when (seq (:text item))
-                              (mapcat #(map (fn [l] (str "  " ansi-thinking l ansi-reset))
-                                           (wrap/wrap-text % inner-w))
-                                      (str/split-lines (:text item))))]
-                (vec (cons header (or (seq body) [""]))))
-              [(str ansi-thinking icon " " label ansi-reset)]))
-
-          :hook
-          (let [status (:status item)
-                icon   (case status :failed (str ansi-red "✗" ansi-reset) (str ansi-yellow "⚑" ansi-reset))
-                label  (case status :running "running…" :ok "ok" :failed "failed" "…")]
-            (if (:expanded? item)
-              (let [header (str icon " " (:name item) "  " label "  ▾")
-                    boxes  (when (seq (str (:out-text item)))
-                             (render-box "Output" (:out-text item) width))]
-                (vec (cons header (or boxes []))))
-              [(str icon " " (:name item) "  " label)]))
+          :url
+          (let [inner-w (max 1 (- width 2))]
+            (vec (concat (prefixed (wrap/wrap-text (str (or (not-empty (:title item)) (:url item))) inner-w)
+                                   (str (paint :accent "↗") " ") "  ")
+                         (when (seq (:title item))
+                           (map #(str "  " (paint :md-url %)) (wrap/wrap-text (str (:url item)) inner-w))))))
 
           :system
-          ;; "⚠ " = 2 cols → inner budget = width - 2
-          (let [inner-w (max 1 (- width 2))
-                wrapped (wrap/wrap-text (str (:text item)) inner-w)]
-            (into [(str "⚠ " (first wrapped))]
-                  (map #(str "  " %) (rest wrapped))))
+          ;; "⚠ " = 2 cols → inner budget = width - 2. Callers sometimes
+          ;; include the ⚠ themselves; don't print it twice. `:level :info`
+          ;; is for notes that aren't warnings (e.g. /help).
+          (let [text (str/replace-first (str (:text item)) #"^⚠\s*" "")
+                icon (if (= :info (:level item)) (paint :accent "•") (paint :warning "⚠"))]
+            (prefixed (wrap/wrap-text text (max 1 (- width 2))) (str icon " ") "  "))
 
           [])]
-    ;; Apply focus background to first line of focusable items
     (if (and (:focused? item) (seq lines))
-      (into [(str ansi-focus (first lines) ansi-reset)] (rest lines))
+      (into [(focus-line (first lines))] (rest lines))
       lines)))

@@ -4,7 +4,8 @@
             [clojure.test :refer [deftest is testing]]
             [eca-cli.commands :as commands]
             [eca-cli.jobs :as jobs]
-            [eca-cli.protocol :as protocol])
+            [eca-cli.protocol :as protocol]
+            [eca-cli.theme :as theme])
   (:import [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (defn- key-msg [k]
@@ -47,19 +48,21 @@
       (is (= "failed" (get-in s2 [:jobs "j3" :status]))))))
 
 (deftest status-bar-fragment-empty-test
-  (testing "no jobs returns nil at any width"
-    (is (nil? (jobs/status-bar-fragment (base-state) 80)))
-    (is (nil? (jobs/status-bar-fragment (base-state) 160)))))
+  (testing "no jobs returns nil"
+    (is (nil? (jobs/status-bar-fragment (base-state))))))
 
-(deftest status-bar-fragment-wide-test
-  (let [s (assoc (base-state) :jobs {"j1" (job "j1" "A" "running")
-                                     "j2" (job "j2" "A" "running")})]
-    (testing "wide (>=120) uses [N jobs]"
-      (is (= "[2 jobs]" (jobs/status-bar-fragment s 160)))
-      (is (= "[2 jobs]" (jobs/status-bar-fragment s 120))))
-    (testing "narrow (<120) uses [Nj]"
-      (is (= "[2j]" (jobs/status-bar-fragment s 80)))
-      (is (= "[2j]" (jobs/status-bar-fragment s 119))))))
+(deftest status-bar-fragment-test
+  (testing "counts the jobs still running"
+    (is (= "2 jobs" (theme/strip-ansi
+                      (jobs/status-bar-fragment
+                        (assoc (base-state) :jobs {"j1" (job "j1" "A" "running")
+                                                   "j2" (job "j2" "A" "running")
+                                                   "j3" (job "j3" "A" "completed")}))))))
+  (testing "singular"
+    (is (= "1 job" (theme/strip-ansi
+                     (jobs/status-bar-fragment (assoc (base-state) :jobs {"j1" (job "j1" "A" "running")}))))))
+  (testing "only finished jobs → nil"
+    (is (nil? (jobs/status-bar-fragment (assoc (base-state) :jobs {"j1" (job "j1" "A" "failed")}))))))
 
 (deftest panel-render-grouped-test
   (testing "rows grouped by chatLabel"
@@ -212,7 +215,7 @@
                                                        {:stream "stderr" :text "bad"}]
                                             :status   "failed"
                                             :exitCode 1}}))
-          out (jobs/render-output-popup-lines s)]
+          out (theme/strip-ansi (jobs/render-output-popup-lines s))]
       (is (str/includes? out "status=failed"))
       (is (str/includes? out "exit=1"))
       (is (str/includes? out "ok"))

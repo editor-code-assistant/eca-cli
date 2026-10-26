@@ -84,14 +84,26 @@ The drain loop starts at init and is self-sustaining: the `:eca-tick` handler re
 
 ### View rendering
 
-No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a flat vec of rendered strings kept in state, rebuilt via `view/rebuild-chat-lines` after every content change. `render-chat` slices the last N visible lines adjusted by `:scroll-offset`.
+No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a flat vec of rendered strings kept in state, rebuilt via `view/rebuild-lines` after content changes. `render-chat` slices the last N visible lines adjusted by `:scroll-offset`.
+
+- Items render in `view/blocks.clj`. Message text (assistant, streaming, user) goes through `markdown/render`: babashka's built-in nextjournal.markdown parses it, eca-cli lays the AST out for the width (`markdown/highlight.clj` colours fenced code). Finished items are memoized by value and width, so only the reply still streaming re-renders.
+- A server tick applies its whole batch of messages with `view/*rebuild-deferred*` bound: the handlers' `rebuild-lines` calls collapse into one rebuild per batch.
+- Colours come from `theme.clj` roles via `theme/paint`, mostly on the ANSI 16 palette so the terminal's theme picks the actual colours (dark or light); `NO_COLOR` drops them, keeping bold/italic.
+- The status line (`view/status.clj`) is a list of segments with priorities; on a narrow terminal the least important are dropped (or shortened) until it fits.
+- JLine constraints every renderer must respect: each line is parsed on its own, so styles never carry over to the next line (every line opens its styles and ends with a reset); a line wider than the terminal is cut *and loses all its colours*, so wrap or fit to the width; trailing spaces are dropped even when styled, so no full-width background bars and no badge ending a line with a space.
 
 ### Key files
 
 - `src/eca_cli/server.clj` — process spawn, Content-Length JSON-RPC framing (synchronized writes that return false instead of throwing once the server is gone), reader thread, exit report, queue drain
 - `src/eca_cli/protocol.clj` — message constructors, request ID tracking, response correlation
 - `src/eca_cli/state.clj` — Elm state machine, ECA content handlers, all key bindings
-- `src/eca_cli/view.clj` — pure rendering: chat lines, tool icons, approval prompt, connecting indicator, status bar
+- `src/eca_cli/view.clj` — pure rendering: chat lines (cached, batched), gutter (connecting / working), approval prompt, pickers, login, layout
+- `src/eca_cli/view/blocks.clj` — one renderer per chat item type: messages, tool calls (diffs, argument/output boxes), thinking, hooks, links, system notes
+- `src/eca_cli/view/status.clj` — the status line: segments, priorities, context-window bar, usage/cost/quota
+- `src/eca_cli/markdown.clj` — markdown → styled, width-wrapped lines (lists, quotes, code, tables); falls back to plain text on failure
+- `src/eca_cli/markdown/highlight.clj` — table-driven syntax highlighting for fenced code
+- `src/eca_cli/theme.clj` — colour/attribute roles, SGR helpers, `NO_COLOR`
+- `src/eca_cli/wrap.clj` — ANSI/width-aware word wrap for plain text
 - `src/eca_cli/chats.clj` — EDN persistence of workspace → chat-id map
 - `src/eca_cli/upgrade.clj` — ECA binary resolution and the managed install: latest GitHub release (1h check cache), sha256-verified download, staged + atomic install, `eca-version` marker, offline fallback
 - `src/eca_cli/terminal.clj` — sends terminfo `enacs`: JLine draws `─│┌…` via the alternate charset, which under screen/tmux terminfo (SO/SI) shows as `qqqq`/`xxxx` unless G1 was designated as DEC graphics first

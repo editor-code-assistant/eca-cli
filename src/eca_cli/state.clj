@@ -123,31 +123,37 @@
             (dissoc :connecting-since)
             (update :input ti/focus)))))
 
-(defn- handle-eca-tick [state msgs]
-  (reduce
-    (fn [[s cmd] m]
-      (cond
-        (= :reader-error (:type m))
-        [(disconnect s (:error m)) cmd]
+(defn- handle-eca-tick
+  "Apply a batch of server messages. Chat lines are rebuilt once for the whole
+  batch rather than by every handler (see `view/*rebuild-deferred*`)."
+  [state msgs]
+  (let [rebuild?  (volatile! false)
+        [s' cmd]  (binding [view/*rebuild-deferred* rebuild?]
+                    (reduce
+                      (fn [[s cmd] m]
+                        (cond
+                          (= :reader-error (:type m))
+                          [(disconnect s (:error m)) cmd]
 
-        (= :eca-initialize-response (:type m))
-        [(handle-initialize-response s (:response m)) cmd]
+                          (= :eca-initialize-response (:type m))
+                          [(handle-initialize-response s (:response m)) cmd]
 
-        (= :eca-prompt-response (:type m))
-        (let [s' (cond-> s
-                   (:chat-id m) (assoc :chat-id (:chat-id m))
-                   (:model m)   (assoc :model (:model m)))]
-          (if (= "login" (:status m))
-            [s' (program/batch cmd (login/start-login-cmd (:server s') (:pending-message s')))]
-            [s' cmd]))
+                          (= :eca-prompt-response (:type m))
+                          (let [s' (cond-> s
+                                     (:chat-id m) (assoc :chat-id (:chat-id m))
+                                     (:model m)   (assoc :model (:model m)))]
+                            (if (= "login" (:status m))
+                              [s' (program/batch cmd (login/start-login-cmd (:server s') (:pending-message s')))]
+                              [s' cmd]))
 
-        (:method m)
-        (let [[s'' extra-cmd] (handle-eca-notification s m)]
-          [s'' (program/batch cmd extra-cmd)])
+                          (:method m)
+                          (let [[s'' extra-cmd] (handle-eca-notification s m)]
+                            [s'' (program/batch cmd extra-cmd)])
 
-        :else [s cmd]))
-    [state nil]
-    msgs))
+                          :else [s cmd]))
+                      [state nil]
+                      msgs))]
+    [(if @rebuild? (view/rebuild-lines s') s') cmd]))
 
 
 (defn- initial-state [srv opts]

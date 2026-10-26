@@ -12,6 +12,7 @@
             [eca-cli.login :as login]
             [eca-cli.jobs :as jobs]
             [eca-cli.mcp :as mcp]
+            [eca-cli.theme :as theme]
             [eca-cli.view :as view]))
 
 (declare command-registry)
@@ -51,10 +52,13 @@
   [(assoc state :items [] :chat-lines [] :scroll-offset 0) nil])
 
 (defn cmd-show-help [state]
-  (let [lines (map (fn [[name {:keys [doc]}]] (str name "  —  " doc))
-                   (sort-by key command-registry))
+  (let [cmds  (sort-by key command-registry)
+        w     (reduce max 0 (map (comp count key) cmds))
+        lines (map (fn [[name {:keys [doc]}]]
+                     (str (theme/paint :accent (theme/pad-right name w)) "  " doc))
+                   cmds)
         text  (str/join "\n" (into ["Available commands:"] lines))]
-    [(update state :items conj {:type :system :text text}) nil]))
+    [(update state :items conj {:type :system :level :info :text text}) nil]))
 
 (defn cmd-quit
   "Quit: graceful protocol `shutdown`/`exit`, then kill the server process.

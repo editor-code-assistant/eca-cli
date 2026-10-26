@@ -150,8 +150,8 @@
                  :else     "Lost connection to the ECA server.")]
               (cond
                 (seq log-lines) (cons (str "Last lines of " log-file ":")
-                                      ;; A visible gutter: the chat renderer
-                                      ;; drops leading whitespace.
+                                      ;; A gutter sets the log apart from
+                                      ;; the report around it.
                                       (map #(str "│ " %) log-lines))
                 log-file        [(str "It wrote nothing to " log-file ".")]))))
 

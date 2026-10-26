@@ -16,7 +16,9 @@
             [charm.message :as msg]
             [charm.program :as program]
             [clojure.string :as str]
-            [eca-cli.protocol :as protocol]))
+            [eca-cli.paths :as paths]
+            [eca-cli.protocol :as protocol]
+            [eca-cli.theme :as theme]))
 
 ;; --- /mcp command + panel ---
 
@@ -102,21 +104,20 @@
 
 ;; --- Render ---
 
-(defn- status-emoji [status]
+(defn- status-role [status]
   (case status
-    "running"       "🟢"
-    "starting"      "🟡"
-    "failed"        "🔴"
-    "stopped"       "⚪"
-    "disabled"      "⚫"
-    "requires-auth" "🟠"
-    "⚪"))
+    "running"                    :success
+    ("starting" "requires-auth") :warning
+    "failed"                     :error
+    :subtle))
 
 (defn- render-row [{:keys [name status tools]}]
-  (let [base (str (status-emoji status) " " name " · " (count tools) " tools · " status)]
-    (cond-> base
-      (= "requires-auth" status) (str " [connect]")
-      (= "failed" status)        (str " (check ~/.cache/eca/eca-cli.log)"))))
+  (str (theme/paint (status-role status) "●") " " name
+       (theme/paint :muted (str " · " (count tools) " tools · " status))
+       (case status
+         "requires-auth" (theme/paint :accent " [connect]")
+         "failed"        (theme/paint :muted (str " (check " (paths/home-relative (paths/log-file)) ")"))
+         nil)))
 
 (defn render-mcp-panel-lines
   "Renders panel rows: one line per MCP server, sorted alphabetically by name.
@@ -130,19 +131,28 @@
 
 ;; --- Status-bar fragment ---
 
+(defn health
+  "Overall MCP health role for the status line, by the worst enabled server:
+  `:error` any failed, `:warning` any starting or waiting for auth,
+  `:success` all running, `:muted` otherwise (stopped)."
+  [mcps]
+  (let [statuses (set (keep #(when-not (= "disabled" (:status %)) (:status %)) (vals mcps)))]
+    (cond
+      (statuses "failed")                                  :error
+      (some statuses ["starting" "requires-auth"])         :warning
+      (and (seq statuses) (= #{"running"} statuses))       :success
+      :else                                                :muted)))
+
 (defn status-bar-fragment
-  "Returns the status-bar MCP slot string, or nil when no MCPs are known.
-  Wide (>=120 cols): `MCPs: n/m ✓` (or `⚠` when any non-running). Narrow: `M:n/m`."
-  [state width]
+  "The status-line MCP slot, `● MCP running/enabled` with the dot coloured by
+  `health`, or nil when no MCP servers are known."
+  [state]
   (let [mcps (:mcps state)]
     (when (seq mcps)
-      (let [total   (count mcps)
-            running (count (filter #(= "running" (:status (val %))) mcps))
-            wide?   (>= width 120)
-            sentinel (if (= running total) "✓" "⚠")]
-        (if wide?
-          (str "MCPs: " running "/" total " " sentinel)
-          (str "M:" running "/" total))))))
+      (let [enabled (remove #(= "disabled" (:status %)) (vals mcps))
+            running (count (filter #(= "running" (:status %)) enabled))]
+        (str (theme/paint (health mcps) "●") " "
+             (theme/paint :muted (str "MCP " running "/" (count enabled))))))))
 
 ;; --- connect-server dispatch ---
 

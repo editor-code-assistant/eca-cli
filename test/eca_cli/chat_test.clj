@@ -2,7 +2,8 @@
   "Tests for chat-domain notification handlers (chat/opened, chat/cleared,
   config/updated). Other chat fns (handle-content, content->item, etc.)
   are still exercised via state-test for now."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-cli.chat :as chat]
@@ -290,3 +291,60 @@
 
   (testing "missing details yields nil"
     (is (nil? (chat/content->edit {:type "toolCallRun" :id "3" :name "read_file"})))))
+
+(deftest tool-output-text-test
+  (testing "the protocol's outputs parts"
+    (is (= "a\nb" (chat/tool-output-text {:outputs [{:type "text" :text "a"} {:type "text" :text "b"}]}))))
+  (testing "a plain string outputs, or the legacy single output"
+    (is (= "s" (chat/tool-output-text {:outputs "s"})))
+    (is (= "old" (chat/tool-output-text {:output "old"}))))
+  (testing "empty -> nil; long output capped"
+    (is (nil? (chat/tool-output-text {:outputs []})))
+    (is (str/ends-with? (chat/tool-output-text {:outputs [{:text (apply str (repeat 9000 "x"))}]})
+                        "\n[truncated]"))))
+
+(defn- content [type & {:as kvs}]
+  {:chatId "chat1" :role "assistant" :content (merge {:type type} kvs)})
+
+(deftest handle-content-details-test
+  (testing "toolCalled keeps the output text and duration"
+    (let [s    (chat/handle-content (base-state)
+                                    (content "toolCalled" :id "t1" :name "shell" :summary "ls"
+                                             :error false :totalTimeMs 2500
+                                             :outputs [{:type "text" :text "a.txt"}]))
+          item (first (:items s))]
+      (is (= "a.txt" (:out-text item)))
+      (is (= 2500 (:total-ms item)))))
+  (testing "reasonFinished keeps the thought's duration"
+    (let [s0 (assoc (base-state) :items [{:type :thinking :id "r1" :text "" :status :thinking}])
+          s  (chat/handle-content s0 (content "reasonFinished" :id "r1" :totalTimeMs 3000))]
+      (is (= {:status :thought :total-ms 3000} (select-keys (first (:items s)) [:status :total-ms])))))
+  (testing "url content becomes a link item, after any streamed text"
+    (let [s0 (assoc (base-state) :current-text "see:")
+          s  (chat/handle-content s0 (content "url" :title "ECA" :url "https://eca.dev"))]
+      (is (= [{:type :assistant-text :text "see:"} {:type :url :title "ECA" :url "https://eca.dev"}]
+             (:items s)))
+      (is (= "" (:current-text s))))))
+
+(deftest add-sub-content-test
+  (let [fold (fn [events] (reduce chat/add-sub-content [] events))]
+    (testing "streamed text chunks extend one item"
+      (is (= [{:type :assistant-text :role "assistant" :text "Hello world"}]
+             (fold [(content "text" :text "Hello") (content "text" :text " world")]))))
+    (testing "text from another role starts a new item"
+      (is (= 2 (count (fold [(assoc (content "text" :text "task") :role "user")
+                             (content "text" :text "answer")])))))
+    (testing "a tool call is one item updated through its lifecycle"
+      (let [subs (fold [(content "toolCallPrepare" :id "t" :name "read_file" :summary "Reading x")
+                        (content "toolCallRunning" :id "t" :name "read_file")
+                        (content "toolCalled" :id "t" :name "read_file" :error false :totalTimeMs 1200
+                                 :outputs [{:type "text" :text "body"}])])]
+        (is (= 1 (count subs)))
+        (is (= {:state :called :summary "Reading x" :out-text "body" :total-ms 1200}
+               (select-keys (first subs) [:state :summary :out-text :total-ms])))))
+    (testing "thoughts accumulate text and finish"
+      (let [[t] (fold [(content "reasonStarted" :id "r")
+                       (content "reasonText" :id "r" :text "a")
+                       (content "reasonText" :id "r" :text "b")
+                       (content "reasonFinished" :id "r" :totalTimeMs 2000)])]
+        (is (= {:text "ab" :status :thought :total-ms 2000} (select-keys t [:text :status :total-ms])))))))

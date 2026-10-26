@@ -12,6 +12,7 @@
    of lines.
 
    - Splits on whitespace word boundaries where possible.
+   - Keeps each paragraph's leading indentation; drops whitespace at wrap points.
    - Hard-breaks words longer than `width` column by column.
    - ANSI escape sequences are preserved and have zero display width.
    - Existing newlines in `s` are honoured (each paragraph wrapped separately).
@@ -43,10 +44,13 @@
                     ws-only?  (re-matches #"\s+" word)]
                 (cond
                   ;; ── Whitespace token ─────────────────────────────────────
-                  ;; Keep it only if it fits and there is already content on
-                  ;; the current line (avoids leading spaces after a wrap).
+                  ;; Keep it if it fits and either there is already content
+                  ;; on the line or this is the paragraph's first line, so
+                  ;; indentation survives (code, nested lists, diff context)
+                  ;; but no line starts with a space after a soft wrap.
                   ws-only?
-                  (if (and (pos? current-w) (<= (+ current-w word-w) width))
+                  (if (and (or (pos? current-w) (empty? result))
+                           (<= (+ current-w word-w) width))
                     (recur (rest words)
                            (str current-line word)
                            (+ current-w word-w)

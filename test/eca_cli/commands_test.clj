@@ -1,6 +1,17 @@
 (ns eca-cli.commands-test
-  (:require [clojure.test :refer [deftest is testing]]
-            [eca-cli.commands :as commands]))
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [eca-cli.commands :as commands]
+            [eca-cli.theme :as theme]))
+
+(deftest help-test
+  (let [[s _]  (commands/cmd-show-help {:items []})
+        item   (peek (:items s))
+        lines  (str/split-lines (theme/strip-ansi (:text item)))]
+    (is (= :info (:level item)) "an informational note, not a warning")
+    (is (= "Available commands:" (first lines)))
+    (testing "descriptions aligned in one column"
+      (is (= 1 (count (set (map #(count (re-find #"^\S+\s+" %)) (rest lines)))))))))
 
 (deftest registry-completeness-test
   (testing "all expected commands present"

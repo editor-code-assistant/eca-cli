@@ -1,29 +1,70 @@
 (ns eca-cli.view-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [charm.components.list :as cl]
             [charm.components.text-input :as ti]
+            [eca-cli.theme :as theme]
             [eca-cli.view :as view]))
 
 (def ^:private pad-to-height     #'view/pad-to-height)
-(def ^:private render-status-bar #'view/render-status-bar)
 (def ^:private render-login      #'view/render-login)
+
+(defn- render-status-bar
+  "The status line as plain text."
+  [state]
+  (theme/strip-ansi (view/render-status-bar state)))
 
 (deftest divider-test
   (is (= "" (view/divider 0)))
-  (is (= "──────────" (view/divider 10)))
-  (is (= 40 (count (view/divider 40)))))
+  (is (= "──────────" (theme/strip-ansi (view/divider 10))))
+  (is (= 40 (theme/width (view/divider 40))))
+  (testing "coloured by role, dim border by default"
+    (is (str/starts-with? (view/divider 5) (theme/sgr :border)))
+    (is (str/starts-with? (view/divider 5 :warning) (theme/sgr :warning)))))
 
 (deftest render-connecting-test
   (let [home  (System/getProperty "user.home")
         state {:connecting-since 1000000
                :server           {:log-file (java.io.File. (str home "/.local/state/eca/eca-cli.log"))}}]
     (testing "first seconds: just the spinner line"
-      (let [s (view/render-connecting state 1001000)]
+      (let [s (theme/strip-ansi (view/render-connecting state 1001000))]
         (is (re-find #"Connecting to ECA server…$" s))))
     (testing "after a few seconds: elapsed time"
-      (is (re-find #"Connecting to ECA server… 5s$" (view/render-connecting state 1005000))))
+      (is (re-find #"Connecting to ECA server… 5s$"
+                   (theme/strip-ansi (view/render-connecting state 1005000)))))
     (testing "when it drags on: where to look, home-relative"
       (is (re-find #"… 20s  \(taking long\? see ~/\.local/state/eca/eca-cli\.log\)$"
-                   (view/render-connecting state 1020000))))))
+                   (theme/strip-ansi (view/render-connecting state 1020000)))))))
+
+(deftest render-working-test
+  (let [now 1000000]
+    (testing "spinner, activity, elapsed time and how to stop"
+      (is (re-find #"^. Working… 14s  esc to interrupt$"
+                   (theme/strip-ansi (view/render-working {:turn-started-at (- now 14000) :items []} now)))))
+    (testing "the activity follows the tail of the chat"
+      (is (str/includes? (theme/strip-ansi (view/render-working {:current-text "hi" :items []} now)) "Writing…"))
+      (is (str/includes? (theme/strip-ansi (view/render-working {:items [{:type :thinking :status :thinking}]} now))
+                         "Thinking…"))
+      (is (str/includes? (theme/strip-ansi (view/render-working {:items [{:type :tool-call :state :running}]} now))
+                         "Running tools…")))))
+
+(deftest render-list-test
+  (let [lst (cl/item-list ["/agent  —  Open agent picker" "/model  —  Open model picker"
+                                              "/mcp  —  View MCP server status"]
+                                             :height 8)
+        out (view/render-list :command (cl/select lst 1) 80)]
+    (testing "selected row marked; descriptions aligned in a muted column"
+      (is (= ["  /agent  Open agent picker"
+              "❯ /model  Open model picker"
+              "  /mcp    View MCP server status"]
+             (str/split-lines (theme/strip-ansi out))))
+      (is (str/includes? out (str (theme/sgr :accent-bold) "❯ "))))
+    (testing "rows never overflow; the description is cut first"
+      (is (every? #(<= (theme/width %) 20)
+                  (str/split-lines (view/render-list :command lst 20)))))
+    (testing "empty list"
+      (is (str/includes? (theme/strip-ansi (view/render-list :model (cl/item-list []) 80))
+                         "nothing matches")))))
 
 (deftest view-connection-modes-test
   (let [base {:width 60 :height 12 :chat-lines [] :scroll-offset 0 :items []
@@ -54,19 +95,45 @@
       (is (= 5 (count lines)))
       (is (clojure.string/includes? (second lines) "hi"))
       (is (= "" (last lines)))
-      (is (clojure.string/starts-with? (nth lines 3) "◆ "))
+      (is (str/starts-with? (theme/strip-ansi (nth lines 3)) "◆ "))
       (is (= {0 [0 3] 1 [3 5]} spans))))
 
   (testing "with current-text appended as streaming (+ blank); streaming has no span entry"
     (let [{:keys [lines spans]} (view/rebuild-chat-lines [{:type :user :text "hi"}] "typing..." 80)]
       (is (= 5 (count lines)))
       (is (= "" (last lines)))
-      (is (clojure.string/starts-with? (nth lines 3) "◆ "))
+      (is (str/starts-with? (theme/strip-ansi (nth lines 3)) "◆ "))
       (is (= {0 [0 3]} spans))))
 
   (testing "empty current-text not appended"
     (let [{:keys [lines]} (view/rebuild-chat-lines [{:type :user :text "hi"}] "" 80)]
-      (is (= 3 (count lines))))))
+      (is (= 3 (count lines)))))
+
+  (testing "consecutive collapsed tool calls stack without blank lines; text after them is spaced"
+    (let [{:keys [lines spans]} (view/rebuild-chat-lines
+                                  [{:type :tool-call :id "a" :state :called :summary "one"}
+                                   {:type :tool-call :id "b" :state :called :summary "two"}
+                                   {:type :assistant-text :text "done"}]
+                                  "" 80)]
+      (is (= ["✓ one" "✓ two" "" "◆ done" ""] (mapv theme/strip-ansi lines)))
+      (is (= {0 [0 1] 1 [1 3] 2 [3 5]} spans))))
+
+  (testing "an expanded block keeps its blank line"
+    (let [{:keys [lines]} (view/rebuild-chat-lines
+                            [{:type :thinking :id "r" :status :thought :text "hmm" :expanded? true}
+                             {:type :tool-call :id "b" :state :called :summary "two"}]
+                            "" 80)]
+      (is (= "" (nth lines 2))))))
+
+(deftest rebuild-lines-deferred-test
+  (let [state {:items [{:type :assistant-text :text "hi"}] :current-text "" :width 40 :chat-lines []}]
+    (testing "while deferred, rebuild-lines only flags the batch"
+      (let [pending (volatile! false)
+            s       (binding [view/*rebuild-deferred* pending] (view/rebuild-lines state))]
+        (is (true? @pending))
+        (is (= [] (:chat-lines s)))))
+    (testing "otherwise it rebuilds"
+      (is (= ["◆ hi" ""] (mapv theme/strip-ansi (:chat-lines (view/rebuild-lines state))))))))
 
 (deftest pad-to-height-test
   (testing "shorter than height — pads at top with empty strings"
@@ -119,18 +186,22 @@
         (is (clojure.string/includes? bar "SAFE"))
         (is (not (clojure.string/includes? bar "tok")))))
 
-    (testing "with usage — shows tokens and cost"
+    (testing "with usage — shows friendly tokens over the context limit, and cost"
       (let [bar (render-status-bar
-                  (assoc base :usage {:sessionTokens 1234 :sessionCost "$0.002"}))]
-        (is (clojure.string/includes? bar "1234tok"))
+                  (assoc base :usage {:sessionTokens 1234 :sessionCost "0.002"
+                                      :limit {:context 200000 :output 4096}}))]
+        (is (clojure.string/includes? bar "1.2K/200K"))
         (is (clojure.string/includes? bar "$0.002"))))
 
-    (testing "with context limit — shows ctx percentage"
+    (testing "context percentage comes from the server's breakdown, not session tokens"
       (let [bar (render-status-bar
-                  (assoc base :usage {:sessionTokens 500
-                                      :sessionCost   "$0.001"
-                                      :limit         {:context 1000 :output 4096}}))]
-        (is (clojure.string/includes? bar "50%"))))
+                  (assoc base :usage {:sessionTokens 5000
+                                      :limit         {:context 1000 :output 4096}
+                                      :contextBreakdown {:usedTokens 500 :contextLimit 1000
+                                                         :categories [{:name "Conversation" :tokens 500
+                                                                       :color "#98c379"}]}}))]
+        (is (clojure.string/includes? bar "50%"))
+        (is (not (clojure.string/includes? bar "500%")))))
 
     (testing "selected-model overrides :model field"
       (let [bar (render-status-bar
@@ -169,7 +240,7 @@
       (let [bar (render-status-bar (assoc base :chat-title "My Project Chat"))]
         (is (clojure.string/includes? bar "My Project Chat"))))
 
-    (testing "long title truncated to 24 chars with ellipsis"
+    (testing "long title truncated with an ellipsis"
       (let [bar (render-status-bar (assoc base :chat-title "A very long chat title that exceeds limits"))]
         (is (clojure.string/includes? bar "…"))
         (is (not (clojure.string/includes? bar "A very long chat title that exceeds")))))
@@ -200,7 +271,7 @@
              :input   (ti/text-input)
              :picker  {:kind    :command
                        :query   "m"
-                       :list    (charm.components.list/item-list
+                       :list    (cl/item-list
                                   ["/model  —  Open model picker"] :height 8)}}
           rendered (view/view s)]
       (is (clojure.string/includes? rendered "Select command")))))
@@ -273,6 +344,26 @@
         (is (clojure.string/includes? txt "browser"))))))
 
 
+(deftest login-secret-masked-test
+  (let [state {:mode :login :width 80 :height 12 :chat-lines [] :scroll-offset 0 :items []
+               :opts {:workspace "/tmp"} :init-tasks {} :mcps {} :trust false
+               :input (ti/set-value (ti/text-input) "sk-123")
+               :login {:provider "openai"
+                       :action {:action "input"
+                                :fields [{:key "api-key" :label "API Key" :type "secret"}]}
+                       :field-idx 0}}
+        out   (theme/strip-ansi (view/view state))]
+    (is (str/includes? out "API Key"))
+    (is (str/includes? out "••••••"))
+    (is (not (str/includes? out "sk-123")) "an API key is never echoed"))
+  (testing "plain text fields stay visible"
+    (let [state {:mode :login :width 80 :height 12 :chat-lines [] :scroll-offset 0 :items []
+                 :opts {:workspace "/tmp"} :init-tasks {} :mcps {} :trust false
+                 :input (ti/set-value (ti/text-input) "me@x.y")
+                 :login {:provider "p" :field-idx 0
+                         :action {:action "input" :fields [{:key "user" :label "User" :type "text"}]}}}]
+      (is (str/includes? (theme/strip-ansi (view/view state)) "me@x.y")))))
+
 (deftest render-approval-test
   (testing "approval renders the full tool-call block with a diff, then the y/n/Y prompt"
     (let [edit  {:path "/tmp/foo.clj" :diff "@@ -1,2 +1,2 @@\n-old\n+new\n ctx"
@@ -281,13 +372,13 @@
                  :pending-approval {:tool-call-id "t1"}
                  :tool-calls {"t1" {:id "t1" :name "edit_file" :summary "foo.clj"
                                     :state :run :edit edit}}}
-          out   (view/render-approval state)]
+          out   (theme/strip-ansi (view/render-approval state))]
       (is (string? out))
       (is (clojure.string/includes? out "edit_file"))
       (is (clojure.string/includes? out "@@"))      ; diff present
       (is (clojure.string/includes? out "old"))
       (is (clojure.string/includes? out "new"))
-      (is (clojure.string/includes? out "[y] approve"))
+      (is (clojure.string/includes? out "[y] approve  [Y] always  [n] reject"))
       ;; prompt sits on its own line, below the diff
       (is (< (.indexOf out "@@") (.indexOf out "[y] approve")))))
 
@@ -296,6 +387,6 @@
                  :pending-approval {:tool-call-id "t2"}
                  :tool-calls {"t2" {:id "t2" :name "shell" :summary "ls"
                                     :state :run :args-text "{\"cmd\":\"ls\"}"}}}
-          out   (view/render-approval state)]
+          out   (theme/strip-ansi (view/render-approval state))]
       (is (clojure.string/includes? out "shell"))
       (is (clojure.string/includes? out "[y] approve")))))

@@ -33,12 +33,13 @@ eca-cli
 
 ## Features
 
-- Chat with any model and agent configured in ECA, with streaming responses
+- Chat with any model and agent configured in ECA, with streaming responses rendered as markdown: syntax-highlighted code, tables, lists and links
 - Approve tool calls inline, with coloured diffs for file edits
+- A status line showing agent, model, context window use, cost and MCP health at a glance
 - Add files as context with `@`
 - Resume previous chats
-- MCP servers and background jobs at a glance
 - Collapsible tool calls, thinking and sub-agent blocks
+- Takes on your terminal's colour theme, dark or light (`NO_COLOR` turns colours off)
 
 ## Usage
 

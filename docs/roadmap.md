@@ -18,7 +18,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [5](#phase-5-rich-display) | Rich Display | Expandable tool blocks, thinking, sub-agent nesting | ✅ Complete | [detail](roadmap/phase-5-rich-display.md) |
 | [6](#phase-6-tool-call-diff-display) | Tool-Call Diff Display | Render file-edit tool calls as unified diffs | ✅ Complete | [#25](https://github.com/editor-code-assistant/eca-cli/issues/25) |
 | [7](#phase-7-mcp-integration) | MCP Integration | Status indicator, details panel, server update notifications | ✅ Complete | — |
-| [8](#phase-8-markdown-rendering) | Markdown Rendering | md→ANSI; `url`/OSC-8; wide-table horizontal-scroll | ⬜ Unbuilt | — |
+| [8](#phase-8-markdown-rendering) | Markdown Rendering | md→ANSI (bb's nextjournal.markdown), code highlighting, tables, `url` items | ✅ Complete | — |
 | [9](#phase-9-message-steering) | Message Steering | Influence a running prompt | ⬜ Unbuilt | — |
 | [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion`, `chat/queryCommands` autocomplete, log viewer | ⬜ Unbuilt | — |
 | [11](#phase-11-power-features) | Power Features | `@`-refs ✅ · jobs ✅ · rollback + fork remain | 🟡 Partial | — |
@@ -30,7 +30,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [17](#phase-17-mcp-write-management) | MCP Write Management | MCP CRUD + start/stop/enable/disable/logout, OAuth (L) | 🆕 Planned | — |
 | [18](#phase-18-providers--config) | Providers & Config | Providers panel (auth, logout, cost badges); in-app global-config editor | 🆕 Planned | — |
 | [19](#phase-19-variant-picker) | Variant Picker | Interactive model/agent variant selector | 🆕 Planned | — |
-| [20](#phase-20-context-breakdown) | Context Breakdown | `usage.contextBreakdown` segmented bar + `autoCompactPercentage` threshold | 🆕 Planned | — |
+| [20](#phase-20-context-breakdown) | Context Breakdown | segmented bar + `autoCompactPercentage` marker ✅ · legend remains | 🟡 Partial | — |
 | [21](#phase-21-multi-session--remote) | Multi-Session & Remote | Multi-workspace/concurrent servers; remote ECA host connect (L) | 🆕 Planned | — |
 
 **Status legend:** ✅ Complete · 🟡 Partial · 📋 Spec'd (issue open) · ⬜ Unbuilt · 🆕 Planned (numbered, not yet detailed).
@@ -41,7 +41,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 
 Separate axis from the frozen numbering above. Principle: **ECA-checklist-required first** → **broad-value** → **L-sized speculative phases to the tail**, with one named value-exception. Re-weigh here (low churn) as priorities shift — do not touch #24.
 
-- **Next:** `6 Diff` → `8 Markdown` *(value-exception — highest daily-visibility wart, promoted above required items)* → `12 Context Expansion`
+- **Next:** `12 Context Expansion` *(`6 Diff` and `8 Markdown` shipped)*
 - **Near:** `9 Steering` → `10 Server-Driven` → `11 Rollback/Fork`
 - **Later:** `15 Task Panel` · `16 Granular Approval` · `20 Context Breakdown` · `19 Variant` · `13 Chat Mgmt` · `14 Chat Nav` · `18 Providers & Config`
 - **Deferred (L):** `17 MCP Write Management` · `21 Multi-Session & Remote`
@@ -288,6 +288,14 @@ New ns for MCP state, notification handler, and `/mcp` command handler. Pattern 
 
 **Goal:** Render assistant and user text through a markdown→ANSI converter so that bold, italic, code spans, fenced code blocks, headers, lists, and tables display as formatted output rather than raw syntax.
 
+**Status: ✅ Complete** (`markdown.clj`, `markdown/highlight.clj`). Deviations from the plan below:
+
+- Library: babashka can't load Java libraries such as commonmark-java or flexmark from Maven, but it bundles [nextjournal.markdown](https://github.com/nextjournal/markdown) (since 1.12.201), a GFM parser returning a Clojure AST. eca-cli lays that AST out itself.
+- Fenced code keeps its (dim) fences and gets a light per-language highlighter instead of a border, so a copied block is still valid markdown.
+- Wide tables wrap their cells to fit, and fall back to `header: value` records when too narrow, instead of scrolling horizontally.
+- `url` items render as `↗ title` plus the URL. OSC 8 hyperlinks are left out: JLine re-encodes every line and would drop them.
+- On any renderer failure the raw text is shown plainly wrapped.
+
 ### What to build
 
 **Markdown→ANSI converter.**
@@ -438,7 +446,9 @@ Numbered identities frozen in [#24](https://github.com/editor-code-assistant/eca
 
 ## Phase 20: Context Breakdown
 
-**Goal:** `usage.contextBreakdown` segmented bar + `autoCompactPercentage` threshold + legend (baseline today: bare context-%).
+**Goal:** `usage.contextBreakdown` segmented bar + `autoCompactPercentage` threshold + legend.
+
+**Status: 🟡 Partial.** The status line draws the bar from the breakdown (server colours, sub-cell edge, `│` at the auto-compact threshold) with the occupancy %, as eca-emacs does (`view/status.clj`). Remaining: a per-category legend (eca-emacs shows it as a tooltip; here likely a `/context` panel).
 
 ## Phase 21: Multi-Session & Remote
 

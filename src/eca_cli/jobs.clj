@@ -9,17 +9,18 @@
             [charm.program :as program]
             [clojure.string :as str]
             [eca-cli.protocol :as protocol]
+            [eca-cli.theme :as theme]
             [eca-cli.view :as view]))
 
 ;; --- Status helpers ---
 
-(defn- status-emoji [status]
-  (case status
-    "running"   "🟡"
-    "completed" "✅"
-    "failed"    "🔴"
-    "killed"    "⚫"
-    "⚫"))
+(defn- status-dot [status]
+  (theme/paint (case status
+                 "running"   :warning
+                 "completed" :success
+                 "failed"    :error
+                 :subtle)
+               "●"))
 
 (defn- truncate-label [s n]
   (let [s (or s "")]
@@ -47,13 +48,12 @@
 ;; --- Status-bar fragment ---
 
 (defn status-bar-fragment
-  "Compact `[N jobs]` (>=120 cols) or `[Nj]` (<120). Returns nil when no jobs."
-  [state width]
-  (let [n (count (:jobs state))]
+  "Status-line slot for background jobs still running (`1 job`, `3 jobs`), nil
+  when none are. Finished ones stay listed in /jobs."
+  [state]
+  (let [n (count (filter #(= "running" (:status %)) (vals (:jobs state))))]
     (when (pos? n)
-      (if (>= width 120)
-        (str "[" n " jobs]")
-        (str "[" n "j]")))))
+      (theme/paint :muted (str n (if (= 1 n) " job" " jobs"))))))
 
 ;; --- ECA notification handler ---
 
@@ -94,12 +94,10 @@
 ;; --- /jobs command — opens panel via shared :picker ---
 
 (defn- panel-row-label
-  "Compact one-line label used as the picker row text and for confirm modal."
+  "Plain one-line label for the panel's picker list (the panel renders its own
+  styled rows)."
   [job]
-  (let [emoji   (status-emoji (:status job))
-        summary (job-summary job (:id job))
-        elapsed (or (:elapsed job) "")]
-    (str emoji " " summary "  ·  " elapsed)))
+  (str (job-summary job (:id job)) "  ·  " (or (:elapsed job) "")))
 
 (defn cmd-open-jobs-panel
   "Open the jobs panel as a :picker with :kind :jobs. Empty :jobs surfaces a
@@ -135,23 +133,28 @@
         groups       (->> filtered
                           (group-by #(or (:chatLabel %) "Unknown Chat"))
                           (sort-by key))
-        header       "Background Jobs  (Enter: output  ·  d: kill  ·  Esc: close)"
+        header       (str (theme/paint :accent-bold "Background jobs")
+                          (theme/paint :muted "  Enter: output  ·  d: kill  ·  Esc: close"))
         sep          (view/divider width)
         flat-idx     (atom -1)
         render-row   (fn [job]
                        (swap! flat-idx inc)
-                       (let [marker  (if (= @flat-idx sel-idx) "▸ " "  ")
-                             emoji   (status-emoji (:status job))
-                             summary (job-summary job (:id job))
-                             elapsed (or (:elapsed job) "")
-                             exit    (when (and (= "failed" (:status job)) (:exitCode job))
-                                       (str "  exit:" (:exitCode job)))]
-                         (str marker emoji " " summary "  " elapsed (or exit ""))))
+                       (let [selected? (= @flat-idx sel-idx)
+                             summary   (job-summary job (:id job))
+                             exit      (when (and (= "failed" (:status job)) (:exitCode job))
+                                         (str "  exit:" (:exitCode job)))]
+                         (str (if selected? (theme/paint :accent-bold "❯ ") "  ")
+                              (status-dot (:status job)) " "
+                              (theme/paint (when selected? :accent-bold) summary)
+                              (theme/paint :muted (str "  " (or (:elapsed job) "")))
+                              (some->> exit (theme/paint :error)))))
         max-hdr-w    60
         hdr-chrome   4 ;; "── " prefix + trailing space before fill
         render-group (fn [[chat-label jobs]]
                        (let [fill (max 0 (- (min max-hdr-w width) (count chat-label) hdr-chrome))
-                             hdr  (str "── " chat-label " " (apply str (repeat fill "─")))
+                             hdr  (str (theme/paint :border "── ")
+                                       (theme/paint :muted chat-label)
+                                       (theme/paint :border (str " " (apply str (repeat fill "─")))))
                              rows (mapv render-row jobs)]
                          (str/join "\n" (into [hdr] rows))))]
     (str/join "\n"
@@ -168,17 +171,18 @@
         status  (or (:status data) (:status job) "unknown")
         exit    (:exitCode data)
         label   (job-summary job job-id)
-        header  (str label "  ·  status=" status
-                     (when (some? exit) (str "  ·  exit=" exit)))
+        header  (str (status-dot status) " " (theme/paint :bold label)
+                     (theme/paint :muted (str "  ·  status=" status
+                                              (when (some? exit) (str "  ·  exit=" exit)))))
         lines   (:lines data)
         body    (if (seq lines)
                   (mapv (fn [{:keys [stream text]}]
                           (if (= "stderr" stream)
-                            (str "[stderr] " text)
+                            (str (theme/paint :error "[stderr] ") text)
                             text))
                         lines)
-                  ["(no output)"])
-        footer  "Esc: back to panel"]
+                  [(theme/paint :muted "(no output)")])
+        footer  (theme/paint :muted "Esc: back to panel")]
     (str/join "\n"
               (into [header (view/divider (:width state))]
                     (conj body (view/divider (:width state)) footer)))))
@@ -191,7 +195,9 @@
   (let [{:keys [job-id]} (:jobs-view state)
         job     (get-in state [:jobs job-id])
         summary (job-summary job job-id)]
-    (str "Kill " summary "? [y/n]")))
+    (str (theme/paint (theme/merge-styles :warning :bold) "Kill ") summary "? "
+         (theme/paint :muted "[") (theme/paint (theme/merge-styles :error :bold) "y")
+         (theme/paint :muted "/") (theme/paint :bold "n") (theme/paint :muted "]"))))
 
 ;; --- Key dispatch ---
 

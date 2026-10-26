@@ -6,8 +6,15 @@ All notable changes to eca-cli. Format inspired by [Keep a Changelog](https://ke
 
 Plug-and-play pass: eca-cli ships as a single binary, installs and updates its own ECA server, and works on NixOS and inside tmux.
 
+UX pass: chats render as markdown, the status line becomes a colourful modeline in the spirit of eca-emacs, and the whole UI takes on the terminal's colour theme.
+
 ### Added
 
+- Markdown rendering (Phase 8) for replies, prompts and the welcome text: headings, emphasis, inline code, links, nested and task lists, quotes, GFM tables (cells wrap to fit), and fenced code with syntax highlighting. Built on babashka's bundled nextjournal.markdown; falls back to plain text if rendering fails.
+- `theme.clj`: colour roles on the terminal's ANSI palette, so eca-cli follows dark and light themes alike. `NO_COLOR` is honoured.
+- Redesigned status line: agent badge, model and variant, workspace and chat title, MCP health dot, running jobs, last turn time and tok/s, a context-window bar drawn from the server's `contextBreakdown` with its auto-compact marker (Phase 20, partial), context %, tokens, cost or subscription quota, and SAFE / ● TRUST. On narrow terminals the least important segments go first.
+- While a prompt runs, a gutter line says what the agent is doing (thinking, writing, running tools), for how long, and that Esc interrupts; a pending approval is flagged above the prompt and the divider turns yellow.
+- `url` chat content renders as links; tool calls and thoughts show how long they took.
 - Self-contained `eca-cli` binaries for Linux and macOS (x86_64 and arm64), so no Babashka, JVM or clone is needed: every push to `main` is tested, built, smoke-tested on each platform and published as a GitHub release, along with `eca-cli.jar` for any platform with Babashka.
 - `install` script: `bash <(curl -fsSL https://raw.githubusercontent.com/editor-code-assistant/eca-cli/main/install)` installs or updates the binary (in `~/.local/bin` by default), verifying its checksum and that it runs before replacing the old one.
 - `--version` and `--help`. Unknown options and stray arguments are reported instead of being silently ignored.
@@ -18,6 +25,12 @@ Plug-and-play pass: eca-cli ships as a single binary, installs and updates its o
 - Dividers and boxes rendered as `qqqq…` / `xxxx` inside tmux/screen: JLine draws box glyphs through the terminal's alternate charset, which with `screen-256color`/`tmux-256color` terminfo (SO/SI) requires `enacs` first. eca-cli now sends the terminal's `enacs` on startup (`terminal.clj`).
 - "Error: Stream closed" on NixOS/musl: `bb upgrade-eca` installed the glibc-linked build, which can't run there. Linux x86_64 now uses the static build, like the editor plugins.
 - `bb` printed a warning about the `run` task overriding a built-in on every invocation.
+- Leading indentation was stripped from every chat line: nested lists, code and diff context lines lost their indent.
+- Expanded tool calls never showed their output: the server sends `outputs`, eca-cli read `output`.
+- Sub-agent blocks got a row per streamed text chunk and per tool-call event; text now accumulates and each tool call is one row.
+- The context % divided cumulative session tokens by the context window, passing 100% in long chats; it now comes from the server's context breakdown.
+- API keys typed at a login prompt were echoed; secret fields are masked.
+- The failed-MCP hint pointed at the old log location; `⚠` was doubled on some notices; the focused-block highlight was unreadable on light themes.
 
 ### Changed
 
@@ -29,6 +42,9 @@ Plug-and-play pass: eca-cli ships as a single binary, installs and updates its o
 - `--workspace` is canonicalized (relative paths no longer produce `file://.` URIs).
 - `initialize` reports eca-cli's real version (`dev` when run from source) instead of a hardcoded `0.1.0`.
 - Tests are no longer on the main classpath (`bb.edn` `:paths ["src"]`); the `test` task adds them. charm.clj's JVM-only dependencies are excluded, since Babashka embeds JLine and core.async.
+- User messages sit behind a coloured bar instead of reverse video; consecutive tool calls and thoughts stack without blank lines.
+- Pickers mark the selection in the accent colour, align descriptions in a muted column and show the match count; the MCP and jobs panels use coloured status dots instead of emoji; `/help` lists commands in an aligned column.
+- Chat rendering is cached per item and rebuilt once per batch of server messages, so long chats stay smooth while a reply streams.
 
 ## Phase 11 — Power Features *(partial)*
 

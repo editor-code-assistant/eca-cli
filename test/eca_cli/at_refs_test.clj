@@ -11,6 +11,7 @@
             [eca-cli.login :as login]
             [eca-cli.protocol :as protocol]
             [eca-cli.state :as state]
+            [eca-cli.theme :as theme]
             [eca-cli.view.blocks :as blocks]))
 
 (defn- base-state []
@@ -133,26 +134,23 @@
       (is (= :at-file (get-in s [:picker :kind])))
       (is (= "/" (get-in s [:picker :query]))))))
 
-(deftest user-message-render-ansi-bold-test
-  (testing "user message render wraps @tokens in ANSI bold (1m / 22m)"
-    (let [lines (blocks/render-item-lines
-                  {:type :user :text "see @src/foo.clj and @docs/x.md please"}
-                  80)
-          joined (str/join "\n" lines)]
-      (is (re-find #"\x1b\[1m@src/foo\.clj\x1b\[22m" joined))
-      (is (re-find #"\x1b\[1m@docs/x\.md\x1b\[22m" joined))))
+(deftest user-message-render-at-ref-style-test
+  (let [at-ref (theme/sgr :at-ref)]
+    (testing "user message render styles @tokens with the :at-ref role"
+      (let [lines  (blocks/render-item-lines
+                     {:type :user :text "see @src/foo.clj and @docs/x.md please"}
+                     80)
+            joined (str/join "\n" lines)]
+        (is (str/includes? joined (str at-ref "@src/foo.clj" theme/reset)))
+        (is (str/includes? joined (str at-ref "@docs/x.md" theme/reset)))))
 
-  (testing "no @-tokens: no bold escapes injected"
-    (let [lines (blocks/render-item-lines
-                  {:type :user :text "plain message"} 80)
-          joined (str/join "\n" lines)]
-      (is (not (re-find #"\x1b\[1m" joined)))))
+    (testing "no @-tokens: no reference styling injected"
+      (let [joined (str/join "\n" (blocks/render-item-lines {:type :user :text "plain message"} 80))]
+        (is (not (str/includes? joined at-ref)))))
 
-  (testing "mid-word @ is not styled (user@host)"
-    (let [lines (blocks/render-item-lines
-                  {:type :user :text "ping user@host now"} 80)
-          joined (str/join "\n" lines)]
-      (is (not (re-find #"\x1b\[1m" joined))))))
+    (testing "mid-word @ is not styled (user@host)"
+      (let [joined (str/join "\n" (blocks/render-item-lines {:type :user :text "ping user@host now"} 80))]
+        (is (not (str/includes? joined at-ref)))))))
 
 (deftest at-files-loaded-populates-picker-test
   (testing ":at-files-loaded splices paths into the open picker"
