@@ -11,8 +11,12 @@ bb run --eca /path/to/eca     # specify ECA binary explicitly
 bb run --workspace /path      # set workspace root (default: cwd)
 bb run --model <model>        # specify model
 bb run --agent <agent>        # specify agent
+bb run --version / --help     # what the release binary answers as `eca-cli --version` / `--help`
 bb nrepl                      # start nREPL for development
 bb upgrade-eca [--force]      # check for / install the latest ECA server now (automatic on `bb run`)
+bb test                       # unit tests
+bb dist [--platforms linux-amd64,macos-aarch64]  # release artifacts into dist/, exactly like CI
+bb release-version            # the version a release of HEAD gets: 0.1.<commit count>
 ```
 
 In-app commands (type in input, press Enter):
@@ -24,7 +28,7 @@ In-app commands (type in input, press Enter):
 /chats      browse and resume previous chats
 ```
 
-Requires Babashka 1.12.215+. No separate build step — `bb run` compiles and runs directly.
+Requires Babashka 1.12.215+. No separate build step — `bb run` compiles and runs directly. `bb.edn` `:paths` is only `src` (what ships); tasks add `test/` and `build/` through `:extra-paths` as needed.
 
 ECA server logs go to `~/.local/state/eca/eca-cli.log` (`$XDG_STATE_HOME`). Tail this when debugging.
 
@@ -49,7 +53,7 @@ Responses to requests (e.g. `chat/prompt` → `{chatId, model}`) are routed thro
 
 ### Startup
 
-`core/-main` resolves the ECA binary *before* the TUI takes over the terminal (`upgrade/resolve-binary!`, which may download/update the managed binary with progress on stderr; fatal errors print and exit 1), sends the terminal's `enacs` sequence (`terminal/enable-alt-charset!`, see below), then starts charm.clj.
+`core/parse-args` handles `--help`, `--version` and invalid options (unknown flags and stray arguments exit 1 with a hint) without touching the workspace or the server. Otherwise `core/-main` resolves the ECA binary *before* the TUI takes over the terminal (`upgrade/resolve-binary!`, which may download/update the managed binary with progress on stderr; fatal errors print and exit 1), sends the terminal's `enacs` sequence (`terminal/enable-alt-charset!`, see below), then starts charm.clj.
 
 ### charm.clj Elm loop
 
@@ -91,6 +95,20 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 - `src/eca_cli/chats.clj` — EDN persistence of workspace → chat-id map
 - `src/eca_cli/upgrade.clj` — ECA binary resolution and the managed install: latest GitHub release (1h check cache), sha256-verified download, staged + atomic install, `eca-version` marker, offline fallback
 - `src/eca_cli/terminal.clj` — sends terminfo `enacs`: JLine draws `─│┌…` via the alternate charset, which under screen/tmux terminfo (SO/SI) shows as `qqqq`/`xxxx` unless G1 was designated as DEC graphics first
+- `src/eca_cli/version.clj` — eca-cli's version from the `ECA_CLI_VERSION` jar resource (`dev` in a checkout); sent as `clientInfo.version`
+- `build/eca_cli/dist.clj` — `bb dist` / `bb release-version` (not shipped)
+- `install` — the curl-able install/update script
+- `.github/workflows/ci.yml` — tests, build, per-OS smoke tests, release
+
+### Distribution and releases
+
+Every push to `main` is a release, no tag needed (`.github/workflows/ci.yml`): unit tests + lint, `bb dist`, a smoke test of each binary on its own OS (Linux x86_64/arm64, macOS Intel/Apple silicon), a GitHub release tagged `0.1.<commit count>` with notes listing the commits since the previous release, then the `install` script run against it on Linux and macOS. PRs run everything but the release; docs-only pushes don't trigger it.
+
+- Binaries are self-contained: a babashka binary with the uberjar appended — bb runs the `-main` of a jar glued to itself, so users need neither bb nor a JVM. No GraalVM: one Linux job builds every platform by concatenation. Linux x86_64 embeds bb's fully static (musl) build, so it runs on NixOS/Alpine; bb's arm64 Linux build still needs glibc.
+- The embedded bb is the release CI tests with (`BB_VERSION` in the workflow); `bb dist` embeds the version of the bb running it unless `--bb-version` says otherwise.
+- Version: `eca-cli.dist/version-line` (`0.1`, bump by hand for milestones) + `git rev-list --count HEAD`, so a commit always gets the same version (needs full history: `fetch-depth: 0`). `bb dist` stamps it into the jar as the `ECA_CLI_VERSION` resource.
+- charm.clj's JVM-only deps (JLine, core.async) are excluded in `bb.edn`: bb embeds its own, and they'd bloat the jar ~10x.
+- Assets: `eca-cli-<linux|macos>-<amd64|aarch64>.tar.gz` (holding `eca-cli`, owned by root:root), `eca-cli.jar` (`bb eca-cli.jar` anywhere), each with a `sha256sum -c` compatible `.sha256`. The `install` script relies on these names: it downloads the platform tarball from the latest (or `--version`) release, checks its sha256, runs `--version` on it next to the destination, then renames it over the old binary.
 
 ### ECA binary discovery order
 

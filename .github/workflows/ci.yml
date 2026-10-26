@@ -1,0 +1,235 @@
+name: CI
+
+# Every push to main is a release: tests, self-contained eca-cli binaries for
+# each platform (smoke-tested on their own OS), then a GitHub release tagged
+# 0.1.<commit count>. Pull requests run everything except the release.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'design/**'
+      - 'design.pen'
+      - 'LICENSE'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # PRs cancel superseded runs. On main a running release is never cancelled:
+  # newer pushes wait, and only the newest waiting one runs.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Babashka to test with and to embed in the binaries: `bb dist` embeds the
+  # same release as the bb running it.
+  BB_VERSION: '1.13.228'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # bb resolves the bb.edn :deps with the Clojure CLI, which needs a JVM.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          bb: ${{ env.BB_VERSION }}
+          clj-kondo: '2026.08.04'
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.deps.clj
+          key: deps-${{ runner.os }}-${{ hashFiles('bb.edn') }}
+
+      - name: Unit tests
+        run: bb test
+
+      - name: Lint
+        run: clj-kondo --lint src test build --fail-level error
+
+      - name: Check the install script
+        run: shellcheck install
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the release version counts commits
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          bb: ${{ env.BB_VERSION }}
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.deps.clj
+          key: deps-${{ runner.os }}-${{ hashFiles('bb.edn') }}
+
+      - name: Resolve dependencies
+        run: bb prepare
+
+      - name: Version
+        id: version
+        run: |
+          version="$(bb release-version)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::unexpected release version: $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: bb dist --version "${{ steps.version.outputs.version }}"
+
+      - name: Smoke test the jar
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: test "$(bb dist/eca-cli.jar --version)" = "eca-cli $VERSION"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            os: ubuntu-latest
+          - platform: linux-aarch64
+            os: ubuntu-24.04-arm
+          - platform: macos-amd64
+            os: macos-15-intel
+          - platform: macos-aarch64
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+
+      - name: Run eca-cli
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          (cd dist && shasum -a 256 -c "eca-cli-$PLATFORM.tar.gz.sha256")
+          tar -xzf "dist/eca-cli-$PLATFORM.tar.gz"
+          ./eca-cli --help
+          test "$(./eca-cli --version)" = "eca-cli $VERSION"
+          # Startup up to the ECA server lookup, which fails before the TUI starts.
+          if ./eca-cli --eca /nonexistent/eca 2> err.txt; then
+            echo "::error::expected a missing --eca binary to fail"
+            exit 1
+          fi
+          grep "is not an executable file" err.txt
+
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [test, build, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write     # create the tag and the release
+      id-token: write     # sign the build provenance
+      attestations: write # store it
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # release notes list the commits since the previous release
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+
+      - name: Check for an existing release
+        id: existing
+        run: |
+          if gh release view "$VERSION" > /dev/null 2>&1; then
+            echo "Release $VERSION already exists, nothing to publish."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/attest-build-provenance@v4
+        if: steps.existing.outputs.found != 'true'
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.jar
+
+      - name: Publish
+        if: steps.existing.outputs.found != 'true'
+        run: |
+          previous="$(gh release view --json tagName --jq .tagName 2> /dev/null || true)"
+          {
+            if [[ -n "$previous" ]]; then
+              echo "## Changes since $previous"
+              echo
+              git log --no-merges --format='- %s (%h)' "$previous..$GITHUB_SHA"
+            else
+              echo "First binary release of eca-cli."
+            fi
+            echo
+            echo "## Install or update"
+            echo
+            echo '```bash'
+            echo "bash <(curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install)"
+            echo '```'
+          } > notes.md
+          cat notes.md
+          gh release create "$VERSION" dist/* --target "$GITHUB_SHA" --title "$VERSION" --notes-file notes.md
+
+  verify-install:
+    needs: [build, release]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the release like a user would
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          bash install --dir "$RUNNER_TEMP/pinned" --version "$VERSION"
+          test "$("$RUNNER_TEMP/pinned/eca-cli" --version)" = "eca-cli $VERSION"
+          bash install --dir "$RUNNER_TEMP/latest"
+          "$RUNNER_TEMP/latest/eca-cli" --version

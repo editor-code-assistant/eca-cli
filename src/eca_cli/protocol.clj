@@ -1,5 +1,6 @@
 (ns eca-cli.protocol
-  (:require [eca-cli.server :as server]))
+  (:require [eca-cli.server :as server]
+            [eca-cli.version :as version]))
 
 (def ^:private request-id (atom 0))
 (def pending-requests (atom {}))
@@ -36,7 +37,7 @@
   [workspace-path]
   (let [name (.getName (java.io.File. workspace-path))]
     {:processId (.pid (java.lang.ProcessHandle/current))
-     :clientInfo {:name "eca-cli" :version "0.1.0"}
+     :clientInfo {:name "eca-cli" :version version/version}
      :capabilities {:codeAssistant {:chat true}}
      :workspaceFolders [{:uri (str "file://" workspace-path)
                          :name name}]}))

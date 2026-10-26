@@ -217,7 +217,7 @@
                   (recur (+ n r)))))))
       (hex (.digest md)))))
 
-(defn- fetch-published-sha256
+(defn fetch-published-sha256
   "Fallback for releases whose API payload lacks a digest: the `<asset>.sha256`
   file published next to every ECA artifact. nil when unavailable."
   [asset-url]

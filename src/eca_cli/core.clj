@@ -8,15 +8,53 @@
             [eca-cli.state :as state]
             [eca-cli.terminal :as terminal]
             [eca-cli.upgrade :as upgrade]
+            [eca-cli.version :as version]
             [eca-cli.view :as view]))
 
 (def ^:private cli-spec
-  {:trust     {:desc "Auto-approve all tool calls" :coerce :boolean}
-   :workspace {:desc "Workspace path" :default (System/getProperty "user.dir")}
-   :model     {:desc "Model to use"}
-   :agent     {:desc "Agent to use"}
-   :eca       {:desc "Path to ECA binary (default: `eca` on PATH, else auto-installed)"}
-   :nrepl     {:desc "Start nREPL server on given port" :coerce :int}})
+  {:workspace {:desc         "Project directory"
+               :ref          "<path>"
+               :default      (System/getProperty "user.dir")
+               :default-desc "current directory"}
+   :model     {:desc "Model to use" :ref "<model>"}
+   :agent     {:desc "Agent to use" :ref "<agent>"}
+   :trust     {:desc "Auto-approve all tool calls" :coerce :boolean}
+   :eca       {:desc "ECA server binary, a path or a command (default: `eca` on PATH, else auto-installed)"
+               :ref  "<path>"}
+   :nrepl     {:desc "Start an nREPL server on this port (development)" :ref "<port>" :coerce :int}
+   :version   {:desc "Print the version and exit" :coerce :boolean}
+   :help      {:desc "Show this help and exit" :alias :h :coerce :boolean}})
+
+(def ^:private cli-order [:workspace :model :agent :trust :eca :nrepl :version :help])
+
+(defn usage []
+  (str "eca-cli " version/version " - ECA (Editor Code Assistant) in your terminal\n"
+       "\n"
+       "Usage: eca-cli [options]\n"
+       "\n"
+       "Run it from your project directory, or point it at one with --workspace.\n"
+       "\n"
+       "Options:\n"
+       (cli/format-opts {:spec cli-spec :order cli-order})))
+
+(defn- usage-error [msg]
+  {:exit 1 :message (str "eca-cli: " msg "\nRun `eca-cli --help` for usage.")})
+
+(defn parse-args
+  "Pure: command-line args -> {:opts opts} to start the TUI, or
+  {:exit code :message text} for --help, --version and invalid input."
+  [args]
+  (try
+    (let [{:keys [opts] positional :args} (cli/parse-args args {:spec cli-spec :restrict true})]
+      (cond
+        (:help opts)     {:exit 0 :message (usage)}
+        (:version opts)  {:exit 0 :message (str "eca-cli " version/version)}
+        (seq positional) (usage-error (str "unexpected argument: " (first positional)))
+        :else            {:opts opts}))
+    (catch clojure.lang.ExceptionInfo e
+      (if (= :org.babashka/cli (:type (ex-data e)))
+        (usage-error (ex-message e))
+        (throw e)))))
 
 (defn- exit-with-error! [msg]
   (binding [*out* *err*]
@@ -48,9 +86,11 @@
     (alter-var-root #'*out* (constantly pw))
     (alter-var-root #'*err* (constantly pw))))
 
-(defn -main [& args]
-  (let [opts                   (cli/parse-opts args {:spec cli-spec})
-        workspace              (resolve-workspace! (:workspace opts))
+(defn- start!
+  "Resolve the workspace and ECA server, then hand the terminal to the TUI
+  until the user quits."
+  [opts]
+  (let [workspace              (resolve-workspace! (:workspace opts))
         {:keys [path notices]} (resolve-binary! opts)
         opts                   (assoc opts
                                       :workspace workspace
@@ -76,3 +116,12 @@
                   :alt-screen true
                   :mouse      :normal
                   :fps        20})))
+
+(defn -main [& args]
+  (let [{:keys [opts exit message]} (parse-args args)]
+    (cond
+      (nil? exit)  (start! opts)
+      (zero? exit) (println message)
+      :else        (binding [*out* *err*]
+                     (println message)
+                     (System/exit exit)))))

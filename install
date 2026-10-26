@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+
+# Installs or updates eca-cli from its GitHub releases:
+#
+#   bash <(curl -fsSL https://raw.githubusercontent.com/editor-code-assistant/eca-cli/main/install)
+#
+# Modelled on the ECA install script: https://github.com/editor-code-assistant/eca/blob/master/install
+
+set -euo pipefail
+
+repo="editor-code-assistant/eca-cli"
+version=""
+if [[ "$(id -u)" == "0" ]]; then
+    install_dir="/usr/local/bin"
+else
+    install_dir="$HOME/.local/bin"
+fi
+
+print_help() {
+    cat <<EOF
+Installs or updates eca-cli, the ECA terminal client.
+
+Usage: install [--dir <dir>] [--version <version>]
+
+Options:
+  --dir <dir>          Installation directory (default: $install_dir)
+  --version <version>  Version to install, e.g. 0.1.90 (default: latest release)
+  -h, --help           Show this help
+
+Requires curl and tar.
+EOF
+}
+
+# Prints an error (and an optional hint) to stderr and exits.
+error() {
+    >&2 echo "Error: $1"
+    if [[ -n "${2:-}" ]]; then
+        >&2 echo "$2"
+    fi
+    exit 1
+}
+
+has() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dir)
+            [[ $# -ge 2 ]] || error "--dir needs a value"
+            install_dir="$2"
+            shift 2
+            ;;
+        --version)
+            [[ $# -ge 2 ]] || error "--version needs a value"
+            version="${2#v}"
+            shift 2
+            ;;
+        -h|--help)
+            print_help
+            exit 0
+            ;;
+        *)
+            >&2 echo "Unknown option: $1"
+            >&2 print_help
+            exit 1
+            ;;
+    esac
+done
+
+# Check required commands upfront, otherwise `set -e` would make the script
+# exit halfway through without saying why when one of them is missing.
+missing=""
+for cmd in curl tar; do
+    has "$cmd" || missing="$missing $cmd"
+done
+if [[ -n "$missing" ]]; then
+    error "required command(s) not found:$missing" \
+          "Install them with your system package manager and run this script again."
+fi
+
+no_binary_hint="Releases also ship eca-cli.jar, which runs anywhere with Babashka (bb eca-cli.jar): https://github.com/$repo/releases"
+
+case "$(uname -s)" in
+    Linux)  os=linux ;;
+    Darwin) os=macos ;;
+    *)      error "there is no eca-cli binary for $(uname -s)." "$no_binary_hint" ;;
+esac
+
+case "$(uname -m)" in
+    x86_64|amd64)  arch=amd64 ;;
+    aarch64|arm64) arch=aarch64 ;;
+    *)             error "there is no eca-cli binary for $(uname -m)." "$no_binary_hint" ;;
+esac
+
+# A shell running under Rosetta reports x86_64 on Apple silicon: prefer the native build.
+if [[ "$os" == macos && "$arch" == amd64 && "$(sysctl -n sysctl.proc_translated 2>/dev/null || true)" == "1" ]]; then
+    arch=aarch64
+fi
+
+asset="eca-cli-$os-$arch.tar.gz"
+if [[ -z "$version" ]]; then
+    base_url="https://github.com/$repo/releases/latest/download"
+else
+    base_url="https://github.com/$repo/releases/download/$version"
+fi
+
+if ! mkdir -p "$install_dir" 2>/dev/null || [[ ! -w "$install_dir" ]]; then
+    error "cannot write to $install_dir." "Choose another directory with --dir, or re-run with sudo."
+fi
+install_dir="$(cd "$install_dir" && pwd)"
+dest="$install_dir/eca-cli"
+
+tmp_dir="$(mktemp -d)"
+staged=""
+cleanup() {
+    rm -rf "$tmp_dir"
+    if [[ -n "$staged" ]]; then
+        rm -f "$staged"
+    fi
+}
+trap cleanup EXIT
+
+curl_opts=(-fL --retry 2)
+if [[ -t 2 ]]; then
+    curl_opts+=(--progress-bar)
+else
+    curl_opts+=(-sS)
+fi
+
+echo "Downloading $base_url/$asset"
+if ! curl "${curl_opts[@]}" -o "$tmp_dir/$asset" "$base_url/$asset"; then
+    if [[ -n "$version" ]]; then
+        error "failed to download $base_url/$asset" \
+              "Check that eca-cli $version exists: https://github.com/$repo/releases"
+    fi
+    error "failed to download $base_url/$asset" "Check your internet connection and try again."
+fi
+if ! curl -fsSL --retry 2 -o "$tmp_dir/$asset.sha256" "$base_url/$asset.sha256"; then
+    error "failed to download $base_url/$asset.sha256"
+fi
+
+expected="$(cut -d ' ' -f 1 < "$tmp_dir/$asset.sha256" | tr '[:upper:]' '[:lower:]')"
+if has sha256sum; then
+    actual="$(sha256sum < "$tmp_dir/$asset" | cut -d ' ' -f 1)"
+elif has shasum; then
+    actual="$(shasum -a 256 < "$tmp_dir/$asset" | cut -d ' ' -f 1)"
+else
+    actual=""
+    >&2 echo "Warning: neither sha256sum nor shasum found, skipping checksum verification."
+fi
+if [[ -n "$actual" && "$actual" != "$expected" ]]; then
+    error "checksum mismatch for $asset." "Expected $expected, got $actual."
+fi
+
+tar -xzf "$tmp_dir/$asset" -C "$tmp_dir" --no-same-owner eca-cli
+
+old_version=""
+if [[ -x "$dest" ]]; then
+    old_version="$("$dest" --version 2>/dev/null || true)"
+fi
+
+# Stage next to the destination, check it runs (also catches a noexec mount),
+# then rename over the old binary: atomic, and safe while eca-cli is running.
+staged="$install_dir/.eca-cli.new.$$"
+cp "$tmp_dir/eca-cli" "$staged"
+chmod 755 "$staged"
+if ! new_version="$("$staged" --version 2>&1)"; then
+    error "the downloaded eca-cli does not run on this machine:" "$new_version"
+fi
+mv -f "$staged" "$dest"
+staged=""
+
+if [[ -n "$old_version" ]]; then
+    echo "Installed $new_version (was ${old_version#eca-cli }) at $dest"
+else
+    echo "Installed $new_version at $dest"
+fi
+
+case ":$PATH:" in
+    *":$install_dir:"*)
+        echo "Run eca-cli in your project directory to start."
+        ;;
+    *)
+        echo
+        echo "$install_dir is not on your PATH yet. Add it to your shell profile:"
+        echo "  export PATH=\"$install_dir:\$PATH\""
+        echo "Then run eca-cli in your project directory to start."
+        ;;
+esac

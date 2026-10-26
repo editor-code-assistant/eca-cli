@@ -1,5 +1,6 @@
 # ECA CLI
 
+[![Release](https://img.shields.io/github/v/release/editor-code-assistant/eca-cli)](https://github.com/editor-code-assistant/eca-cli/releases)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
 ECA (Editor Code Assistant) CLI is an AI-powered pair-programming client for your terminal, no editor required.
@@ -11,20 +12,23 @@ This CLI will auto download `eca` and manage the process.
 
 ## Requirements
 
-- [Babashka](https://babashka.org/) 1.12.215 or later
+- Linux or macOS, on x86_64 or arm64
+
+## Installation
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/editor-code-assistant/eca-cli/main/install)
+```
+
+This installs a single self-contained `eca-cli` binary, no Babashka or JVM needed, in `~/.local/bin` (`/usr/local/bin` as root); pass `--dir <dir>` to pick another place. Run it again to update.
+
+Binaries are also on the [releases page](https://github.com/editor-code-assistant/eca-cli/releases), along with `eca-cli.jar`, which runs on any other platform with [Babashka](https://babashka.org/): `bb eca-cli.jar`.
 
 ## Quickstart
 
 ```bash
-git clone https://github.com/editor-code-assistant/eca-cli.git
-cd eca-cli
-bb run
-```
-
-To use it on any project, alias it and run it from the project directory:
-
-```bash
-alias eca-cli='bb --config /path/to/eca-cli/bb.edn run'
+cd your-project
+eca-cli
 ```
 
 ## Features
@@ -39,8 +43,10 @@ alias eca-cli='bb --config /path/to/eca-cli/bb.edn run'
 ## Usage
 
 ```
-bb run [--workspace <path>] [--model <model>] [--agent <agent>] [--trust] [--eca <path>]
+eca-cli [--workspace <path>] [--model <model>] [--agent <agent>] [--trust] [--eca <path>]
 ```
+
+Run `eca-cli --help` for details.
 
 ### Commands
 
@@ -79,12 +85,16 @@ Check [troubleshooting](https://eca.dev/troubleshooting) docs section.
 
 ## Development
 
+Requires [Babashka](https://babashka.org/) 1.12.215 or later.
+
 ```bash
+bb run     # run from source, takes the same options as eca-cli
 bb test    # unit tests
 bb nrepl   # nREPL on port 7888
+bb dist    # build the release binaries into dist/
 ```
 
-See [CLAUDE.md](./CLAUDE.md) for the architecture.
+Every push to `main` is released automatically. See [CLAUDE.md](./CLAUDE.md) for the architecture.
 
 ## Contributing 💙
 

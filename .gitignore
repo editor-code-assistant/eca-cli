@@ -1,6 +1,7 @@
 .nrepl-port
 .cpcache/
 target/
+dist/
 .clj-kondo/.cache/
 .lsp/
 META-INF/

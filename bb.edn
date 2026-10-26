@@ -1,10 +1,16 @@
-{:paths ["src" "test"]
- :deps {de.timokramer/charm.clj {:mvn/version "0.2.71"}}
+{:paths ["src"]
+ :deps {de.timokramer/charm.clj {:mvn/version "0.2.71"
+                                 ;; JVM-only deps: babashka embeds its own JLine and
+                                 ;; core.async, these would only bloat the release jar.
+                                 :exclusions [org.jline/jline-terminal-ffm
+                                              org.jline/jline-reader
+                                              org.clojure/core.async]}}
  :tasks {run         {:doc "Run eca-cli"
                       :override-builtin true
                       :requires ([eca-cli.core])
                       :task (apply eca-cli.core/-main *command-line-args*)}
          nrepl       {:doc "Start nREPL for development (Babashka built-in, port 7888)"
+                      :extra-paths ["test" "build"]
                       :requires ([babashka.nrepl.server])
                       :task (let [port 7888]
                               (babashka.nrepl.server/start-server! {:host "127.0.0.1" :port port})
@@ -15,10 +21,13 @@
                       :requires ([eca-cli.upgrade])
                       :task (apply eca-cli.upgrade/upgrade! *command-line-args*)}
          test        {:doc "Run unit tests"
+                      :extra-paths ["test" "build"]
                       :task (do (require '[clojure.test])
                                 (require '[eca-cli.at-refs-test])
                                 (require '[eca-cli.chat-test])
                                 (require '[eca-cli.commands-test])
+                                (require '[eca-cli.core-test])
+                                (require '[eca-cli.dist-test])
                                 (require '[eca-cli.jobs-test])
                                 (require '[eca-cli.lifecycle-test])
                                 (require '[eca-cli.mcp-test])
@@ -35,6 +44,8 @@
                                       (clojure.test/run-tests 'eca-cli.at-refs-test
                                                               'eca-cli.chat-test
                                                               'eca-cli.commands-test
+                                                              'eca-cli.core-test
+                                                              'eca-cli.dist-test
                                                               'eca-cli.jobs-test
                                                               'eca-cli.lifecycle-test
                                                               'eca-cli.mcp-test
@@ -49,8 +60,17 @@
                                                               'eca-cli.upgrade-test)]
                                   (System/exit (if (pos? (+ fail error)) 1 0))))}
          itest       {:doc "Run integration tests (requires tmux and a configured LLM provider; kills running `eca` processes)"
+                      :extra-paths ["test"]
                       :task (do (require '[clojure.test])
                                 (require '[eca-cli.integration-test])
                                 (let [{:keys [fail error]}
                                       (clojure.test/run-tests 'eca-cli.integration-test)]
-                                  (System/exit (if (pos? (+ fail error)) 1 0))))}}}
+                                  (System/exit (if (pos? (+ fail error)) 1 0))))}
+         release-version {:doc "Print the version a release of HEAD gets: 0.1.<commit count>"
+                          :extra-paths ["build"]
+                          :requires ([eca-cli.dist :as dist])
+                          :task (println (dist/release-version))}
+         dist        {:doc "Build release artifacts into dist/: self-contained executables and eca-cli.jar"
+                      :extra-paths ["build"]
+                      :requires ([eca-cli.dist :as dist])
+                      :task (dist/dist! *command-line-args*)}}}

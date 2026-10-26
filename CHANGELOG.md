@@ -1,10 +1,17 @@
 # Changelog
 
-All notable changes to eca-cli. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No formal versioning yet — entries are grouped by roadmap phase and refactor phase.
+All notable changes to eca-cli. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Every push to `main` is released as `0.1.<commit count>` (see [releases](https://github.com/editor-code-assistant/eca-cli/releases)); entries here are grouped by roadmap phase and refactor phase.
 
 ## Unreleased
 
-Plug-and-play pass: eca-cli now installs and updates its own ECA server and works on NixOS and inside tmux.
+Plug-and-play pass: eca-cli ships as a single binary, installs and updates its own ECA server, and works on NixOS and inside tmux.
+
+### Added
+
+- Self-contained `eca-cli` binaries for Linux and macOS (x86_64 and arm64), so no Babashka, JVM or clone is needed: every push to `main` is tested, built, smoke-tested on each platform and published as a GitHub release, along with `eca-cli.jar` for any platform with Babashka.
+- `install` script: `bash <(curl -fsSL https://raw.githubusercontent.com/editor-code-assistant/eca-cli/main/install)` installs or updates the binary (in `~/.local/bin` by default), verifying its checksum and that it runs before replacing the old one.
+- `--version` and `--help`. Unknown options and stray arguments are reported instead of being silently ignored.
+- `bb dist` and `bb release-version` build the release artifacts locally, the same way CI does.
 
 ### Fixed
 
@@ -20,6 +27,8 @@ Plug-and-play pass: eca-cli now installs and updates its own ECA server and work
 - When the server dies, eca-cli shows its exit code and the last lines of its log, and enters a `:disconnected` mode (scroll + quit only) instead of crashing on the next write. Quitting while connecting/disconnected is immediate.
 - `initialize` sends eca-cli's PID so the server exits on its own if eca-cli is killed.
 - `--workspace` is canonicalized (relative paths no longer produce `file://.` URIs).
+- `initialize` reports eca-cli's real version (`dev` when run from source) instead of a hardcoded `0.1.0`.
+- Tests are no longer on the main classpath (`bb.edn` `:paths ["src"]`); the `test` task adds them. charm.clj's JVM-only dependencies are excluded, since Babashka embeds JLine and core.async.
 
 ## Phase 11 — Power Features *(partial)*
 

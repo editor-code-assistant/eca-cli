@@ -1,12 +1,14 @@
 (ns eca-cli.protocol-test
   (:require [clojure.test :refer [deftest is testing]]
-            [eca-cli.protocol :as protocol]))
+            [eca-cli.protocol :as protocol]
+            [eca-cli.version :as version]))
 
 (deftest initialize-params-test
   (let [p (protocol/initialize-params "/home/user/myproject")]
     (is (= (.pid (java.lang.ProcessHandle/current)) (:processId p))
         "server monitors us and exits if we die")
     (is (= "eca-cli" (get-in p [:clientInfo :name])))
+    (is (= version/version (get-in p [:clientInfo :version])))
     (is (= 1 (count (:workspaceFolders p))))
     (is (= "file:///home/user/myproject" (get-in p [:workspaceFolders 0 :uri])))
     (is (= "myproject" (get-in p [:workspaceFolders 0 :name])))))
