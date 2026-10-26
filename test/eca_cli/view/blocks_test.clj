@@ -1,5 +1,6 @@
 (ns eca-cli.view.blocks-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string]
+            [clojure.test :refer [deftest is testing]]
             [eca-cli.theme :as theme]
             [eca-cli.view.blocks :as blocks]))
 

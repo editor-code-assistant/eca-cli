@@ -80,6 +80,23 @@
 (defn cmd-open-jobs-panel [state]
   (jobs/cmd-open-jobs-panel state))
 
+(defn cmd-toggle-trust
+  "Trust mode: the server runs tool calls that would ask without asking
+  (deny rules still apply). Sent with each prompt while on, and to the
+  current chat right away so it covers the running turn too."
+  [state]
+  (let [on? (not (:trust state))]
+    (when-let [chat-id (:chat-id state)]
+      (protocol/update-chat! (:server state) chat-id {:trust on?}))
+    [(-> state
+         (assoc :trust on?)
+         (assoc-in [:opts :trust] on?)
+         (update :items conj {:type :system :level :info
+                              :text (if on?
+                                      "Trust mode on: tool calls run without asking (deny rules still apply)."
+                                      "Trust mode off: tool calls ask for approval again.")}))
+     nil]))
+
 (def command-registry
   {"/model"    {:doc "Open model picker"                  :handler cmd-open-model-picker}
    "/agent"    {:doc "Open agent picker"                  :handler cmd-open-agent-picker}
@@ -88,6 +105,7 @@
    "/chats"    {:doc "Browse and resume previous chats"   :handler cmd-list-chats}
    "/clear"    {:doc "Clear chat display (local only)"    :handler cmd-clear-chat}
    "/jobs"     {:doc "Show background shell jobs"         :handler cmd-open-jobs-panel}
+   "/trust"    {:doc "Toggle trust mode (run tool calls without asking)" :handler cmd-toggle-trust}
    "/help"     {:doc "Show available commands"            :handler cmd-show-help}
    "/quit"     {:doc "Exit eca-cli"                        :handler cmd-quit}
    "/login"    {:doc "Manually trigger provider login"    :handler cmd-login}})

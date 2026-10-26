@@ -26,7 +26,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [13](#phase-13-chat-management) | Chat Management | Rename + per-chat trust, server-side clear, `chat/statusChanged`, history pagination | 🆕 Planned | — |
 | [14](#phase-14-chat-navigation) | Chat Navigation | Flags/bookmarks, timeline jump, export transcript | 🆕 Planned | — |
 | [15](#phase-15-task-panel) | Task Panel | `TaskDetails` — checklist, N/M progress, priority, `blockedBy` graph | 🆕 Planned | — |
-| [16](#phase-16-granular-approval) | Granular Approval | Per-shell-command approve & remember (`save:'session'`, `approvalKey`) | 🆕 Planned | — |
+| [16](#phase-16-granular-approval) | Granular Approval | Per-shell-command approve & remember (`save:'session'`, `approvalKey`) | ✅ Complete | — |
 | [17](#phase-17-mcp-write-management) | MCP Write Management | MCP CRUD + start/stop/enable/disable/logout, OAuth (L) | 🆕 Planned | — |
 | [18](#phase-18-providers--config) | Providers & Config | Providers panel (auth, logout, cost badges); in-app global-config editor | 🆕 Planned | — |
 | [19](#phase-19-variant-picker) | Variant Picker | Interactive model/agent variant selector | 🆕 Planned | — |
@@ -431,6 +431,8 @@ Numbered identities frozen in [#24](https://github.com/editor-code-assistant/eca
 ## Phase 16: Granular Approval
 
 **Goal:** Per-shell-command approve & remember (`save:'session'`, `approvalKey`), beyond the current tool-name-only approval.
+
+**Status: ✅ Complete.** `Y` approves with `save: "session"`, so the server remembers the approval for the chat and its sub-agents (just the approved commands for shell and git); the client keeps no trust list of its own. A pending shell call shows the command and its `ShellCommandDetails` breakdown (remembered / would be remembered / always asks), and `Y` names what it remembers. Same pass: sub-agent approvals, parallel approvals queued, trust sent to the server (`/trust`, `selectTrust`).
 
 ## Phase 17: MCP Write Management
 

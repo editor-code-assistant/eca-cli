@@ -61,6 +61,7 @@ Type `/` in an empty input to pick one.
 | `/chats` | Browse and resume previous chats |
 | `/mcp` | MCP servers status |
 | `/jobs` | Background shell jobs |
+| `/trust` | Toggle trust mode (run tool calls without asking) |
 | `/clear` | Clear the chat display |
 | `/login` | Log in to a provider |
 | `/help` | Show available commands |
@@ -71,7 +72,7 @@ Type `/` in an empty input to pick one.
 | Key | Action |
 |---|---|
 | `Enter` | Send message / toggle the focused block |
-| `y` / `n` / `Y` | Approve / reject / always approve a tool call |
+| `y` / `n` / `Y` | Approve / reject / approve and remember a tool call for the chat |
 | `Esc` | Stop the running prompt, close a picker, clear focus |
 | `Tab` / `Shift+Tab` | Cycle focus through chat blocks |
 | `Alt+↑` / `Alt+↓` | Jump between top-level blocks |

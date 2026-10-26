@@ -107,6 +107,57 @@
 
 (declare render-item-lines)
 
+(defn remember-keys
+  "What an approve & remember saves for a tool call: nil for most tools (the
+  whole tool), the shell commands not remembered yet for a shell call (its
+  `:shell` breakdown, see `eca-cli.chat/content->shell`). An empty vector
+  means there's nothing left to remember."
+  [tool]
+  (when-let [shell (:shell tool)]
+    (->> (:commands shell)
+         (keep (fn [{:keys [approval-key remembered?]}]
+                 (when (and approval-key (not remembered?)) approval-key)))
+         distinct
+         vec)))
+
+(defn- shell-lines
+  "A shell call as the command it runs. While it waits for approval
+  (`:approval?`), or when it chains several commands, each command follows,
+  coloured by what an approve & remember does with it: remembered already
+  (green), would be remembered (yellow), or always asks."
+  [item width]
+  (let [raw        (str (get-in item [:arguments :command]))
+        cmds       (get-in item [:shell :commands])
+        pending?   (:approval? item)
+        role-of    (fn [{:keys [approval-key remembered?]}]
+                     (cond (nil? approval-key) nil
+                           remembered?         :success
+                           pending?            :warning))
+        inner-w    (max 1 (- width 4))
+        always?    (some #(nil? (:approval-key %)) cmds)
+        breakdown? (or (> (count cmds) 1) (and pending? always?))
+        raw-role   (when (= 1 (count cmds)) (role-of (first cmds)))
+        cmd-lines  (fn [{:keys [command args approval-key remembered?] :as c}]
+                     (let [note  (cond (and pending? (nil? approval-key)) "(always asks)"
+                                       remembered?                        "(remembered)")
+                           lines (-> (mapv #(paint (role-of c) %)
+                                           (wrap/wrap-text (str/join " " (cons command args))
+                                                           (max 1 (- inner-w 2))))
+                                     (prefixed (str "    " (paint :muted "↳") " ") "      "))
+                           last' (str (peek lines) "  " (paint :muted note))]
+                       (cond
+                         (nil? note)                  lines
+                         (<= (theme/width last') width) (conj (pop lines) last')
+                         :else                        (conj lines (str "      " (paint :muted note))))))]
+    (vec (concat
+           (prefixed (mapv #(paint raw-role %) (wrap/wrap-text raw inner-w))
+                     (str "  " (paint :muted "$") " ") "    ")
+           (when breakdown? (mapcat cmd-lines cmds))
+           (when-let [wd (get-in item [:arguments :working_directory])]
+             [(str "  " (paint :muted (str "in " wd)))])
+           (when (get-in item [:shell :background?])
+             [(str "  " (paint :muted "runs in the background"))])))))
+
 (defn- steps-badge [item]
   (when (seq (:sub-items item))
     (paint :muted (str "  ▸ " (count (:sub-items item)) " steps"))))
@@ -120,8 +171,16 @@
     (if (:expanded? item)
       (let [header (str icon " " (paint :bold name) "  " (paint :muted summary)
                         (steps-badge item) (or duration "") "  " (paint :muted "▾"))
-            body   (if edit
+            body   (cond
+                     edit
                      (render-diff edit width)
+
+                     (and (:shell item) (get-in item [:arguments :command]))
+                     (concat (shell-lines item width)
+                             (when (:out-text item)
+                               (render-box "Output" (:out-text item) width)))
+
+                     :else
                      (concat
                        (when (:args-text item)
                          (render-box "Arguments" (:args-text item) width))

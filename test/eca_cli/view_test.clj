@@ -378,7 +378,7 @@
       (is (clojure.string/includes? out "@@"))      ; diff present
       (is (clojure.string/includes? out "old"))
       (is (clojure.string/includes? out "new"))
-      (is (clojure.string/includes? out "[y] approve  [Y] always  [n] reject"))
+      (is (clojure.string/includes? out "[y] approve  [n] reject  [Y] allow for this chat"))
       ;; prompt sits on its own line, below the diff
       (is (< (.indexOf out "@@") (.indexOf out "[y] approve")))))
 
@@ -389,4 +389,37 @@
                                     :state :run :args-text "{\"cmd\":\"ls\"}"}}}
           out   (theme/strip-ansi (view/render-approval state))]
       (is (clojure.string/includes? out "shell"))
-      (is (clojure.string/includes? out "[y] approve")))))
+      (is (clojure.string/includes? out "[y] approve"))))
+
+  (testing "a shell call shows its command and what Y would remember"
+    (let [shell {:commands [{:command "git" :args ["checkout" "main"] :approval-key "git checkout"}
+                            {:command "sudo" :args ["rm" "x"] :approval-key nil}
+                            {:command "rg" :args ["foo"] :approval-key "rg" :remembered? true}]}
+          state {:mode :approving :width 80
+                 :pending-approval {:tool-call-id "t3"}
+                 :tool-calls {"t3" {:id "t3" :name "shell_command" :summary "Running git" :state :run
+                                    :arguments {:command "git checkout main && sudo rm x && rg foo"}
+                                    :shell shell}}}
+          out   (theme/strip-ansi (view/render-approval state))]
+      (is (str/includes? out "$ git checkout main && sudo rm x && rg foo"))
+      (is (str/includes? out "↳ git checkout main"))
+      (is (str/includes? out "↳ sudo rm x  (always asks)"))
+      (is (str/includes? out "↳ rg foo  (remembered)"))
+      (is (str/includes? out "[Y] remember git checkout"))
+      (is (not (str/includes? out "{\"command\"")) "no JSON arguments box for shell calls")))
+
+  (testing "nothing left to remember: no Y"
+    (let [state {:mode :approving :width 80
+                 :pending-approval {:tool-call-id "t4"}
+                 :tool-calls {"t4" {:id "t4" :name "shell_command" :summary "sudo" :state :run
+                                    :arguments {:command "sudo ls"}
+                                    :shell {:commands [{:command "sudo" :args ["ls"] :approval-key nil}]}}}}
+          out   (theme/strip-ansi (view/render-approval state))]
+      (is (str/includes? out "[y] approve  [n] reject"))
+      (is (not (str/includes? out "[Y]")))))
+
+  (testing "the gutter says when a sub-agent asks and how many more wait"
+    (let [state {:chat-id "chat1" :pending-approval {:chat-id "sub-1" :tool-call-id "t"}
+                 :approval-queue [{:chat-id "chat1" :tool-call-id "u"}]}]
+      (is (= "▲ Waiting for your approval · sub-agent · 1 more"
+             (theme/strip-ansi (view/approval-gutter state)))))))

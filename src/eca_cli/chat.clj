@@ -8,7 +8,8 @@
             [charm.message :as msg]
             [eca-cli.protocol :as protocol]
             [eca-cli.chats :as chats]
-            [eca-cli.view :as view]))
+            [eca-cli.view :as view]
+            [eca-cli.view.blocks :as blocks]))
 
 ;; --- State helpers ---
 
@@ -19,9 +20,17 @@
         (assoc :current-text ""))
     state))
 
+(defn spawn-call?
+  "A tool call that runs a sub-agent: known by its `subagent` details (sent
+  from toolCallRun on), or by the native tool's name before those arrive."
+  [tool]
+  (or (some? (:subagent-chat-id tool))
+      (and (= "spawn_agent" (:name tool)) (contains? #{nil "eca"} (:server tool)))))
+
 (defn upsert-tool-call [state tool-call]
   (let [id     (:id tool-call)
-        merged (merge (get-in state [:tool-calls id]) tool-call)]
+        merged (merge (get-in state [:tool-calls id]) tool-call)
+        spawn? (spawn-call? merged)]
     (-> state
         (assoc-in [:tool-calls id] merged)
         (update :items
@@ -31,16 +40,15 @@
                             (if (= id (:id item))
                               ;; Protect interactive state from being clobbered by incoming events
                               (let [protected (select-keys item [:expanded? :focused? :sub-items])]
-                                (merge item {:type :tool-call}
-                                       (dissoc tool-call :expanded? :focused? :sub-items)
-                                       protected))
+                                (cond-> (merge item {:type :tool-call}
+                                               (dissoc tool-call :expanded? :focused? :sub-items)
+                                               protected)
+                                  (and spawn? (nil? (:sub-items item))) (assoc :sub-items [])))
                               item))
                           items)
-                    (let [spawn? (= "eca__spawn_agent" (:name merged))
-                          base   (cond-> (assoc merged :type :tool-call
-                                                       :expanded? false :focused? false)
-                                   spawn? (assoc :sub-items []))]
-                      (conj items base))))))))
+                    (conj items (cond-> (assoc merged :type :tool-call
+                                                      :expanded? false :focused? false)
+                                  spawn? (assoc :sub-items [])))))))))
 
 (def Edit
   "Malli schema for the normalized file-change payload attached to a tool-call
@@ -92,6 +100,59 @@
         (str (subs text 0 max-tool-output) "\n[truncated]")
         text))))
 
+(defn content->shell
+  "Normalize a `shellCommand` tool-call detail into `{:commands [...]
+  :background? bool}`, or nil. Each command carries the key an approve &
+  remember would save (`:approval-key`, nil when it always asks) and whether
+  that key is already remembered for the chat."
+  [content]
+  (let [d (:details content)]
+    (when (= "shellCommand" (:type d))
+      {:commands    (mapv (fn [{:keys [command args approvalKey remembered]}]
+                            {:command      command
+                             :args         (vec args)
+                             :approval-key approvalKey
+                             :remembered?  (boolean remembered)})
+                          (:commands d))
+       :background? (boolean (:background d))})))
+
+(defn subagent-chat-id
+  "The chat id of the sub-agent a tool call runs (its `subagent` details), or nil."
+  [content]
+  (let [d (:details content)]
+    (when (= "subagent" (:type d))
+      (:subagentChatId d))))
+
+(defn- args-text [arguments]
+  (when arguments
+    (try (json/generate-string arguments)
+         (catch Exception _ (pr-str arguments)))))
+
+(def ^:private tool-states
+  {"toolCallPrepare"  :preparing
+   "toolCallRun"      :run
+   "toolCallRunning"  :running
+   "toolCalled"       :called
+   "toolCallRejected" :rejected})
+
+(defn- tool-fields
+  "Tool-call item fields carried by one lifecycle event. Fields the event
+  doesn't carry are left out, so a later event never blanks an earlier one's."
+  [content]
+  (let [{:keys [type id name server summary arguments]} content
+        edit  (content->edit content)
+        shell (content->shell content)
+        sub   (subagent-chat-id content)]
+    (cond-> {:id id :name name :server server :state (tool-states type)}
+      summary               (assoc :summary summary)
+      arguments             (assoc :arguments arguments :args-text (args-text arguments))
+      edit                  (assoc :edit edit)
+      shell                 (assoc :shell shell)
+      sub                   (assoc :subagent-chat-id sub)
+      (= "toolCalled" type) (assoc :error? (:error content)
+                                   :out-text (tool-output-text content)
+                                   :total-ms (:totalTimeMs content)))))
+
 (defn content->item [params]
   (let [content (:content params)]
     (case (:type content)
@@ -99,19 +160,7 @@
       {:type :assistant-text :text (:text content)}
 
       ("toolCallPrepare" "toolCallRunning" "toolCallRun" "toolCalled" "toolCallRejected")
-      (cond-> {:type :tool-call :id (:id content) :name (:name content)
-               :server (:server content) :summary (:summary content)
-               :state (case (:type content)
-                        "toolCallPrepare"  :preparing
-                        "toolCallRun"      :run
-                        "toolCallRunning"  :running
-                        "toolCalled"       :called
-                        "toolCallRejected" :rejected)
-               :expanded? false :focused? false}
-        (= "toolCalled" (:type content))
-        (assoc :error? (:error content)
-               :out-text (tool-output-text content)
-               :total-ms (:totalTimeMs content)))
+      (assoc (tool-fields content) :type :tool-call :expanded? false :focused? false)
 
       "reasonStarted"
       {:type :thinking :id (:id content) :text "" :status :thinking
@@ -151,9 +200,7 @@
       (if-let [item (content->item params)]
         (if (and (= :tool-call (:type item))
                  (some #(and (= :tool-call (:type %)) (= (:id item) (:id %))) subs))
-          (update-by-id subs :tool-call (:id item)
-                        #(merge % (cond-> (dissoc item :expanded? :focused?)
-                                    (nil? (:summary item)) (dissoc :summary))))
+          (update-by-id subs :tool-call (:id item) #(merge % (dissoc item :expanded? :focused?)))
           (conj subs item))
         subs))))
 
@@ -191,6 +238,63 @@
     (assoc-in state [:subagent-chats subagent-chat-id] idx)
     state))
 
+;; --- Tool-call approvals ---
+;;
+;; The server decides which calls need the user (`manualApproval`), trust mode
+;; and remembered approvals included. Calls can wait in parallel, from the main
+;; chat or a sub-agent: one is shown (`:pending-approval`), the others wait in
+;; `:approval-queue`. Each is answered with the chat id it came from.
+
+(defn request-approval
+  "Ask the user to approve tool call `id` of chat `chat-id`, now or after the
+  ones already waiting."
+  [state chat-id id]
+  (let [req {:chat-id chat-id :tool-call-id id}]
+    (cond
+      (= id (get-in state [:pending-approval :tool-call-id]))  state
+      (some #(= id (:tool-call-id %)) (:approval-queue state)) state
+      (:pending-approval state) (update state :approval-queue (fnil conj []) req)
+      :else (assoc state :mode :approving :pending-approval req))))
+
+(defn next-approval
+  "The shown approval was answered: show the next waiting one, else go back
+  to the running turn."
+  [state]
+  (if-let [[req & more] (seq (:approval-queue state))]
+    (assoc state :mode :approving :pending-approval req :approval-queue (vec more))
+    (cond-> (assoc state :pending-approval nil :approval-queue [])
+      (= :approving (:mode state)) (assoc :mode :chatting))))
+
+(defn- settle-approval
+  "Tool call `id` is past its approval (it runs, finished or was rejected,
+  e.g. answered elsewhere or stopped): stop asking about it."
+  [state id]
+  (if (= id (get-in state [:pending-approval :tool-call-id]))
+    (next-approval state)
+    (update state :approval-queue #(vec (remove (fn [req] (= id (:tool-call-id req))) %)))))
+
+(defn clear-approvals [state]
+  (assoc state :pending-approval nil :approval-queue []))
+
+(defn- track-approval
+  "Approval bookkeeping for a tool-call event of chat `chat-id` (the main chat
+  or a sub-agent's)."
+  [state chat-id content]
+  (case (:type content)
+    "toolCallRun"
+    (if (:manualApproval content)
+      (-> state
+          (update-in [:tool-calls (:id content)] merge (tool-fields content))
+          (request-approval chat-id (:id content)))
+      state)
+
+    ("toolCallRunning" "toolCalled" "toolCallRejected")
+    (settle-approval state (:id content))
+
+    state))
+
+
+
 ;; --- Outbound prompt ---
 
 (def ^:private at-token-re
@@ -218,6 +322,10 @@
       chat-id              (assoc :chat-id chat-id)
       (:model opts)        (assoc :model (:model opts))
       (:agent opts)        (assoc :agent (:agent opts))
+      ;; Once known (--trust, /trust, the server's selectTrust), sent as is:
+      ;; an explicit off must not let a new chat fall back to the user's
+      ;; `chat.defaultTrust`. Unknown: left out, the server default applies.
+      (some? (:trust opts)) (assoc :trust (boolean (:trust opts)))
       (seq (:contexts opts)) (assoc :contexts (:contexts opts)))
     (fn [result]
       (when-let [new-id (:chat-id result)]
@@ -252,79 +360,23 @@
         (-> state
             flush-current-text
             finish-turn
+            clear-approvals
             (assoc :mode :ready :echo-pending false)
             (update :input ti/focus)
             view/rebuild-lines)
         state)
 
-      "toolCallPrepare"
-      (if (and (= "eca" (:server content)) (= "task" (:name content)))
-        state
+      ;; One path for the whole lifecycle. The server already applied trust
+      ;; and remembered approvals: only `manualApproval` calls ask the user.
+      ("toolCallPrepare" "toolCallRun" "toolCallRunning" "toolCalled" "toolCallRejected")
+      (let [tool (tool-fields content)
+            sub  (:subagent-chat-id tool)]
         (-> state
             flush-current-text
-            (upsert-tool-call {:id             (:id content)
-                               :name           (:name content)
-                               :server         (:server content)
-                               :summary        (:summary content)
-                               :arguments-text (:argumentsText content)
-                               :state          :preparing})
+            (upsert-tool-call tool)
+            (cond-> sub (register-subagent (:id tool) sub))
+            (track-approval (or (:chatId params) (:chat-id state)) content)
             view/rebuild-lines))
-
-      "toolCallRun"
-      (let [{:keys [id name server summary arguments manualApproval subagentDetails]} content]
-        (if (and (= "eca" server) (= "task" name))
-          state
-          (let [trust?    (or (:trust state)
-                              (contains? (:session-trusted-tools state) name))
-                args-text (when arguments
-                            (try (json/generate-string arguments)
-                                 (catch Exception _ (pr-str arguments))))
-                edit      (content->edit content)
-                tool      (cond-> {:id id :name name :server server
-                                   :summary summary :arguments arguments
-                                   :args-text args-text :state :run}
-                            edit (assoc :edit edit))]
-            (if (and manualApproval (not trust?))
-              (let [s' (-> state
-                           (upsert-tool-call tool)
-                           (assoc :mode :approving
-                                  :pending-approval {:chat-id (:chat-id state) :tool-call-id id})
-                           view/rebuild-lines)]
-                (cond-> s'
-                  subagentDetails
-                  (register-subagent id (:subagentChatId subagentDetails))))
-              (do
-                (protocol/approve-tool! (:server state) (:chat-id state) id)
-                (let [s' (-> state (upsert-tool-call tool) view/rebuild-lines)]
-                  (cond-> s'
-                    subagentDetails
-                    (register-subagent id (:subagentChatId subagentDetails)))))))))
-
-      "toolCallRunning"
-      (-> state
-          (upsert-tool-call {:id        (:id content) :name (:name content)
-                             :server    (:server content) :summary (:summary content)
-                             :arguments (:arguments content) :state :running})
-          view/rebuild-lines)
-
-      "toolCalled"
-      (let [{:keys [id name server summary arguments error totalTimeMs]} content
-            edit (content->edit content)]
-        (-> state
-            (upsert-tool-call (cond-> {:id id :name name :server server
-                                       :summary summary :arguments arguments
-                                       :state :called :error? error
-                                       :out-text (tool-output-text content)
-                                       :total-ms totalTimeMs}
-                                edit (assoc :edit edit)))
-            view/rebuild-lines))
-
-      "toolCallRejected"
-      (-> state
-          (upsert-tool-call {:id        (:id content) :name (:name content)
-                             :server    (:server content) :summary (:summary content)
-                             :arguments (:arguments content) :state :rejected})
-          view/rebuild-lines)
 
       "reasonStarted"
       (-> state
@@ -384,16 +436,20 @@
   "ECA `config/updated` notification: populate available models / agents /
   variants and surface the welcome message as assistant text."
   [state notification]
-  (let [chat (get-in notification [:params :chat])
-        s'   (cond-> state
-               (:models chat)                  (assoc :available-models (:models chat))
-               (:agents chat)                  (assoc :available-agents (:agents chat))
-               (contains? chat :selectModel)   (assoc :selected-model (:selectModel chat))
-               (contains? chat :selectAgent)   (assoc :selected-agent (:selectAgent chat))
-               (contains? chat :variants)      (assoc :available-variants (:variants chat))
-               (contains? chat :selectVariant) (assoc :selected-variant (:selectVariant chat))
-               (:welcomeMessage chat)          (update :items conj {:type :assistant-text
-                                                                    :text (:welcomeMessage chat)}))]
+  (let [{:keys [chat chatId]} (:params notification)
+        ;; Per-chat fields scoped to another chat don't concern this one.
+        mine? (or (nil? chatId) (nil? (:chat-id state)) (= chatId (:chat-id state)))
+        s'    (cond-> state
+                (:models chat)                  (assoc :available-models (:models chat))
+                (:agents chat)                  (assoc :available-agents (:agents chat))
+                (and mine? (contains? chat :selectModel))   (assoc :selected-model (:selectModel chat))
+                (and mine? (contains? chat :selectAgent))   (assoc :selected-agent (:selectAgent chat))
+                (contains? chat :variants)      (assoc :available-variants (:variants chat))
+                (and mine? (contains? chat :selectVariant)) (assoc :selected-variant (:selectVariant chat))
+                (and mine? (contains? chat :selectTrust))   (-> (assoc :trust (true? (:selectTrust chat)))
+                                                                (assoc-in [:opts :trust] (true? (:selectTrust chat))))
+                (:welcomeMessage chat)          (update :items conj {:type :assistant-text
+                                                                     :text (:welcomeMessage chat)}))]
     [(if (:welcomeMessage chat) (view/rebuild-lines s') s') nil]))
 
 (defn handle-chat-opened
@@ -414,7 +470,8 @@
        clear-msgs? (-> (assoc :items [])
                        (assoc :current-text "")
                        (assoc :chat-lines [])
-                       (assoc :scroll-offset 0)))
+                       (assoc :scroll-offset 0)
+                       (assoc :subagent-chats {})))
      nil]))
 
 (defn handle-content-received
@@ -437,6 +494,7 @@
     (if-let [parent-idx (get (:subagent-chats state) (:chatId params))]
       [(-> state
            (update-in [:items parent-idx :sub-items] add-sub-content params)
+           (track-approval (:chatId params) content)
            view/rebuild-lines)
        nil]
       (if (= "user" (:role params))
@@ -466,29 +524,29 @@
 ;; --- Approval key dispatch (:approving mode) ---
 
 (defn handle-approval-key
-  "y / Y / n keypresses in :approving mode. Caller guarantees mode = :approving."
+  "y approve · Y approve & remember (server-side, for the chat and its
+  sub-agents; just the listed commands for shell calls) · n reject. Caller
+  guarantees mode = :approving."
   [state msg]
-  (cond
-    (and (msg/key-press? msg) (msg/key-match? msg "y"))
-    (let [{:keys [chat-id tool-call-id]} (:pending-approval state)]
-      (protocol/approve-tool! (:server state) chat-id tool-call-id)
-      [(assoc state :mode :chatting :pending-approval nil) nil])
+  (let [{:keys [chat-id tool-call-id]} (:pending-approval state)
+        press? #(and (msg/key-press? msg) (msg/key-match? msg %))]
+    (cond
+      (press? "y")
+      (do (protocol/approve-tool! (:server state) chat-id tool-call-id)
+          [(next-approval state) nil])
 
-    (and (msg/key-press? msg) (msg/key-match? msg "Y"))
-    (let [{:keys [chat-id tool-call-id]} (:pending-approval state)
-          tool-name (get-in state [:tool-calls tool-call-id :name])]
-      (protocol/approve-tool! (:server state) chat-id tool-call-id)
-      [(-> state
-           (assoc :mode :chatting :pending-approval nil)
-           (update :session-trusted-tools conj tool-name))
-       nil])
+      ;; Nothing left to remember (e.g. only always-ask commands): a plain approve.
+      (press? "Y")
+      (let [save (when-not (= [] (blocks/remember-keys (get-in state [:tool-calls tool-call-id])))
+                   "session")]
+        (protocol/approve-tool! (:server state) chat-id tool-call-id save)
+        [(next-approval state) nil])
 
-    (and (msg/key-press? msg) (msg/key-match? msg "n"))
-    (let [{:keys [chat-id tool-call-id]} (:pending-approval state)]
-      (protocol/reject-tool! (:server state) chat-id tool-call-id)
-      [(assoc state :mode :chatting :pending-approval nil) nil])
+      (press? "n")
+      (do (protocol/reject-tool! (:server state) chat-id tool-call-id)
+          [(next-approval state) nil])
 
-    :else [state nil]))
+      :else [state nil])))
 
 ;; --- Chat key dispatch (:ready / :chatting modes) ---
 ;;

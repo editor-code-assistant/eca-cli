@@ -8,7 +8,12 @@ Plug-and-play pass: eca-cli ships as a single binary, installs and updates its o
 
 UX pass: chats render as markdown, the status line becomes a colourful modeline in the spirit of eca-emacs, and the whole UI takes on the terminal's colour theme.
 
+Catch-up pass: eca-cli gains the features of the ECA editor clients it was missing (eca-emacs as reference), and fixes the places where it didn't match the server.
+
 ### Added
+
+- Shell calls waiting for approval show the command and, when it helps, each chained command coloured by what `Y` would do with it: already remembered, would be remembered, or always asks. `Y` names the commands it remembers and is hidden when there's nothing to remember.
+- `/trust` toggles trust mode for the current chat, right away (`chat/update`); the indicator follows the server's `selectTrust` (e.g. `chat.defaultTrust`, a resumed chat's trust).
 
 - Markdown rendering (Phase 8) for replies, prompts and the welcome text: headings, emphasis, inline code, links, nested and task lists, quotes, GFM tables (cells wrap to fit), and fenced code with syntax highlighting. Built on babashka's bundled nextjournal.markdown; falls back to plain text if rendering fails.
 - `theme.clj`: colour roles on the terminal's ANSI palette, so eca-cli follows dark and light themes alike. `NO_COLOR` is honoured.
@@ -22,6 +27,13 @@ UX pass: chats render as markdown, the status line becomes a colourful modeline 
 
 ### Fixed
 
+- Sub-agents: their content landed in the main chat (and their `finished` ended the main turn) because eca-cli looked for a `subagentDetails` field and an `eca__spawn_agent` name the server never sends. Spawn calls are now recognised by their `subagent` details.
+- A sub-agent tool call that needed approval hung the chat with nothing to approve; it now asks, answered with the sub-agent's chat id.
+- Tool calls asking for approval in parallel replaced each other, leaving all but the last waiting forever; they now queue and are asked in turn, and calls answered or stopped elsewhere drop out.
+- `Y` trusted the whole tool on the client: approving one `ls` auto-ran every later shell command. It now asks the server to remember the approval for the chat (`save: "session"`), which for shell and git remembers only the approved commands.
+- Trust mode only auto-approved on the client: it was never sent to the server, didn't cover sub-agents, and overrode hooks that ask on purpose. It's now sent with each prompt and decided by the server. With `chat.defaultTrust` set, eca-cli showed SAFE while the server auto-approved everything.
+- A task tool configured to ask hung the chat (eca#584).
+- About 25 state tests never ran: a missing paren nested them inside another test.
 - Dividers and boxes rendered as `qqqq…` / `xxxx` inside tmux/screen: JLine draws box glyphs through the terminal's alternate charset, which with `screen-256color`/`tmux-256color` terminfo (SO/SI) requires `enacs` first. eca-cli now sends the terminal's `enacs` on startup (`terminal.clj`).
 - "Error: Stream closed" on NixOS/musl: `bb upgrade-eca` installed the glibc-linked build, which can't run there. Linux x86_64 now uses the static build, like the editor plugins.
 - `bb` printed a warning about the `run` task overriding a built-in on every invocation.

@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [eca-cli.commands :as commands]
+            [eca-cli.protocol :as protocol]
             [eca-cli.theme :as theme]))
 
 (deftest help-test
@@ -12,6 +13,26 @@
     (is (= "Available commands:" (first lines)))
     (testing "descriptions aligned in one column"
       (is (= 1 (count (set (map #(count (re-find #"^\S+\s+" %)) (rest lines)))))))))
+
+(deftest toggle-trust-test
+  (let [sent (atom [])]
+    (with-redefs [protocol/update-chat! (fn [_ chat-id fields] (swap! sent conj [chat-id fields]))]
+      (testing "on: shown, sent with the next prompts, and applied to the chat right away"
+        (let [[s _] (commands/cmd-toggle-trust {:trust false :chat-id "c1" :opts {} :items []})]
+          (is (true? (:trust s)))
+          (is (true? (get-in s [:opts :trust])))
+          (is (= [["c1" {:trust true}]] @sent))
+          (is (= :info (:level (peek (:items s)))))))
+      (testing "off"
+        (reset! sent [])
+        (let [[s _] (commands/cmd-toggle-trust {:trust true :chat-id "c1" :opts {:trust true} :items []})]
+          (is (false? (:trust s)))
+          (is (false? (get-in s [:opts :trust])))
+          (is (= [["c1" {:trust false}]] @sent))))
+      (testing "no chat yet: nothing to update, the first prompt carries it"
+        (reset! sent [])
+        (commands/cmd-toggle-trust {:trust false :chat-id nil :opts {} :items []})
+        (is (= [] @sent))))))
 
 (deftest registry-completeness-test
   (testing "all expected commands present"

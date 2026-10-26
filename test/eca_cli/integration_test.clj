@@ -245,12 +245,9 @@
     (testing "16: Escape from picker returns to :ready without changing selection"
       (keys! "C-l")
       (wait-for! (has "Select model") 5000)
-      (let [before (screen)
-            ;; capture current model from status bar before picker changes it
-            before-model (second (re-find #"SAFE|TRUST" before))]
-        (keys! "Escape")
-        (let [s (wait-for! (lacks "Select model") 5000)]
-          (is (str/includes? s "SAFE")))))
+      (keys! "Escape")
+      (let [s (wait-for! (lacks "Select model") 5000)]
+        (is (str/includes? s "SAFE"))))
 
     (finally (kill!))))
 

@@ -1,13 +1,11 @@
 (ns eca-cli.state
   (:require [clojure.string :as str]
-            [cheshire.core :as json]
             [charm.program :as program]
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-cli.server :as server]
             [eca-cli.protocol :as protocol]
-            [eca-cli.chats :as chats]
             [eca-cli.view :as view]
             [eca-cli.chat :as chat]
             [eca-cli.picker :as picker]
@@ -98,7 +96,8 @@
   [state report]
   (-> state
       chat/flush-current-text
-      (assoc :mode :disconnected :pending-approval nil)
+      chat/clear-approvals
+      (assoc :mode :disconnected)
       (dissoc :picker :login)
       (update :items conj {:type :system :text report})
       (update :input ti/blur)
@@ -169,9 +168,9 @@
    :current-text          ""
    :tool-calls            {}
    :pending-approval      nil
+   :approval-queue        []
    :pending-message       nil
    :echo-pending          false
-   :session-trusted-tools #{}
    :init-tasks            {}
    :pending-contexts      []
    :available-models      []

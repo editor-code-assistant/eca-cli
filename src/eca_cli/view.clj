@@ -141,6 +141,11 @@
 
 (def disconnected-hint "ECA server is not running. Press Ctrl+C to exit.")
 
+(defn- clip
+  "Plain `s` cut to `w` columns with an ellipsis."
+  [s w]
+  (if (> (theme/width s) w) (aw/truncate s (max 1 w) :tail "…") s))
+
 (defn render-approval
   "Render the pending tool call through the shared block renderer, force-expanded
   (so a file edit shows its diff), followed by the `[y/n/Y]` prompt line. One
@@ -148,16 +153,36 @@
   approval surface and the completed block."
   [state]
   (when-let [{:keys [tool-call-id]} (:pending-approval state)]
-    (let [tool  (get-in state [:tool-calls tool-call-id])
-          width (:width state)
-          item  (assoc tool :type :tool-call :expanded? true)
-          lines (blocks/render-item-lines item width)
-          key   (fn [k role]
-                  (str (theme/paint :key-desc "[") (theme/paint role k) (theme/paint :key-desc "]")))]
+    (let [tool     (get-in state [:tool-calls tool-call-id])
+          width    (:width state)
+          item     (assoc tool :type :tool-call :expanded? true :approval? true)
+          lines    (blocks/render-item-lines item width)
+          key      (fn [k role]
+                     (str (theme/paint :key-desc "[") (theme/paint role k) (theme/paint :key-desc "]")))
+          remember (blocks/remember-keys tool)
+          base     (str (key "y" (theme/merge-styles :success :bold)) " " (theme/paint :key-desc "approve")
+                        "  " (key "n" (theme/merge-styles :error :bold)) " " (theme/paint :key-desc "reject"))
+          ;; Shell calls remember just their commands; nothing left to remember, no Y.
+          y-desc   (cond (nil? remember) "allow for this chat"
+                         (seq remember)  (str "remember " (str/join ", " remember)))
+          room     (- width (theme/width base) 6)]
       (str (str/join "\n" lines)
-           "\n" (key "y" (theme/merge-styles :success :bold)) " " (theme/paint :key-desc "approve")
-           "  " (key "Y" (theme/merge-styles :success :bold)) " " (theme/paint :key-desc "always")
-           "  " (key "n" (theme/merge-styles :error :bold)) " " (theme/paint :key-desc "reject")))))
+           "\n" base
+           (when (and y-desc (> room 8))
+             (str "  " (key "Y" (theme/merge-styles :success :bold)) " "
+                  (theme/paint :key-desc (clip y-desc room))))))))
+
+(defn approval-gutter
+  "`▲ Waiting for your approval`, saying when a sub-agent asks and how many
+  more calls wait after this one."
+  [state]
+  (let [{:keys [chat-id]} (:pending-approval state)
+        more (count (:approval-queue state))]
+    (theme/paint :warning
+                 (str "▲ Waiting for your approval"
+                      (when (and chat-id (:chat-id state) (not= chat-id (:chat-id state)))
+                        " · sub-agent")
+                      (when (pos? more) (str " · " more " more"))))))
 
 (defn- visible-rows
   "The slice of a charm list on screen, as [index item] pairs (charm keeps
@@ -175,11 +200,6 @@
   (let [sep (case kind :command "  —  " :chat "  •  " nil)
         i   (when sep (str/index-of label sep))]
     (if i [(subs label 0 i) (subs label (+ i (count sep)))] [label nil])))
-
-(defn- clip
-  "Plain `s` cut to `w` columns with an ellipsis."
-  [s w]
-  (if (> (theme/width s) w) (aw/truncate s (max 1 w) :tail "…") s))
 
 (defn render-list
   "Picker rows: the selected one marked and in the accent colour, details
@@ -319,7 +339,7 @@
         gutter     (case mode
                      :connecting (render-connecting state now)
                      :chatting   (render-working state now)
-                     :approving  (theme/paint :warning "▲ Waiting for your approval")
+                     :approving  (approval-gutter state)
                      "")
         rule-role  (case mode :approving :warning :disconnected :error :border)]
     (str (render-chat state)

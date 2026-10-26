@@ -42,7 +42,11 @@
 (deftest tool-approve-params-test
   (let [p (protocol/tool-approve-params "chat1" "tc42")]
     (is (= "chat1" (:chatId p)))
-    (is (= "tc42" (:toolCallId p)))))
+    (is (= "tc42" (:toolCallId p)))
+    (is (not (contains? p :save))))
+  (testing "approve & remember asks the server to save it for the session"
+    (is (= {:chatId "chat1" :toolCallId "tc42" :save "session"}
+           (protocol/tool-approve-params "chat1" "tc42" "session")))))
 
 (deftest tool-reject-params-test
   (let [p (protocol/tool-reject-params "chat1" "tc42")]

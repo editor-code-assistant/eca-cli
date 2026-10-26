@@ -17,20 +17,20 @@
     (fn []
       (let [providers-result (promise)
             _                (protocol/providers-list! srv
-                               (fn [r] (deliver providers-result (or (:result r) {}))))]
-        (let [providers (-> (deref providers-result 10000 {:providers []}) :providers)
-              provider  (first (filter #(contains? #{"unauthenticated" "expired"}
-                                                   (get-in % [:auth :status]))
-                                       providers))]
-          (if-not provider
-            {:type :eca-error :error "Login required but no unauthenticated provider found"}
-            (let [login-result (promise)
-                  _            (protocol/providers-login! srv (:id provider) nil
-                                 (fn [r] (deliver login-result (or (:result r) (:error r)))))]
-              {:type            :eca-login-action
-               :provider        (:id provider)
-               :action          (deref login-result 10000 nil)
-               :pending-message pending-message})))))))
+                               (fn [r] (deliver providers-result (or (:result r) {}))))
+            providers        (-> (deref providers-result 10000 {:providers []}) :providers)
+            provider         (first (filter #(contains? #{"unauthenticated" "expired"}
+                                                        (get-in % [:auth :status]))
+                                            providers))]
+        (if-not provider
+          {:type :eca-error :error "Login required but no unauthenticated provider found"}
+          (let [login-result (promise)
+                _            (protocol/providers-login! srv (:id provider) nil
+                               (fn [r] (deliver login-result (or (:result r) (:error r)))))]
+            {:type            :eca-login-action
+             :provider        (:id provider)
+             :action          (deref login-result 10000 nil)
+             :pending-message pending-message}))))))
 
 (defn choose-login-method-cmd [srv provider method]
   (program/cmd
@@ -47,12 +47,12 @@
     (fn []
       (let [result (promise)
             _      (protocol/providers-login-input! srv provider collected
-                     (fn [r] (deliver result (or (:result r) (:error r)))))]
-        (let [r (deref result 10000 ::timeout)]
-          (cond
-            (= r ::timeout)        {:type :eca-error :error "Login timed out"}
-            (= "done" (:action r)) {:type :eca-login-complete :pending-message pending-message}
-            :else                  {:type :eca-error :error (str "Login failed: " r)}))))))
+                     (fn [r] (deliver result (or (:result r) (:error r)))))
+            r      (deref result 10000 ::timeout)]
+        (cond
+          (= r ::timeout)        {:type :eca-error :error "Login timed out"}
+          (= "done" (:action r)) {:type :eca-login-complete :pending-message pending-message}
+          :else                  {:type :eca-error :error (str "Login failed: " r)})))))
 
 ;; --- ECA notification handler (providers/updated) ---
 

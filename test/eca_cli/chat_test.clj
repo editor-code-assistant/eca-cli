@@ -7,6 +7,7 @@
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-cli.chat :as chat]
+            [eca-cli.protocol :as protocol]
             [eca-cli.view :as view]))
 
 (defn- base-state []
@@ -19,7 +20,7 @@
    :tool-calls            {}
    :pending-approval      nil
    :pending-message       nil
-   :session-trusted-tools #{}
+   :approval-queue        []
    :init-tasks            {}
    :available-models      []
    :available-agents      []
@@ -291,6 +292,37 @@
 
   (testing "missing details yields nil"
     (is (nil? (chat/content->edit {:type "toolCallRun" :id "3" :name "read_file"})))))
+
+(deftest content->shell-test
+  (testing "a shellCommand breakdown, normalized"
+    (is (= {:commands    [{:command "git" :args ["checkout" "x"] :approval-key "git checkout" :remembered? true}
+                          {:command "sudo" :args ["ls"] :approval-key nil :remembered? false}]
+            :background? false}
+           (chat/content->shell {:details {:type "shellCommand"
+                                           :commands [{:command "git" :args ["checkout" "x"]
+                                                       :approvalKey "git checkout" :remembered true}
+                                                      {:command "sudo" :args ["ls"]}]}}))))
+  (testing "other details -> nil"
+    (is (nil? (chat/content->shell {:details {:type "fileChange"}})))
+    (is (nil? (chat/content->shell {})))))
+
+(deftest subagent-chat-id-test
+  (is (= "sub-1" (chat/subagent-chat-id {:details {:type "subagent" :subagentChatId "sub-1"}})))
+  (is (nil? (chat/subagent-chat-id {:details {:type "task"}}))))
+
+(deftest send-chat-prompt-trust-test
+  (let [sent (atom nil)]
+    (with-redefs [protocol/chat-prompt! (fn [_ params _] (reset! sent params))]
+      (testing "trust on: sent with the prompt"
+        (chat/send-chat-prompt! nil "c1" "hi" {:trust true})
+        (is (true? (:trust @sent))))
+      (testing "trust turned off: sent as false, so a new chat doesn't fall back to
+                the user's chat.defaultTrust"
+        (chat/send-chat-prompt! nil "c1" "hi" {:trust false})
+        (is (false? (:trust @sent))))
+      (testing "never set: left out, the server default applies"
+        (chat/send-chat-prompt! nil "c1" "hi" {})
+        (is (not (contains? @sent :trust)))))))
 
 (deftest tool-output-text-test
   (testing "the protocol's outputs parts"

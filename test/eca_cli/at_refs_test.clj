@@ -25,7 +25,7 @@
    :pending-approval      nil
    :pending-message       nil
    :echo-pending          false
-   :session-trusted-tools #{}
+   :approval-queue        []
    :init-tasks            {}
    :pending-contexts      []
    :available-models      []

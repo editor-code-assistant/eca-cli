@@ -49,11 +49,16 @@
     chat-id  (assoc :chatId chat-id)
     model    (assoc :model model)
     agent    (assoc :agent agent)
-    trust    (assoc :trust true)
+    (some? trust) (assoc :trust (boolean trust))
     contexts (assoc :contexts contexts)))
 
-(defn tool-approve-params [chat-id tool-call-id]
-  {:chatId chat-id :toolCallId tool-call-id})
+(defn tool-approve-params
+  "`save` \"session\" makes the server remember the approval for the chat and
+  its sub-agents: the whole tool, or for shell/git just the approved commands."
+  ([chat-id tool-call-id] (tool-approve-params chat-id tool-call-id nil))
+  ([chat-id tool-call-id save]
+   (cond-> {:chatId chat-id :toolCallId tool-call-id}
+     save (assoc :save save))))
 
 (defn tool-reject-params [chat-id tool-call-id]
   {:chatId chat-id :toolCallId tool-call-id})
@@ -115,9 +120,11 @@
                                 :model (:model r)
                                 :status (:status r)})))))
 
-(defn approve-tool! [srv chat-id tool-call-id]
-  (send-notification! srv "chat/toolCallApprove"
-                      (tool-approve-params chat-id tool-call-id)))
+(defn approve-tool!
+  ([srv chat-id tool-call-id] (approve-tool! srv chat-id tool-call-id nil))
+  ([srv chat-id tool-call-id save]
+   (send-notification! srv "chat/toolCallApprove"
+                       (tool-approve-params chat-id tool-call-id save))))
 
 (defn reject-tool! [srv chat-id tool-call-id]
   (send-notification! srv "chat/toolCallReject"
@@ -132,6 +139,12 @@
 
 (defn selected-agent-changed! [srv agent]
   (send-notification! srv "chat/selectedAgentChanged" {:agent agent}))
+
+(defn update-chat!
+  "chat/update: change a chat's `:title` and/or `:trust`. Trust applies at
+  once, even to the running prompt."
+  [srv chat-id fields]
+  (send-request! srv "chat/update" (assoc fields :chatId chat-id) (fn [_])))
 
 (defn mcp-connect-server! [srv name]
   (send-notification! srv "mcp/connectServer" {:name name}))

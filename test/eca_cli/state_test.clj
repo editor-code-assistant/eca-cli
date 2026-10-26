@@ -5,6 +5,7 @@
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-cli.chat :as chat]
+            [eca-cli.commands :as commands]
             [eca-cli.login :as login]
             [eca-cli.protocol :as protocol]
             [eca-cli.chats :as chats]
@@ -28,7 +29,7 @@
    :tool-calls            {}
    :pending-approval      nil
    :pending-message       nil
-   :session-trusted-tools #{}
+   :approval-queue        []
    :init-tasks            {}
    :available-models      []
    :available-agents      []
@@ -116,30 +117,100 @@
     (is (some #(= "tc1" (:id %)) (:items s)))))
 
 (deftest handle-content-tool-call-run-test
-  (testing "trust=true — auto-approves, no mode change"
-    (with-redefs [protocol/approve-tool! (fn [& _] nil)]
+  (testing "manualApproval=true asks, even in trust mode: the server already
+            applied trust, and a hook can still force an ask"
+    (with-redefs [protocol/approve-tool! (fn [& _] (throw (ex-info "must not auto-approve" {})))]
       (let [s (handle-content
                 (assoc (base-state) :trust true)
-                {:content {:type "toolCallRun" :id "tc1" :name "read_file"
+                {:chatId "chat1"
+                 :content {:type "toolCallRun" :id "tc1" :name "read_file"
                            :server "local" :manualApproval true}})]
-        (is (not= :approving (:mode s)))
-        (is (nil? (:pending-approval s))))))
+        (is (= :approving (:mode s)))
+        (is (= {:chat-id "chat1" :tool-call-id "tc1"} (:pending-approval s))))))
 
-  (testing "manualApproval=true trust=false — enters approving mode"
-    (let [s (handle-content
-              (base-state)
-              {:content {:type "toolCallRun" :id "tc1" :name "read_file"
-                         :server "local" :manualApproval true}})]
-      (is (= :approving (:mode s)))
-      (is (= {:chat-id "chat1" :tool-call-id "tc1"} (:pending-approval s)))))
-
-  (testing "manualApproval=false — auto-approves regardless of trust"
-    (with-redefs [protocol/approve-tool! (fn [& _] nil)]
+  (testing "manualApproval=false — the server runs it, nothing is sent back"
+    (with-redefs [protocol/approve-tool! (fn [& _] (throw (ex-info "no approve needed" {})))]
       (let [s (handle-content
                 (base-state)
                 {:content {:type "toolCallRun" :id "tc1" :name "read_file"
                            :server "local" :manualApproval false}})]
-        (is (not= :approving (:mode s)))))))
+        (is (not= :approving (:mode s)))
+        (is (nil? (:pending-approval s))))))
+
+  (testing "parallel calls wait in a queue instead of replacing each other"
+    (let [run (fn [s id] (handle-content s {:chatId "chat1"
+                                            :content {:type "toolCallRun" :id id :name "shell"
+                                                      :server "eca" :manualApproval true}}))
+          s   (-> (base-state) (run "a") (run "b") (run "c"))]
+      (is (= "a" (get-in s [:pending-approval :tool-call-id])))
+      (is (= ["b" "c"] (mapv :tool-call-id (:approval-queue s))))
+      (testing "a call that starts running elsewhere leaves the queue"
+        (let [s' (handle-content s {:chatId "chat1"
+                                    :content {:type "toolCallRunning" :id "b" :name "shell" :server "eca"}})]
+          (is (= ["c"] (mapv :tool-call-id (:approval-queue s'))))))
+      (testing "the shown one settling shows the next"
+        (let [s' (handle-content s {:chatId "chat1"
+                                    :content {:type "toolCallRejected" :id "a" :name "shell" :server "eca"}})]
+          (is (= "b" (get-in s' [:pending-approval :tool-call-id])))
+          (is (= :approving (:mode s')))))
+      (testing "the turn finishing drops whatever still waits"
+        (let [s' (handle-content s {:content {:type "progress" :state "finished"}})]
+          (is (nil? (:pending-approval s')))
+          (is (= [] (:approval-queue s')))
+          (is (= :ready (:mode s'))))))))
+
+(deftest subagent-tool-calls-test
+  (let [spawn-run {:method "chat/contentReceived"
+                   :params {:chatId "chat1" :role "assistant"
+                            :content {:type "toolCallRun" :id "sp1" :name "spawn_agent" :server "eca"
+                                      :summary "Exploring" :manualApproval false
+                                      :details {:type "subagent" :subagentChatId "sub-1"
+                                                :agentName "explorer" :model "m" :step 0}}}}
+        [s _]     (handle-eca-notification (base-state) spawn-run)]
+    (testing "the spawn call is recognised from its subagent details"
+      (is (= {"sub-1" 0} (:subagent-chats s)))
+      (is (= [] (get-in s [:items 0 :sub-items]))))
+    (testing "sub-agent content nests under the spawn call, not in the main chat"
+      (let [[s' _] (handle-eca-notification
+                     s {:method "chat/contentReceived"
+                        :params {:chatId "sub-1" :parentChatId "chat1" :role "assistant"
+                                 :content {:type "text" :text "found it"}}})]
+        (is (= "" (:current-text s')))
+        (is (= "found it" (get-in s' [:items 0 :sub-items 0 :text])))))
+    (testing "a sub-agent's progress does not end the main turn"
+      (let [[s' _] (handle-eca-notification
+                     s {:method "chat/contentReceived"
+                        :params {:chatId "sub-1" :parentChatId "chat1" :role "system"
+                                 :content {:type "progress" :state "finished"}}})]
+        (is (= :chatting (:mode s')))))
+    (testing "a sub-agent call that needs approval asks, answered with the sub-agent's chat id"
+      (let [calls  (atom [])
+            [s' _] (handle-eca-notification
+                     s {:method "chat/contentReceived"
+                        :params {:chatId "sub-1" :parentChatId "chat1" :role "assistant"
+                                 :content {:type "toolCallRun" :id "t9" :name "shell_command" :server "eca"
+                                           :summary "Running ls" :manualApproval true
+                                           :arguments {:command "ls"}}}})]
+        (is (= :approving (:mode s')))
+        (is (= {:chat-id "sub-1" :tool-call-id "t9"} (:pending-approval s')))
+        (is (= "Running ls" (get-in s' [:tool-calls "t9" :summary])) "the approval has the call to show")
+        (with-redefs [protocol/approve-tool! (fn [& args] (swap! calls conj (vec (rest args))))]
+          (let [[s'' _] (state/update-state s' (msg/key-press "y"))]
+            (is (= [["sub-1" "t9"]] @calls))
+            (is (= :chatting (:mode s'')))))))))
+
+(deftest config-updated-select-trust-test
+  (testing "selectTrust syncs the trust indicator and what prompts send"
+    (let [[s _] (handle-eca-notification (base-state) {:method "config/updated"
+                                                       :params {:chatId "chat1" :chat {:selectTrust true}}})]
+      (is (true? (:trust s)))
+      (is (true? (get-in s [:opts :trust])))))
+  (testing "per-chat fields scoped to another chat are ignored"
+    (let [[s _] (handle-eca-notification (base-state) {:method "config/updated"
+                                                       :params {:chatId "other"
+                                                                :chat {:selectTrust true :selectModel "x/y"}}})]
+      (is (false? (:trust s)))
+      (is (nil? (:selected-model s))))))
 
 (deftest handle-content-tool-called-test
   (let [s (handle-content (base-state)
@@ -539,7 +610,7 @@
       (testing "second enter submits and returns non-nil cmd"
         (let [s1' (assoc s1 :input (ti/set-value (:input s1) "my-org"))
               [_ cmd2] (state/update-state s1' (msg/key-press :enter))]
-          (is (some? cmd2))))))
+          (is (some? cmd2)))))))
 
 ;; --- Phase 2: model & agent identity ---
 
@@ -735,7 +806,7 @@
       (is (= :picking (:mode s)))
       (is (= :command (get-in s [:picker :kind])))
       (is (= "" (get-in s [:picker :query])))
-      (is (= 8 (cl/item-count (get-in s [:picker :list]))))))
+      (is (= (count commands/command-registry) (cl/item-count (get-in s [:picker :list]))))))
 
   (testing "typing non-'/' in :ready does not open picker"
     (let [s0 (assoc (base-state) :mode :ready)
@@ -910,25 +981,17 @@
       (is (<= (count (get-in s [:items 0 :out-text])) 8210))
       (is (clojure.string/includes? (get-in s [:items 0 :out-text]) "[truncated]")))))
 
-(deftest task-tool-suppressed-test
-  (testing "toolCallPrepare for eca/task tool does not add to :items"
-    (let [[s _] (handle-eca-notification
-                  (assoc (base-state) :mode :chatting)
-                  {:method "chat/contentReceived"
-                   :params {:chatId "chat1" :role "assistant"
-                            :content {:type "toolCallPrepare" :id "tc1"
-                                      :name "task" :server "eca" :summary "bg task"}}})]
-      (is (empty? (:items s)))))
-
-  (testing "toolCallRun for eca/task tool does not add to :items"
+(deftest task-tool-approval-test
+  (testing "a task tool call that needs approval asks instead of hanging the chat (eca#584)"
     (let [[s _] (handle-eca-notification
                   (assoc (base-state) :mode :chatting)
                   {:method "chat/contentReceived"
                    :params {:chatId "chat1" :role "assistant"
                             :content {:type "toolCallRun" :id "tc1"
-                                      :name "task" :server "eca"
-                                      :summary "bg task" :arguments {}}}})]
-      (is (empty? (:items s))))))
+                                      :name "task" :server "eca" :manualApproval true
+                                      :summary "Planning" :arguments {}}}})]
+      (is (= :approving (:mode s)))
+      (is (= "tc1" (get-in s [:pending-approval :tool-call-id]))))))
 
 (deftest subagent-fallthrough-test
   (testing "contentReceived with parentChatId and no registered parent falls through to main flow"
@@ -1086,7 +1149,7 @@
                                :sub-items [{:type :tool-call :name "read_file"
                                             :state :called :expanded? false}]}])
           [s _] (state/update-state base (msg/key-press :enter))]
-      (is (true? (get-in s [:items 0 :sub-items 0 :expanded?])))))))
+      (is (true? (get-in s [:items 0 :sub-items 0 :expanded?]))))))
 
 ;; --- Pre-refactor coverage hardening (Phase A step 1) ---
 ;; These tests pin down behaviors that will be split across nses in later steps.
@@ -1105,20 +1168,31 @@
           (is (= :chatting (:mode s)))
           (is (nil? (:pending-approval s)))
           (is (= 1 (count @calls)))
-          (is (= "tc1" (nth (first @calls) 2)))
-          (is (= #{} (:session-trusted-tools s))))))))
+          (is (= "tc1" (nth (first @calls) 2))))))))
 
-(deftest approving-Y-key-approves-and-trusts-tool-test
-  (testing "Y in :approving approves AND adds tool name to session-trusted-tools"
-    (with-redefs [protocol/approve-tool! (fn [& _] nil)]
-      (let [s0 (-> (base-state)
-                   (assoc :mode :approving
-                          :pending-approval {:chat-id "chat1" :tool-call-id "tc1"}
-                          :tool-calls {"tc1" {:id "tc1" :name "read_file"}}))
-            [s _] (state/update-state s0 (msg/key-press "Y"))]
-        (is (= :chatting (:mode s)))
-        (is (nil? (:pending-approval s)))
-        (is (contains? (:session-trusted-tools s) "read_file"))))))
+(deftest approving-Y-key-approves-and-remembers-test
+  (let [approve-with (fn [tool]
+                       (let [calls (atom [])]
+                         (with-redefs [protocol/approve-tool! (fn [& args] (swap! calls conj (vec (rest args))))]
+                           (let [s0 (-> (base-state)
+                                        (assoc :mode :approving
+                                               :pending-approval {:chat-id "chat1" :tool-call-id "tc1"}
+                                               :tool-calls {"tc1" (assoc tool :id "tc1")}))
+                                 [s _] (state/update-state s0 (msg/key-press "Y"))]
+                             (is (= :chatting (:mode s)))
+                             (is (nil? (:pending-approval s)))
+                             @calls))))]
+    (testing "the server remembers the approval for the chat (save session), not the client"
+      (is (= [["chat1" "tc1" "session"]] (approve-with {:name "read_file"}))))
+    (testing "a shell call remembers its commands the same way"
+      (is (= [["chat1" "tc1" "session"]]
+             (approve-with {:name "shell_command"
+                            :shell {:commands [{:command "git" :args ["checkout" "x"]
+                                                :approval-key "git checkout" :remembered? false}]}}))))
+    (testing "nothing left to remember: a plain approve"
+      (is (= [["chat1" "tc1" nil]]
+             (approve-with {:name "shell_command"
+                            :shell {:commands [{:command "sudo" :args ["ls"] :approval-key nil}]}}))))))
 
 (deftest approving-n-key-rejects-and-returns-to-chatting-test
   (testing "n in :approving calls protocol/reject-tool! and clears pending-approval"
@@ -1138,7 +1212,7 @@
 (deftest ready-enter-sends-chat-prompt-test
   (testing "Enter in :ready with non-slash text sends prompt and enters :chatting"
     (let [prompts (atom [])]
-      (with-redefs [protocol/chat-prompt! (fn [srv params _cb]
+      (with-redefs [protocol/chat-prompt! (fn [_srv params _cb]
                                             (swap! prompts conj params))]
         (let [s0 (-> (base-state)
                      (assoc :mode :ready
