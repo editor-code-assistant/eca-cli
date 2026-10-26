@@ -9,16 +9,21 @@
 ;; --- Send helpers ---
 
 (defn send-request!
-  "Sends a JSON-RPC request and registers a callback for the response."
+  "Sends a JSON-RPC request and registers a callback for the response.
+  Returns the request id, or nil when the server is gone (the callback is
+  then never called)."
   [srv method params callback]
   (let [id (next-id!)
         msg {:jsonrpc "2.0" :id id :method method :params params}]
     (swap! pending-requests assoc id callback)
-    (server/write-message! (:writer srv) msg)
-    id))
+    (if (server/write-message! (:writer srv) msg)
+      id
+      (do (swap! pending-requests dissoc id)
+          nil))))
 
 (defn send-notification!
-  "Sends a JSON-RPC notification (no response expected)."
+  "Sends a JSON-RPC notification (no response expected). Returns false when
+  the server is gone."
   [srv method params]
   (server/write-message! (:writer srv)
                          {:jsonrpc "2.0" :method method :params params}))
@@ -26,10 +31,11 @@
 ;; --- Message constructors ---
 
 (defn initialize-params
-  "Builds the initialize request params."
+  "Builds the initialize request params. `processId` lets the server exit on
+  its own if eca-cli dies without a clean shutdown (e.g. SIGKILL)."
   [workspace-path]
   (let [name (.getName (java.io.File. workspace-path))]
-    {:processId nil
+    {:processId (.pid (java.lang.ProcessHandle/current))
      :clientInfo {:name "eca-cli" :version "0.1.0"}
      :capabilities {:codeAssistant {:chat true}}
      :workspaceFolders [{:uri (str "file://" workspace-path)
@@ -79,25 +85,23 @@
 ;; --- High-level lifecycle ---
 
 (defn initialize!
-  "Sends initialize request, waits for response, sends initialized notification.
-   Returns the initialize result (contains welcome message etc.)."
-  [srv workspace-path]
-  (let [result (promise)]
-    (send-request! srv "initialize" (initialize-params workspace-path)
-                   (fn [response]
-                     (deliver result (or (:result response) (:error response)))))
-    (let [res (deref result 10000 ::timeout)]
-      (when (= res ::timeout)
-        (throw (ex-info "Initialize timed out" {})))
-      (send-notification! srv "initialized" {})
-      res)))
+  "Sends the initialize request; `callback` receives the raw response. Not
+  bounded by a timeout: the server may legitimately take a while (e.g. config
+  commands fetching provider tokens), and a server that dies instead is
+  reported by the reader thread. Send `initialized!` once the response is in."
+  [srv workspace-path callback]
+  (send-request! srv "initialize" (initialize-params workspace-path) callback))
+
+(defn initialized! [srv]
+  (send-notification! srv "initialized" {}))
 
 (defn shutdown!
-  "Sends shutdown request, then exit notification."
+  "Sends shutdown request, then exit notification. Doesn't wait for an answer
+  when the request couldn't even be sent."
   [srv]
   (let [done (promise)]
-    (send-request! srv "shutdown" {} (fn [_] (deliver done true)))
-    (deref done 5000 nil)
+    (when (send-request! srv "shutdown" {} (fn [_] (deliver done true)))
+      (deref done 5000 nil))
     (send-notification! srv "exit" {})))
 
 (defn chat-prompt!

@@ -12,6 +12,30 @@
   (is (= "──────────" (view/divider 10)))
   (is (= 40 (count (view/divider 40)))))
 
+(deftest render-connecting-test
+  (let [home  (System/getProperty "user.home")
+        state {:connecting-since 1000000
+               :server           {:log-file (java.io.File. (str home "/.local/state/eca/eca-cli.log"))}}]
+    (testing "first seconds: just the spinner line"
+      (let [s (view/render-connecting state 1001000)]
+        (is (re-find #"Connecting to ECA server…$" s))))
+    (testing "after a few seconds: elapsed time"
+      (is (re-find #"Connecting to ECA server… 5s$" (view/render-connecting state 1005000))))
+    (testing "when it drags on: where to look, home-relative"
+      (is (re-find #"… 20s  \(taking long\? see ~/\.local/state/eca/eca-cli\.log\)$"
+                   (view/render-connecting state 1020000))))))
+
+(deftest view-connection-modes-test
+  (let [base {:width 60 :height 12 :chat-lines [] :scroll-offset 0 :items []
+              :input (ti/text-input) :opts {:workspace "/tmp/ws"} :init-tasks {} :mcps {}}]
+    (testing ":connecting shows the connecting indicator"
+      (is (re-find #"Connecting to ECA server"
+                   (view/view (assoc base :mode :connecting
+                                     :connecting-since (System/currentTimeMillis))))))
+    (testing ":disconnected replaces the input with a hint"
+      (let [out (view/view (assoc base :mode :disconnected))]
+        (is (re-find #"ECA server is not running\. Press Ctrl\+C to exit\." out))))))
+
 (deftest rebuild-chat-lines-test
   (testing "empty"
     (is (= {:lines [] :spans {}} (view/rebuild-chat-lines [] "" 80))))

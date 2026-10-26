@@ -1,25 +1,21 @@
 (ns eca-cli.server
   (:require [cheshire.core :as json]
+            [babashka.fs :as fs]
             [babashka.process :as proc]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [eca-cli.paths :as paths])
   (:import [java.io BufferedInputStream BufferedWriter OutputStreamWriter]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (defn find-eca-binary
-  "Finds the ECA binary. Preference: eca-cli managed, PATH, editor plugin caches."
+  "Non-installing lookup, for REPL/dev use: `eca` on PATH, else the managed
+  binary if present. `bb run` resolves through `upgrade/resolve-binary!`
+  instead, which also installs and updates the managed binary."
   []
-  (let [home (System/getProperty "user.home")]
-    (or (let [f (paths/eca-binary)]
-          (when (.exists f) (str f)))
-        (some-> (proc/process ["which" "eca"] {:err :string :out :string})
-                deref :out clojure.string/trim
-                not-empty)
-        (some (fn [path]
-                (when (.exists (java.io.File. path)) path))
-              [(str home "/.cache/nvim/eca/eca")
-               (str home "/Library/Caches/nvim/eca/eca")
-               (str home "/.emacs.d/eca/eca")]))))
+  (or (some-> (fs/which "eca") str)
+      (let [f (paths/eca-binary)]
+        (when (.exists f) (str f)))))
 
 (defn- ensure-writable
   "Ensures parent dir exists and returns the file if its parent is a directory, else nil."
@@ -29,16 +25,16 @@
     f))
 
 (defn spawn!
-  "Spawns the ECA server process. Returns a map with :process, :reader, :writer, :queue."
+  "Spawns the ECA server process. Returns a map with :process, :reader,
+  :writer, :queue, :alive? and :log-file (where the server's stderr goes, nil
+  when inherited)."
   ([] (spawn! {}))
   ([{:keys [path log-file]}]
    (let [binary    (or path (find-eca-binary))
          _         (when-not binary
                      (throw (ex-info
-                              (str "ECA binary not found.\n"
-                                   "Install via a supported editor plugin or download from:\n"
-                                   "  https://github.com/editor-code-assistant/eca/releases\n"
-                                   "Or specify path with --eca <path>")
+                              (str "ECA binary not found. Run `bb upgrade-eca` to install it, "
+                                   "or pass --eca /path/to/eca.")
                               {})))
          candidate (or log-file (paths/log-file))
          log       (ensure-writable candidate)
@@ -50,11 +46,12 @@
          reader    (BufferedInputStream. (:out p))
          writer    (BufferedWriter. (OutputStreamWriter. (:in p) "UTF-8"))
          queue     (LinkedBlockingQueue.)]
-     {:process p
-      :reader reader
-      :writer writer
-      :queue queue
-      :alive? (atom true)})))
+     {:process  p
+      :reader   reader
+      :writer   writer
+      :queue    queue
+      :alive?   (atom true)
+      :log-file log})))
 
 ;; --- JSON-RPC framing ---
 
@@ -102,22 +99,80 @@
       (json/parse-string body true))))
 
 (defn write-message!
-  "Writes a JSON-RPC message with Content-Length framing."
+  "Writes a JSON-RPC message with Content-Length framing. Serialized on the
+  writer, since the update loop, cmd threads and response callbacks all send.
+  Returns true when written, false when the server is gone (no writer, or its
+  stdin is closed): the reader thread observes the exit and reports it, so a
+  write racing a dying server must not crash the UI."
   [^BufferedWriter writer msg]
-  (let [body (json/generate-string msg)
-        bytes (.getBytes body "UTF-8")
-        header (str "Content-Length: " (count bytes) "\r\n\r\n")]
-    (.write writer header)
-    (.write writer body)
-    (.flush writer)))
+  (if-not writer
+    false
+    (let [body   (json/generate-string msg)
+          bytes  (.getBytes body "UTF-8")
+          header (str "Content-Length: " (count bytes) "\r\n\r\n")]
+      (try
+        (locking writer
+          (.write writer header)
+          (.write writer body)
+          (.flush writer))
+        true
+        (catch java.io.IOException _ false)))))
+
+;; --- Exit report ---
+
+(defn log-tail
+  "Last `n` non-blank lines of `file`, or [] when it can't be read."
+  [file n]
+  (try
+    (->> (str/split-lines (slurp file))
+         (remove str/blank?)
+         (take-last n)
+         vec)
+    (catch Exception _ [])))
+
+(defn exit-code
+  "Exit code of the server process, waiting up to `wait-ms` for an exit in
+  progress to finish; nil while it's still running."
+  [srv wait-ms]
+  (when-let [^Process p (some-> srv :process :proc)]
+    (when (.waitFor p (long wait-ms) TimeUnit/MILLISECONDS)
+      (.exitValue p))))
+
+(defn format-exit-report
+  "User-facing explanation of a server that went away: why (exit code or
+  error), then the tail of its stderr log, where the real cause usually is."
+  [{:keys [exit-code error log-file log-lines]}]
+  (str/join "\n"
+            (concat
+              [(cond
+                 exit-code (str "ECA server exited unexpectedly (exit code " exit-code ").")
+                 error     (str "Lost connection to the ECA server: " error)
+                 :else     "Lost connection to the ECA server.")]
+              (cond
+                (seq log-lines) (cons (str "Last lines of " log-file ":")
+                                      ;; A visible gutter: the chat renderer
+                                      ;; drops leading whitespace.
+                                      (map #(str "│ " %) log-lines))
+                log-file        [(str "It wrote nothing to " log-file ".")]))))
+
+(defn exit-report
+  "Build the exit report for `srv`; `error` is the reader exception, if any."
+  [srv error]
+  (let [log-file (:log-file srv)]
+    (format-exit-report {:exit-code (exit-code srv 2000)
+                         :error     error
+                         :log-file  (some-> log-file paths/home-relative)
+                         :log-lines (when log-file (log-tail log-file 8))})))
 
 ;; --- Reader thread ---
 
 (defn start-reader!
   "Starts a background thread that reads JSON-RPC messages and dispatches them.
    Responses (have :id, no :method) go to pending-requests callbacks.
-   Notifications (have :method) go onto the queue for charm.clj."
-  [{:keys [reader queue alive? pending-requests]}]
+   Notifications (have :method) go onto the queue for charm.clj.
+   When the server goes away unexpectedly, queues a :reader-error whose
+   :error is a user-facing exit report (see `exit-report`)."
+  [{:keys [reader queue alive? pending-requests] :as srv}]
   (let [t (Thread.
            (fn []
              (try
@@ -125,19 +180,20 @@
                  (when @alive?
                    (if-let [msg (read-message! reader)]
                      (do (if (and (:id msg) (not (:method msg)))
-                           ;; Response — invoke pending callback
+                           ;; Response — invoke pending callback. A failing
+                           ;; callback must not take the connection down.
                            (when-let [cb (get @pending-requests (:id msg))]
                              (swap! pending-requests dissoc (:id msg))
-                             (cb msg))
+                             (try (cb msg) (catch Exception _ nil)))
                            ;; Notification — queue for charm.clj
                            (.put queue msg))
                          (recur))
                      ;; nil = EOF: ECA process died unexpectedly
                      (when @alive?
-                       (.put queue {:type :reader-error :error "ECA process disconnected"})))))
+                       (.put queue {:type :reader-error :error (exit-report srv nil)})))))
                (catch Exception e
                  (when @alive?
-                   (.put queue {:type :reader-error :error (str e)}))))))]
+                   (.put queue {:type :reader-error :error (exit-report srv (str e))}))))))]
     (.setDaemon t true)
     (.setName t "eca-cli-reader")
     (.start t)
@@ -158,8 +214,10 @@
 ;; --- Lifecycle ---
 
 (defn shutdown!
-  "Gracefully stops the server."
+  "Stops the server process (tree). Nil-safe: there's no server when it
+  failed to spawn."
   [{:keys [process alive?]}]
-  (reset! alive? false)
+  (when alive?
+    (reset! alive? false))
   (when process
     (proc/destroy-tree process)))

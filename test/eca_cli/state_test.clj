@@ -1,5 +1,6 @@
 (ns eca-cli.state-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
@@ -7,6 +8,7 @@
             [eca-cli.login :as login]
             [eca-cli.protocol :as protocol]
             [eca-cli.chats :as chats]
+            [eca-cli.server :as server]
             [eca-cli.state :as state]))
 
 (def ^:private flush-current-text       chat/flush-current-text)
@@ -265,14 +267,112 @@
       (is (= "hello" (:current-text s))))))
 
 (deftest handle-reader-error-test
-  (testing "reader error adds system message and returns to :ready"
+  (testing "reader error shows the exit report and enters :disconnected"
     (let [[s _] (handle-eca-tick
                   (base-state)
-                  [{:type :reader-error :error "Broken pipe"}])]
-      (is (= :ready (:mode s)))
+                  [{:type :reader-error :error "ECA server exited unexpectedly (exit code 127)."}])]
+      (is (= :disconnected (:mode s)))
       (is (= 1 (count (:items s))))
       (is (= :system (:type (first (:items s)))))
-      (is (clojure.string/includes? (:text (first (:items s))) "Broken pipe")))))
+      (is (str/includes? (:text (first (:items s))) "exit code 127"))
+      (is (not (ti/focused? (:input s))) "no more input once the server is gone")))
+
+  (testing "streamed text is kept, and approval / picker / login overlays are dropped"
+    (let [[s _] (handle-eca-tick
+                  (assoc (base-state)
+                         :mode :approving
+                         :current-text "partial answer"
+                         :pending-approval {:chat-id "chat1" :tool-call-id "t1"}
+                         :picker {:kind :model}
+                         :login {:provider "x"})
+                  [{:type :reader-error :error "Lost connection to the ECA server."}])]
+      (is (= :disconnected (:mode s)))
+      (is (= ["partial answer" "Lost connection to the ECA server."] (mapv :text (:items s))))
+      (is (= "" (:current-text s)))
+      (is (nil? (:pending-approval s)))
+      (is (not (contains? s :picker)))
+      (is (not (contains? s :login))))))
+
+(deftest handle-initialize-response-test
+  (testing "success: confirms with `initialized` and starts taking input"
+    (let [sent (atom 0)]
+      (with-redefs [protocol/initialized! (fn [_] (swap! sent inc))]
+        (let [[s _] (handle-eca-tick
+                      (assoc (base-state) :mode :connecting :connecting-since 1)
+                      [{:type :eca-initialize-response
+                        :response {:id 1 :result {:chatWelcomeMessage "hi"}}}])]
+          (is (= :ready (:mode s)))
+          (is (not (contains? s :connecting-since)))
+          (is (ti/focused? (:input s)))
+          (is (= 1 @sent))))))
+
+  (testing "error response: report it and disconnect"
+    (with-redefs [protocol/initialized! (fn [_] (throw (ex-info "must not be called" {})))]
+      (let [[s _] (handle-eca-tick
+                    (assoc (base-state) :mode :connecting)
+                    [{:type :eca-initialize-response
+                      :response {:id 1 :error {:code -32603 :message "boom"}}}])]
+        (is (= :disconnected (:mode s)))
+        (is (str/includes? (:text (last (:items s))) "boom")))))
+
+  (testing "ignored unless still connecting"
+    (with-redefs [protocol/initialized! (fn [_] (throw (ex-info "must not be called" {})))]
+      (let [s0    (assoc (base-state) :mode :disconnected)
+            [s _] (handle-eca-tick s0 [{:type :eca-initialize-response :response {:result {}}}])]
+        (is (= s0 s))))))
+
+(deftest drain-loop-lifecycle-test
+  (let [queue (java.util.concurrent.LinkedBlockingQueue.)]
+    (testing "keeps draining while the server is around"
+      (let [[_ cmd] (state/update-state (assoc (base-state) :mode :connecting :server {:queue queue})
+                                        {:type :eca-tick :msgs []})]
+        (is (some? cmd))))
+    (testing "stops once disconnected: nothing will ever arrive again"
+      (let [[s cmd] (state/update-state (assoc (base-state) :mode :ready :server {:queue queue})
+                                        {:type :eca-tick
+                                         :msgs [{:type :reader-error :error "gone"}]})]
+        (is (= :disconnected (:mode s)))
+        (is (empty? (:cmds cmd)) "no further drain cmd scheduled")))))
+
+(deftest disconnected-mode-keys-test
+  (let [s0 (-> (base-state)
+               (assoc :mode :disconnected :height 10 :scroll-offset 0
+                      :chat-lines (vec (repeat 40 "line"))))]
+    (testing "typing is ignored"
+      (let [[s cmd] (state/update-state s0 (msg/key-press "a"))]
+        (is (= s0 s))
+        (is (nil? cmd))))
+    (testing "Enter does not send anything"
+      (let [[s cmd] (state/update-state s0 (msg/key-press :enter))]
+        (is (= s0 s))
+        (is (nil? cmd))))
+    (testing "scrolling still works, to read the report"
+      (let [[s _] (state/update-state s0 (msg/key-press :page-up))]
+        (is (pos? (:scroll-offset s)))))
+    (testing "Ctrl+C quits"
+      (let [[_ cmd] (state/update-state s0 (msg/key-press "c" :ctrl true))]
+        (is (= :sequence (:type cmd)))))))
+
+(deftest make-init-test
+  (testing "spawn failure: no exception escapes init (it runs outside charm's try/finally)"
+    (with-redefs [server/spawn! (fn [_] (throw (java.io.IOException. "error=13, Permission denied")))]
+      (let [[s cmd] ((state/make-init {:workspace "/tmp" :eca "/nope/eca"
+                                       :startup-notices ["offline notice"]}))]
+        (is (= :disconnected (:mode s)))
+        (is (nil? (:server s)))
+        (is (nil? cmd))
+        (is (= "offline notice" (:text (first (:items s)))))
+        (is (str/includes? (:text (last (:items s))) "Permission denied")))))
+
+  (testing "spawn success: connects asynchronously and drains the queue from the start"
+    (let [queue (java.util.concurrent.LinkedBlockingQueue.)]
+      (with-redefs [server/spawn!        (fn [_] {:queue queue :writer nil})
+                    server/start-reader! (fn [_] nil)]
+        (let [[s cmd] ((state/make-init {:workspace "/tmp" :eca "/x/eca"}))]
+          (is (= :connecting (:mode s)))
+          (is (number? (:connecting-since s)))
+          (is (= :batch (:type cmd)))
+          (is (= 2 (count (:cmds cmd))) "init + drain"))))))
 
 ;; --- Login state machine ---
 

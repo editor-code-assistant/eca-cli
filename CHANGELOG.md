@@ -4,6 +4,23 @@ All notable changes to eca-cli. Format inspired by [Keep a Changelog](https://ke
 
 ## Unreleased
 
+Plug-and-play pass: eca-cli now installs and updates its own ECA server and works on NixOS and inside tmux.
+
+### Fixed
+
+- Dividers and boxes rendered as `qqqq…` / `xxxx` inside tmux/screen: JLine draws box glyphs through the terminal's alternate charset, which with `screen-256color`/`tmux-256color` terminfo (SO/SI) requires `enacs` first. eca-cli now sends the terminal's `enacs` on startup (`terminal.clj`).
+- "Error: Stream closed" on NixOS/musl: `bb upgrade-eca` installed the glibc-linked build, which can't run there. Linux x86_64 now uses the static build, like the editor plugins.
+- `bb` printed a warning about the `run` task overriding a built-in on every invocation.
+
+### Changed
+
+- ECA server management matches the editor plugins: no pinned version. On startup eca-cli resolves `--eca` → `eca` on PATH → a managed binary in `~/.cache/eca/eca-cli/`, which it installs on first run and updates to the latest GitHub release (checked at most hourly). Downloads are sha256-verified, checked to run, and swapped in atomically, with an `eca-version` marker. Offline, the installed binary is used with a notice. No `curl`/`unzip` needed anymore. Dropped the scavenging of nvim/emacs plugin binaries.
+- `bb upgrade-eca` checks for and installs the latest release now; `--force` reinstalls.
+- Connecting is asynchronous with no 10s `initialize` timeout (a config fetching a provider token can take longer): a "Connecting to ECA server…" spinner shows elapsed time, and points at the server log when it drags on.
+- When the server dies, eca-cli shows its exit code and the last lines of its log, and enters a `:disconnected` mode (scroll + quit only) instead of crashing on the next write. Quitting while connecting/disconnected is immediate.
+- `initialize` sends eca-cli's PID so the server exits on its own if eca-cli is killed.
+- `--workspace` is canonicalized (relative paths no longer produce `file://.` URIs).
+
 ## Phase 11 — Power Features *(partial)*
 
 `@`-file context injection and the background-jobs panel shipped; `/rollback` + `/fork` remain (see `docs/roadmap.md` Phase 11).

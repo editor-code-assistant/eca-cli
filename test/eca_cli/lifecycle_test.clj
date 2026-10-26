@@ -72,6 +72,21 @@
           (is (= [:protocol-shutdown-attempted :server-shutdown] @calls)
               "Server kill must run even when protocol shutdown explodes"))))))
 
+(deftest cmd-quit-skips-graceful-shutdown-when-not-connected-test
+  (testing "while connecting (server busy / not initialized) or after the server died, quit is immediate"
+    (doseq [mode [:connecting :disconnected]]
+      (let [calls (atom [])]
+        (with-redefs [protocol/shutdown! (fn [_] (swap! calls conj :protocol-shutdown))
+                      server/shutdown!   (fn [_] (swap! calls conj :server-shutdown))]
+          (let [[_state cmd] (commands/cmd-quit {:mode mode :server {:queue nil}})]
+            (run-sequence-cmd! cmd)
+            (is (= [:server-shutdown] @calls) (str "mode " mode)))))))
+
+  (testing "no server at all (spawn failed): quitting still works"
+    (let [[_state cmd] (commands/cmd-quit {:mode :disconnected :server nil})]
+      (is (= :sequence (:type cmd)))
+      (run-sequence-cmd! cmd))))
+
 ;; --- Ctrl+C and /quit equivalence ---
 
 (deftest ctrl-c-and-cmd-quit-equivalent-test

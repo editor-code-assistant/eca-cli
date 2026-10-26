@@ -53,6 +53,15 @@
     (is (= "/tmp/s/eca/eca-cli.log" (str (paths/log-file))))
     (is (= "/tmp/s/eca/eca-cli-nrepl.log" (str (paths/nrepl-log-file))))))
 
+(deftest home-relative-test
+  (let [home (System/getProperty "user.home")]
+    (is (= "~/.local/state/eca/eca-cli.log"
+           (paths/home-relative (str home "/.local/state/eca/eca-cli.log"))))
+    (is (= "/tmp/eca-cli.log" (paths/home-relative "/tmp/eca-cli.log")))
+    (is (= (str home "x/file") (paths/home-relative (str home "x/file")))
+        "only a whole path segment counts as home")
+    (is (= "/tmp/f" (paths/home-relative (java.io.File. "/tmp/f"))) "accepts files")))
+
 (deftest eca-binary-under-cache-test
   (with-redefs [paths/getenv (stub-env {"XDG_CACHE_HOME" "/tmp/c"})]
     (is (= "/tmp/c/eca/eca-cli/eca" (str (paths/eca-binary))))))

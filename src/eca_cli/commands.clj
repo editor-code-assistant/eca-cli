@@ -56,12 +56,19 @@
         text  (str/join "\n" (into ["Available commands:"] lines))]
     [(update state :items conj {:type :system :text text}) nil]))
 
-(defn cmd-quit [state]
-  ;; Inline of the shutdown sequence. state.clj keeps an identical Ctrl+C path.
-  [state (program/sequence-cmds
-           (program/cmd (fn [] (try (protocol/shutdown! (:server state)) (catch Exception _)) nil))
-           (program/cmd (fn [] (server/shutdown! (:server state)) nil))
-           program/quit-cmd)])
+(defn cmd-quit
+  "Quit: graceful protocol `shutdown`/`exit`, then kill the server process.
+  The protocol step is skipped when the server never finished initializing
+  (:connecting) or is already gone (:disconnected), so quitting is instant
+  there. Also the Ctrl+C path (state.clj)."
+  [state]
+  (let [srv       (:server state)
+        graceful? (and srv (not (#{:connecting :disconnected} (:mode state))))]
+    [state (program/sequence-cmds
+             (when graceful?
+               (program/cmd (fn [] (try (protocol/shutdown! srv) (catch Exception _)) nil)))
+             (program/cmd (fn [] (server/shutdown! srv) nil))
+             program/quit-cmd)]))
 
 (defn cmd-login [state]
   [state (login/start-login-cmd (:server state) nil)])

@@ -3,6 +3,7 @@
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
             [eca-cli.mcp :as mcp]
+            [eca-cli.paths :as paths]
             [eca-cli.view.blocks :as blocks]))
 
 ;; Lazy resolution to break the jobs ↔ view circular require.
@@ -58,10 +59,26 @@
         visible        (pad-to-height (subvec lines start end) visible-height)]
     (str/join "\n" visible)))
 
+(def ^:private spinner-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
+
+(defn- spinner-frame [now]
+  (nth spinner-frames (mod (quot now 120) (count spinner-frames))))
+
 (defn- thinking-pulse []
-  (let [frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"]
-        idx    (mod (quot (System/currentTimeMillis) 120) (count frames))]
-    (str "◆ " (nth frames idx))))
+  (str "◆ " (spinner-frame (System/currentTimeMillis))))
+
+(defn render-connecting
+  "Gutter line while the server hasn't answered `initialize` yet. That's
+  normally instant, but config commands (e.g. fetching a provider token) can
+  hold it up, so show the wait and, when it drags on, where to look."
+  [state now]
+  (let [secs (quot (- now (or (:connecting-since state) now)) 1000)
+        log  (some-> (get-in state [:server :log-file]) paths/home-relative)]
+    (str "◆ " (spinner-frame now) " Connecting to ECA server…"
+         (when (>= secs 3) (str " " secs "s"))
+         (when (and log (>= secs 15)) (str "  (taking long? see " log ")")))))
+
+(def disconnected-hint "ECA server is not running. Press Ctrl+C to exit.")
 
 (defn render-approval
   "Render the pending tool call through the shared block renderer, force-expanded
@@ -165,6 +182,9 @@
                      (= :chatting mode)
                      ""
 
+                     (= :disconnected mode)
+                     disconnected-hint
+
                      (= :login mode)
                      (let [action-type  (get-in state [:login :action :action])
                            needs-input? (or (= "input" action-type)
@@ -176,9 +196,14 @@
 
                      :else
                      (ti/text-input-view (:input state)))
-        gutter     (if (and (= :chatting mode) (empty? (:current-text state)))
+        gutter     (cond
+                     (= :connecting mode)
+                     (render-connecting state (System/currentTimeMillis))
+
+                     (and (= :chatting mode) (empty? (:current-text state)))
                      (thinking-pulse)
-                     "")]
+
+                     :else "")]
     (str (render-chat state)
          "\n" gutter
          "\n" (divider (:width state))

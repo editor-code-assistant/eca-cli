@@ -8,7 +8,6 @@
             [eca-cli.server :as server]
             [eca-cli.protocol :as protocol]
             [eca-cli.chats :as chats]
-            [eca-cli.upgrade :as upgrade]
             [eca-cli.view :as view]
             [eca-cli.chat :as chat]
             [eca-cli.picker :as picker]
@@ -28,19 +27,18 @@
       {:type :eca-tick
        :msgs (server/read-batch! queue 50)})))
 
-(defn- init-cmd [srv workspace]
+(defn- init-cmd
+  "Send `initialize`; the response comes back through the queue as an
+  :eca-initialize-response, handled in `handle-eca-tick` like any other
+  server message."
+  [srv workspace]
   (program/cmd
     (fn []
-      (try
-        {:type :eca-initialized :result (protocol/initialize! srv workspace)}
-        (catch Exception e
-          {:type :eca-error :error (ex-message e)})))))
-
-(defn- shutdown-cmd [srv]
-  (program/sequence-cmds
-    (program/cmd (fn [] (try (protocol/shutdown! srv) (catch Exception _)) nil))
-    (program/cmd (fn [] (server/shutdown! srv) nil))
-    program/quit-cmd))
+      (protocol/initialize! srv workspace
+                            (fn [response]
+                              (.put ^java.util.concurrent.BlockingQueue (:queue srv)
+                                    {:type :eca-initialize-response :response response})))
+      nil)))
 
 (defn- query-files-cmd [srv chat-id query]
   (program/cmd
@@ -94,18 +92,46 @@
 
     [state nil]))
 
+(defn- disconnect
+  "The server is gone (or refused us): show why and stop taking input. Only
+  quitting and scrolling work in :disconnected."
+  [state report]
+  (-> state
+      chat/flush-current-text
+      (assoc :mode :disconnected :pending-approval nil)
+      (dissoc :picker :login)
+      (update :items conj {:type :system :text report})
+      (update :input ti/blur)
+      view/rebuild-lines))
+
+(defn- handle-initialize-response
+  "Server answered `initialize`: confirm with `initialized` (the server then
+  pushes config/updated, MCP status, …) and start taking input."
+  [state {:keys [error]}]
+  (cond
+    (not= :connecting (:mode state))
+    state
+
+    error
+    (disconnect state (str "The ECA server refused to initialize: "
+                           (or (:message error) (pr-str error))))
+
+    :else
+    (do (protocol/initialized! (:server state))
+        (-> state
+            (assoc :mode :ready)
+            (dissoc :connecting-since)
+            (update :input ti/focus)))))
+
 (defn- handle-eca-tick [state msgs]
   (reduce
     (fn [[s cmd] m]
       (cond
         (= :reader-error (:type m))
-        [(-> s
-             (assoc :mode :ready)
-             (update :items conj {:type :system
-                                   :text (str "ECA disconnected: " (:error m))})
-             (update :input ti/focus)
-             view/rebuild-lines)
-         nil]
+        [(disconnect s (:error m)) cmd]
+
+        (= :eca-initialize-response (:type m))
+        [(handle-initialize-response s (:response m)) cmd]
 
         (= :eca-prompt-response (:type m))
         (let [s' (cond-> s
@@ -126,6 +152,7 @@
 
 (defn- initial-state [srv opts]
   {:mode                  :connecting
+   :connecting-since      (System/currentTimeMillis)
    :server                srv
    :opts                  opts
    :trust                 (boolean (:trust opts))
@@ -160,18 +187,46 @@
    :model                 nil
    :usage                 nil})
 
-(defn make-init [opts]
-  (fn []
-    (let [workspace (:workspace opts)
-          binary    (or (:eca opts) (server/find-eca-binary))
-          srv       (-> (server/spawn! {:path binary})
-                        (assoc :pending-requests protocol/pending-requests))
-          warn      (upgrade/check-version binary)
-          init-s    (cond-> (initial-state srv opts)
-                      warn (-> (update :items conj {:type :system :text warn})
-                               view/rebuild-lines))]
+(defn- add-notices
+  "Append startup notices (e.g. an update check skipped while offline) as
+  system items."
+  [state notices]
+  (if (seq notices)
+    (-> state
+        (update :items into (map (fn [n] {:type :system :text n}) notices))
+        view/rebuild-lines)
+    state))
+
+(defn- spawn-server
+  "Spawn the server and start its reader thread. Returns the server map, or
+  the exception: charm calls init outside its try/finally, so anything thrown
+  here would leave the terminal in raw mode."
+  [binary]
+  (try
+    (let [srv (-> (server/spawn! {:path binary})
+                  (assoc :pending-requests protocol/pending-requests))]
       (server/start-reader! srv)
-      [init-s (init-cmd srv workspace)])))
+      srv)
+    (catch Exception e e)))
+
+(defn make-init
+  "`opts` carries the CLI flags; `:eca` is the resolved binary path (see
+  `upgrade/resolve-binary!`) and `:startup-notices` any warnings from it.
+
+  The queue is drained from the start, not only once connected, so a server
+  that dies while starting up is reported right away."
+  [opts]
+  (fn []
+    (let [srv (spawn-server (or (:eca opts) (server/find-eca-binary)))]
+      (if (instance? Exception srv)
+        [(-> (initial-state nil opts)
+             (add-notices (:startup-notices opts))
+             (disconnect (str "Could not start the ECA server: "
+                              (or (ex-message srv) (str srv)))))
+         nil]
+        [(add-notices (initial-state srv opts) (:startup-notices opts))
+         (program/batch (init-cmd srv (:workspace opts))
+                        (drain-queue-cmd (:queue srv)))]))))
 
 ;; --- Update ---
 ;;
@@ -215,6 +270,12 @@
        (or (picker/printable-char? msg)
            (and (msg/key-press? msg) (msg/key-match? msg :backspace)))))
 
+(defn- scroll-msg? [msg]
+  (or (and (msg/key-press? msg)
+           (or (msg/key-match? msg :page-up) (msg/key-match? msg :page-down)))
+      (msg/wheel-up? msg)
+      (msg/wheel-down? msg)))
+
 (defn update-state [state msg]
   (reset! debug-state {:state (dissoc state :server :input)
                        :msg-type (or (:type msg) (:method msg))
@@ -225,21 +286,21 @@
       (= :window-size (:type msg))
       [(-> state (assoc :width (:width msg) :height (:height msg)) view/rebuild-lines) nil]
 
-      (= :eca-initialized (:type msg))
-      [(-> state (assoc :mode :ready) (update :input ti/focus))
-       (drain-queue-cmd queue)]
-
       (= :eca-error (:type msg))
       [(-> state
-           (assoc :mode :ready)
+           (cond-> (not= :disconnected (:mode state))
+             (-> (assoc :mode :ready) (update :input ti/focus)))
            (update :items conj {:type :assistant-text :text (str "Error: " (:error msg))})
-           (update :input ti/focus)
            view/rebuild-lines)
        nil]
 
+      ;; Self-sustaining drain loop; stops once the server is gone (nothing
+      ;; else will ever arrive on the queue).
       (= :eca-tick (:type msg))
       (let [[new-state extra-cmd] (handle-eca-tick state (:msgs msg))]
-        [new-state (program/batch extra-cmd (drain-queue-cmd queue))])
+        [new-state (program/batch extra-cmd
+                                  (when (and queue (not= :disconnected (:mode new-state)))
+                                    (drain-queue-cmd queue)))])
 
       (= :eca-login-action (:type msg))    (login/handle-eca-login-action state msg)
       (= :eca-login-complete (:type msg))  (login/handle-eca-login-complete state msg)
@@ -264,7 +325,7 @@
 
       ;; --- Global key bindings (mode-aware but handled at dispatcher level) ---
       (or (msg/quit? msg) (and (msg/key-press? msg) (msg/key-match? msg "ctrl+c")))
-      [state (shutdown-cmd (:server state))]
+      (commands/cmd-quit state)
 
       (and (msg/key-press? msg) (msg/key-match? msg "ctrl+l") (= :ready (:mode state)))
       (commands/cmd-open-model-picker state)
@@ -282,6 +343,10 @@
       ;; --- Per-mode dispatch (single-arm delegation) ---
       (= :login (:mode state))      (login/handle-key state msg)
       (= :approving (:mode state))  (chat/handle-approval-key state msg)
+
+      ;; Server gone: scrolling (to read the exit report) is all that's left.
+      (= :disconnected (:mode state))
+      (if (scroll-msg? msg) (chat/handle-key state msg) [state nil])
 
       ;; Command-picker selection lives here so picker.clj can stay free
       ;; of a commands.clj dependency (which would create a cycle).

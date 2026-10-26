@@ -1,114 +1,95 @@
-# eca-cli
+# ECA CLI
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-A [Babashka](https://babashka.org/) TUI client for [ECA (Editor Code Assistant)](https://eca.dev/).
+ECA (Editor Code Assistant) CLI is an AI-powered pair-programming client for your terminal, no editor required.
+It connects to an external `eca` server process to provide interactive chat, tool calls with live diffs, context management and more, all keyboard-driven.
 
-eca-cli speaks the same JSON-RPC protocol as the editor plugins (eca-emacs, eca-nvim, eca-desktop) but renders entirely in the terminal. The server does the heavy lifting — eca-cli is a focused, scriptable, keyboard-driven front end.
+For more details about ECA, features and configuration, check [ECA server](https://github.com/editor-code-assistant/eca).
 
-> **Status:** Early development. Roadmap phases 1a–5 complete. See [docs/roadmap.md](./docs/roadmap.md) for what's in and what's next.
+This CLI will auto download `eca` and manage the process.
 
 ## Requirements
 
 - [Babashka](https://babashka.org/) 1.12.215 or later
-- An ECA server binary (auto-downloaded by `bb upgrade-eca`, or supply your own with `--eca`)
-- A 256-colour terminal with mouse-reporting support (iTerm2, Ghostty, Kitty, gnome-terminal, modern tmux all work)
 
-## Quick start
+## Quickstart
 
 ```bash
 git clone https://github.com/editor-code-assistant/eca-cli.git
 cd eca-cli
-bb upgrade-eca   # one-time: download the pinned ECA server binary
-bb run           # launch the TUI
+bb run
 ```
 
-No separate build step — `bb run` compiles and runs directly.
+To use it on any project, alias it and run it from the project directory:
 
-### CLI flags
-
-```
-bb run --eca /path/to/eca         # use a specific ECA binary
-bb run --workspace /path          # set workspace root (default: cwd)
-bb run --model <model>            # pre-select a model
-bb run --agent <agent>            # pre-select an agent
-bb run --trust                    # auto-approve all tool calls
+```bash
+alias eca-cli='bb --config /path/to/eca-cli/bb.edn run'
 ```
 
-## In-app commands
+## Features
 
-Type these into the input and press Enter:
+- Chat with any model and agent configured in ECA, with streaming responses
+- Approve tool calls inline, with coloured diffs for file edits
+- Add files as context with `@`
+- Resume previous chats
+- MCP servers and background jobs at a glance
+- Collapsible tool calls, thinking and sub-agent blocks
+
+## Usage
+
+```
+bb run [--workspace <path>] [--model <model>] [--agent <agent>] [--trust] [--eca <path>]
+```
+
+### Commands
+
+Type `/` in an empty input to pick one.
 
 | Command | Action |
 |---|---|
-| `/model` | Open model picker (also Ctrl+L) |
-| `/agent` | Open agent picker |
-| `/new` | Start a fresh chat (deletes current) |
+| `/model` | Pick a model (also `Ctrl+L`) |
+| `/agent` | Pick an agent |
+| `/new` | Start a fresh chat |
 | `/chats` | Browse and resume previous chats |
-| `/clear` | Clear the chat display (local only) |
+| `/mcp` | MCP servers status |
+| `/jobs` | Background shell jobs |
+| `/clear` | Clear the chat display |
+| `/login` | Log in to a provider |
 | `/help` | Show available commands |
-| `/login` | Manually trigger provider login |
-| `/quit` | Exit eca-cli |
+| `/quit` | Exit |
 
-Typing `/` in an empty input opens an autocomplete picker for these commands.
-
-## Keybindings
+### Keybindings
 
 | Key | Action |
 |---|---|
-| `Enter` | Send message (in `:ready`) / toggle expanded block (when focused) |
-| `Tab` / `Shift+Tab` | Cycle focus through chat blocks (sub-items included) |
-| `Alt+↑` / `Alt+↓` | Jump to previous / next top-level block (skips sub-items) |
-| `Alt+g` / `Alt+G` | Focus first / last focusable block |
-| `Alt+c` / `Alt+o` | Collapse all / expand all focusable blocks |
-| `↑` / `↓` | Navigate focus when active; recall input history when not |
-| `Esc` | Cancel a running prompt; cancel a picker; clear focus |
-| `y` / `n` / `Y` | Approve / reject / approve-and-trust a tool call |
-| `PgUp` / `PgDn` | Scroll chat history |
-| `Mouse wheel` | Scroll (3 lines per tick) |
+| `Enter` | Send message / toggle the focused block |
+| `y` / `n` / `Y` | Approve / reject / always approve a tool call |
+| `Esc` | Stop the running prompt, close a picker, clear focus |
+| `Tab` / `Shift+Tab` | Cycle focus through chat blocks |
+| `Alt+↑` / `Alt+↓` | Jump between top-level blocks |
+| `Alt+c` / `Alt+o` | Collapse / expand all blocks |
+| `↑` / `↓` | Input history (or move focus) |
+| `PgUp` / `PgDn`, mouse wheel | Scroll |
 | `Ctrl+C` | Quit |
-| `Ctrl+L` | Open model picker |
 
-Alt-prefixed bindings are supported on iTerm2, Ghostty, Kitty, and modern tmux (with `xterm-keys on`). Terminal.app on macOS sends Alt as ESC-prefix by default — set "Use Option as Meta key" in Profiles → Keyboard for Alt to register as a modifier.
+## Troubleshooting
 
-## Architecture
-
-eca-cli is a Babashka TUI client built on the [charm.clj](https://github.com/timokramer/charm.clj) Elm-loop runtime. The LLM pulls context via ECA's built-in tools — the user just sends messages.
-
-```
-ECA process stdout
-  → reader thread (server.clj)
-  → LinkedBlockingQueue
-  → drain-queue-cmd (state.clj)
-  → :eca-tick message
-  → update-state dispatcher
-  → per-feature handle-key / handle-msg
-  → view.clj render
-```
-
-Each feature owns a namespace: `chat.clj`, `commands.clj`, `picker.clj`, `login.clj`, `chats.clj`. `state.clj` is the dispatcher that delegates to them. See [CLAUDE.md](./CLAUDE.md) for the in-depth architecture overview and [docs/refactor/](./docs/refactor/) for the structural-refactor history.
+Check [troubleshooting](https://eca.dev/troubleshooting) docs section.
 
 ## Development
 
 ```bash
-bb test            # run unit tests
-bb itest           # run integration tests (requires tmux + ECA on PATH)
-bb nrepl           # start nREPL on port 7888
+bb test    # unit tests
+bb nrepl   # nREPL on port 7888
 ```
 
-ECA server logs go to `~/.cache/eca/eca-cli.log` — tail this when debugging server-side issues.
+See [CLAUDE.md](./CLAUDE.md) for the architecture.
 
-## Roadmap
+## Contributing 💙
 
-See [docs/roadmap.md](./docs/roadmap.md) for the phased development plan. Current focus after Phase 5: ECA editor-plugin checklist alignment (tool-call diff display, MCP integration) followed by markdown rendering and message steering.
-
-## Related
-
-- [ECA core server](https://github.com/editor-code-assistant/eca)
-- [eca-emacs](https://github.com/editor-code-assistant/eca-emacs)
-- [eca-nvim](https://github.com/editor-code-assistant/eca-nvim)
-- [eca-desktop](https://github.com/editor-code-assistant/eca-desktop)
+Contributions are very welcome, please open an issue for discussion or a pull request.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](./LICENSE).
+Apache License 2.0, see [LICENSE](./LICENSE).

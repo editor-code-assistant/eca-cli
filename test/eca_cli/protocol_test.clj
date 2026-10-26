@@ -4,7 +4,8 @@
 
 (deftest initialize-params-test
   (let [p (protocol/initialize-params "/home/user/myproject")]
-    (is (nil? (:processId p)))
+    (is (= (.pid (java.lang.ProcessHandle/current)) (:processId p))
+        "server monitors us and exits if we die")
     (is (= "eca-cli" (get-in p [:clientInfo :name])))
     (is (= 1 (count (:workspaceFolders p))))
     (is (= "file:///home/user/myproject" (get-in p [:workspaceFolders 0 :uri])))
@@ -49,3 +50,24 @@
 (deftest prompt-stop-params-test
   (let [p (protocol/prompt-stop-params "chat1")]
     (is (= "chat1" (:chatId p)))))
+
+(deftest requests-to-a-gone-server-test
+  (testing "send-request! returns nil and leaves no dangling callback"
+    (let [before @protocol/pending-requests]
+      (is (nil? (protocol/send-request! {:writer nil} "chat/list" {} (fn [_]))))
+      (is (= before @protocol/pending-requests))))
+
+  (testing "shutdown! doesn't wait for an answer that can't come"
+    (let [t0 (System/currentTimeMillis)]
+      (protocol/shutdown! {:writer nil})
+      (is (< (- (System/currentTimeMillis) t0) 1000))))
+
+  (testing "initialize! is async: registers the callback and returns the request id"
+    (let [out (java.io.ByteArrayOutputStream.)
+          w   (java.io.BufferedWriter. (java.io.OutputStreamWriter. out "UTF-8"))
+          cb  (fn [_])
+          id  (protocol/initialize! {:writer w} "/tmp/ws" cb)]
+      (is (number? id))
+      (is (= cb (get @protocol/pending-requests id)))
+      (is (re-find #"\"method\":\"initialize\"" (.toString out "UTF-8")))
+      (swap! protocol/pending-requests dissoc id))))
