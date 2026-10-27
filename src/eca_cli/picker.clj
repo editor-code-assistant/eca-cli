@@ -42,8 +42,15 @@
            (sort-by first)
            (mapv second)))))
 
+(def no-variant
+  "The variant picker's entry for none (the model's defaults), as in eca-emacs."
+  "-")
+
 (defn open-picker [state kind]
-  (let [items (if (= :model kind) (:available-models state) (:available-agents state))]
+  (let [items (case kind
+                :model   (:available-models state)
+                :agent   (:available-agents state)
+                :variant (into [no-variant] (sort (:available-variants state))))]
     (if (empty? items)
       state
       (-> state
@@ -121,17 +128,25 @@
         selected  (cl/selected-item list-comp)]
     (if selected
       (do
-        (if (= :model kind)
-          (protocol/selected-model-changed! (:server state) selected)
-          (protocol/selected-agent-changed! (:server state) selected))
-        [(-> state
-             (assoc :mode :ready)
-             (assoc (if (= :model kind) :selected-model :selected-agent) selected)
-             (cond-> (= :model kind) (assoc :selected-variant nil))
-             (assoc-in [:opts (if (= :model kind) :model :agent)] selected)
-             (dissoc :picker)
-             (update :input ti/focus))
-         nil])
+        (case kind
+          :model   (protocol/selected-model-changed! (:server state) selected)
+          :agent   (protocol/selected-agent-changed! (:server state) selected)
+          ;; A variant is just sent with each prompt.
+          :variant nil)
+        (let [variant (when-not (= no-variant selected) selected)]
+          [(-> state
+               (assoc :mode :ready)
+               (dissoc :picker)
+               (update :input ti/focus)
+               (cond->
+                 (= :model kind)   (-> (assoc :selected-model selected :selected-variant nil)
+                                       (assoc-in [:opts :model] selected)
+                                       (update :opts dissoc :variant))
+                 (= :agent kind)   (-> (assoc :selected-agent selected)
+                                       (assoc-in [:opts :agent] selected))
+                 (= :variant kind) (-> (assoc :selected-variant variant)
+                                       (assoc-in [:opts :variant] variant))))
+           nil]))
       [state nil])))
 
 (defn- select-chat [state]
@@ -195,7 +210,7 @@
     (cond
       (and (msg/key-press? msg) (msg/key-match? msg :enter))
       (case kind
-        (:model :agent) (select-model-or-agent state kind)
+        (:model :agent :variant) (select-model-or-agent state kind)
         :chat           (select-chat state)
         :at-file        (select-at-file state)
         :command        [state nil] ; caller handles

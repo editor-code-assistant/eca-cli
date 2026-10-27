@@ -368,6 +368,7 @@
       chat-id              (assoc :chat-id chat-id)
       (:model opts)        (assoc :model (:model opts))
       (:agent opts)        (assoc :agent (:agent opts))
+      (:variant opts)      (assoc :variant (:variant opts))
       ;; Once known (--trust, /trust, the server's selectTrust), sent as is:
       ;; an explicit off must not let a new chat fall back to the user's
       ;; `chat.defaultTrust`. Unknown: left out, the server default applies.
@@ -472,6 +473,42 @@
     state))
 
 
+(def ^:private image-exts
+  {"image/png" "png" "image/jpeg" "jpg" "image/gif" "gif" "image/webp" "webp" "image/svg+xml" "svg"})
+
+(defn save-image
+  "An `image` content's bytes (base64) written to a temp file named after
+  them (so a replay doesn't write it again), as an :image item: terminals
+  can't show it inline, the user can open the file."
+  [{:keys [mediaType base64]}]
+  (try
+    (let [bytes (.decode (java.util.Base64/getMimeDecoder) (str base64))
+          _     (when (zero? (alength bytes)) (throw (ex-info "no image data" {})))
+          hash  (->> (.digest (java.security.MessageDigest/getInstance "SHA-1") bytes)
+                     (map #(format "%02x" %)) (apply str))
+          dir   (java.io.File. (System/getProperty "java.io.tmpdir") "eca-cli-images")
+          file  (java.io.File. dir (str (subs hash 0 16) "." (get image-exts mediaType "img")))]
+      (when-not (.exists file)
+        (.mkdirs dir)
+        (with-open [out (java.io.FileOutputStream. file)] (.write out bytes)))
+      {:type :image :media-type mediaType :bytes (alength bytes) :path (str file)})
+    (catch Exception e
+      {:type :image :media-type mediaType :error (or (ex-message e) (str e))})))
+
+(defn handle-status-changed
+  "`chat/statusChanged` for the chat on screen: a turn the server runs shows
+  as running; :stopping? while a stop winds down."
+  [state {:keys [chatId status]}]
+  (if (and (:chat-id state) (not= chatId (:chat-id state)))
+    state
+    (case status
+      "running"  (cond-> (dissoc state :stopping?)
+                   (nil? (:turn-started-at state)) (assoc :turn-started-at (System/currentTimeMillis))
+                   (= :ready (:mode state))        (assoc :mode :chatting))
+      "stopping" (assoc state :stopping? true)
+      "idle"     (dissoc state :stopping?)
+      state)))
+
 ;; --- ECA content handler ---
 
 (defn- finish-turn
@@ -570,6 +607,17 @@
           (update :items conj {:type :url :title (:title content) :url (:url content)})
           view/rebuild-lines)
 
+      ;; The chat's (new) title, e.g. after /rename.
+      "metadata"
+      (cond-> state (:title content) (assoc :chat-title (:title content)))
+
+      ;; An image the agent made: saved to a file the user can open.
+      "image"
+      (-> state
+          flush-current-text
+          (update :items conj (save-image content))
+          view/rebuild-lines)
+
       ;; A checkpoint the user set (/flag); see eca-cli.history.
       "flag"
       (-> state
@@ -612,7 +660,8 @@
                 (and mine? (contains? chat :selectModel))   (assoc :selected-model (:selectModel chat))
                 (and mine? (contains? chat :selectAgent))   (assoc :selected-agent (:selectAgent chat))
                 (contains? chat :variants)      (assoc :available-variants (:variants chat))
-                (and mine? (contains? chat :selectVariant)) (assoc :selected-variant (:selectVariant chat))
+                (and mine? (contains? chat :selectVariant)) (-> (assoc :selected-variant (:selectVariant chat))
+                                                                (assoc-in [:opts :variant] (:selectVariant chat)))
                 (and mine? (contains? chat :selectTrust))   (-> (assoc :trust (true? (:selectTrust chat)))
                                                                 (assoc-in [:opts :trust] (true? (:selectTrust chat))))
                 (:welcomeMessage chat)          (update :items conj {:type :assistant-text

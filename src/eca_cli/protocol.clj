@@ -59,11 +59,12 @@
 
 (defn chat-prompt-params
   "Builds chat/prompt request params."
-  [{:keys [chat-id message model agent trust contexts]}]
+  [{:keys [chat-id message model agent variant trust contexts]}]
   (cond-> {:message message}
     chat-id  (assoc :chatId chat-id)
     model    (assoc :model model)
     agent    (assoc :agent agent)
+    variant  (assoc :variant variant)
     (some? trust) (assoc :trust (boolean trust))
     contexts (assoc :contexts contexts)))
 

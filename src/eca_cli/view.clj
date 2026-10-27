@@ -153,6 +153,22 @@
            (theme/paint :muted (str " " (or (blocks/format-duration elapsed) (str (quot elapsed 1000) "s")))))
          (when (> room 8) (theme/paint :subtle (str "  " (clip hint room)))))))
 
+(defn approval-gutter
+  "`▲ Waiting for your approval`, saying when a sub-agent asks, how many more
+  calls wait after this one, and how long the turn has been going (the clock
+  keeps running while it waits, as in eca-emacs)."
+  ([state] (approval-gutter state (System/currentTimeMillis)))
+  ([state now]
+   (let [{:keys [chat-id]} (:pending-approval state)
+         more    (count (:approval-queue state))
+         elapsed (some->> (:turn-started-at state) (- now) (max 0) blocks/format-duration)]
+     (theme/paint :warning
+                  (str "▲ Waiting for your approval"
+                       (when (and chat-id (:chat-id state) (not= chat-id (:chat-id state)))
+                         " · sub-agent")
+                       (when (pos? more) (str " · " more " more"))
+                       (when elapsed (str " · " elapsed)))))))
+
 (def ^:private max-task-rows 10)
 
 (defn task-panel-lines
@@ -254,10 +270,50 @@
              (str "  " (key "Y" (theme/merge-styles :success :bold)) " "
                   (theme/paint :key-desc (clip y-desc room))))))))
 
+(def ^:private max-input-lines 8)
+
+(defn- input-rows
+  "The input's text (masked when it's a secret) as display rows of
+  [index char] cells: broken at newlines and at `w` columns. A newline, and
+  the end of the text, are cells too, where the cursor can sit."
+  [text w]
+  (let [n (count text)]
+    (loop [i 0, row [], rows [], col 0]
+      (cond
+        (= i n)   (conj rows (conj row [n \space]))
+        (>= col w) (recur i [] (conj rows row) 0)
+        :else
+        (let [c (.charAt ^String text i)]
+          (if (= c \newline)
+            (recur (inc i) [] (conj rows (conj row [i \space])) 0)
+            (recur (inc i) (conj row [i c]) rows
+                   (+ col (if (< (int c) 0x7f) 1 (max 1 (theme/width (str c))))))))))))
+
 (defn- prompt-input
-  "The prompt line: the `> ` prefix in the prompt colour, then the text."
-  [input]
-  (str (theme/paint :prompt (:prompt input)) (ti/text-input-view (assoc input :prompt ""))))
+  "The prompt: `> ` in the prompt colour, then the text wrapped to `width`
+  (charm's input would run off the screen), the cursor in reverse video. A
+  long text shows the rows around the cursor."
+  ([input] (prompt-input input 80))
+  ([input width]
+   (let [value  (str (ti/value input))
+         text   (if (= :password (:echo-mode input))
+                  (apply str (repeat (count value) (or (:echo-char input) \•)))
+                  value)
+         pos    (min (count text) (max 0 (or (ti/position input) (count text))))
+         rows   (input-rows text (max 4 (- width 3)))
+         here   (or (first (keep-indexed (fn [r row] (when (some #(= pos (first %)) row) r)) rows)) 0)
+         start  (max 0 (min (- here (dec max-input-lines)) (- (count rows) max-input-lines)))
+         shown  (subvec rows start (min (count rows) (+ start max-input-lines)))
+         cell   (fn [[i c]] (if (and (= i pos) (:focused input))
+                              (theme/paint {:reverse true} (str c))
+                              (str c)))]
+     (str/join "\n"
+               (map-indexed (fn [r row]
+                              (str (if (and (zero? r) (zero? start))
+                                     (theme/paint :prompt (:prompt input))
+                                     "  ")
+                                   (str/trimr (apply str (map cell row)))))
+                            shown)))))
 
 (defn render-question
   "The input area while the server asks a question (`eca-cli.question`): the
@@ -293,7 +349,7 @@
                                          (str (theme/paint :accent-bold "?") " ") "  ")
                         rows
                         [(theme/paint :muted (clip hint width))]
-                        (when allow-freeform? [(prompt-input (:input state))]))))))
+                        (when allow-freeform? [(prompt-input (:input state) width)]))))))
 
 (defn command-hint
   "While the input starts with a server command that takes arguments, its
@@ -309,17 +365,7 @@
                (theme/paint :muted (clip (str "  " description)
                                          (max 1 (- (:width state 80) (theme/width (str "/" name " " sig)) 1))))))))))
 
-(defn approval-gutter
-  "`▲ Waiting for your approval`, saying when a sub-agent asks and how many
-  more calls wait after this one."
-  [state]
-  (let [{:keys [chat-id]} (:pending-approval state)
-        more (count (:approval-queue state))]
-    (theme/paint :warning
-                 (str "▲ Waiting for your approval"
-                      (when (and chat-id (:chat-id state) (not= chat-id (:chat-id state)))
-                        " · sub-agent")
-                      (when (pos? more) (str " · " more " more"))))))
+
 
 (defn- visible-rows
   "The slice of a charm list on screen, as [index item] pairs (charm keeps
@@ -392,6 +438,7 @@
       (let [title (case kind
                     :model         "Select model"
                     :agent         "Select agent"
+                    :variant       "Select variant"
                     :chat          "Select chat"
                     :command       "Select command"
                     :at-file       "Select file"
@@ -450,7 +497,8 @@
   (let [{:keys [action field-idx]} (:login state)
         field (nth (:fields action) (or field-idx 0) nil)]
     (prompt-input (cond-> (:input state)
-                    (= "secret" (:type field)) (assoc :echo-mode :password :echo-char \•)))))
+                    (= "secret" (:type field)) (assoc :echo-mode :password :echo-char \•))
+                  (:width state 80))))
 
 (defn view [state]
   (let [mode       (:mode state)
@@ -466,7 +514,7 @@
                      (render-picker state)
 
                      (= :chatting mode)
-                     (str (task-block state) (pending-lines state) (prompt-input (:input state)))
+                     (str (task-block state) (pending-lines state) (prompt-input (:input state) (:width state 80)))
 
                      (= :disconnected mode)
                      (str (theme/paint :error "✗ ") (theme/paint :muted disconnected-hint))
@@ -481,13 +529,15 @@
                          (render-login state)))
 
                      :else
-                     (str (task-block state) (prompt-input (:input state))))
+                     (str (task-block state) (prompt-input (:input state) (:width state 80))))
         gutter     (case mode
                      :connecting (render-connecting state now)
                      :chatting   (render-working state now)
-                     :approving  (approval-gutter state)
+                     :approving  (approval-gutter state now)
                      :asking     (theme/paint :accent "◆ Waiting for your answer")
-                     :ready      (or (command-hint state) "")
+                     :ready      (or (command-hint state)
+                                     (when (:stopping? state) (theme/paint :muted "◌ Stopping…"))
+                                     "")
                      "")
         rule-role  (case mode :approving :warning :asking :accent :disconnected :error :border)
         ;; Chat, gutter, rule, input area, rule, status line: the chat gets

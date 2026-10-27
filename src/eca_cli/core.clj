@@ -2,7 +2,7 @@
   (:require [babashka.cli :as cli]
             [babashka.fs :as fs]
             [babashka.nrepl.server :as nrepl-server]
-            [charm.program :as program]
+            [eca-cli.program :as program]
             [clojure.java.io :as io]
             [eca-cli.paths :as paths]
             [eca-cli.state :as state]
@@ -106,9 +106,10 @@
       (nrepl-server/start-server! {:host "localhost" :port port :quiet true}))
     (.addShutdownHook (Runtime/getRuntime)
                       (Thread. (fn []
-                                 ;; Show the cursor and shift back in to G0 (SI)
-                                 ;; in case we died mid alternate-charset run.
-                                 (print "\033[?25h\017")
+                                 ;; Show the cursor, shift back in to G0 (SI) in
+                                 ;; case we died mid alternate-charset run, and
+                                 ;; turn bracketed paste back off.
+                                 (print "\033[?25h\017\033[?2004l")
                                  (flush))))
     (program/run {:init       (state/make-init opts)
                   :update     state/update-state

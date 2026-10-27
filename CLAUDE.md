@@ -59,7 +59,9 @@ Requests *from* the server (an `:id` and a `:method`, e.g. `chat/askQuestion`) a
 
 ### charm.clj Elm loop
 
-`program/run` drives the TUI with three fns:
+`eca-cli.program/run` (a copy of charm's `run` with a different loop) drives the TUI with three fns. charm's loop handles one message per 10 ms tick and renders after each: typing/pasting capped at ~100 keys/s, and a big paste overflowed core.async's 1024 pending puts, killing charm's input thread. Ours wakes on the first message, drains the queue (up to 1000), renders once. It also turns on bracketed paste: pasted text comes between `:paste-start`/`:paste-end` keys, and `state.clj` keeps its newlines/tabs/leading `/` `@` as text. charm's text input doesn't scroll or wrap, so `view/prompt-input` lays the input out itself (rows at the width, newlines, a window around the cursor).
+
+The three fns:
 - `state/make-init` — returns a fn that spawns ECA, starts the reader thread, returns `[initial-state (batch init-cmd drain-queue-cmd)]`. Must never throw: charm calls it outside its try/finally, so a spawn failure becomes a `:disconnected` state instead.
 - `state/update-state` — pure dispatch: returns `[new-state cmd-or-nil]`
 - `view/view` — pure render: returns a string from state
@@ -101,6 +103,7 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 
 ### Key files
 
+- `src/eca_cli/program.clj` — the event loop (charm's `run`, draining the queue per render) and bracketed paste
 - `src/eca_cli/server.clj` — process spawn, Content-Length JSON-RPC framing (synchronized writes that return false instead of throwing once the server is gone), reader thread, exit report, queue drain
 - `src/eca_cli/protocol.clj` — message constructors, request ID tracking, response correlation
 - `src/eca_cli/state.clj` — Elm state machine, ECA content handlers, all key bindings

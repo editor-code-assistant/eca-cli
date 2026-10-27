@@ -93,6 +93,9 @@
     "chat/askQuestion"
     [(question/handle-ask-question state notification) nil]
 
+    "chat/statusChanged"
+    [(chat/handle-status-changed state (:params notification)) nil]
+
     ;; A request (it has an id) eca-cli doesn't support: say so, or the
     ;; server would wait for an answer forever.
     (do (when (:id notification)
@@ -297,6 +300,25 @@
        (or (picker/printable-char? msg)
            (and (msg/key-press? msg) (msg/key-match? msg :backspace)))))
 
+(defn- pasting?
+  "Inside a bracketed paste (see `eca-cli.program`). Bounded in time, in case
+  the terminal never sends the end marker."
+  [state]
+  (when-let [t0 (:pasting-since state)]
+    (< (- (System/currentTimeMillis) t0) 5000)))
+
+(defn- insert-text
+  "`s` typed into `input` at the cursor."
+  [input s]
+  (let [v   (str (ti/value input))
+        pos (min (count v) (max 0 (or (ti/position input) (count v))))]
+    (-> input
+        (ti/set-value (str (subs v 0 pos) s (subs v pos)))
+        (assoc :pos (+ pos (count s))))))
+
+(defn- typing-mode? [state]
+  (contains? #{:ready :chatting :asking} (:mode state)))
+
 (defn- scroll-msg? [msg]
   (or (and (msg/key-press? msg)
            (or (msg/key-match? msg :page-up) (msg/key-match? msg :page-down)))
@@ -352,6 +374,26 @@
            (-> s' (update :items conj {:type :system :text "⚠ Could not load chats"}) view/rebuild-lines)
            s')
          nil])
+
+      ;; --- Bracketed paste: pasted text stays text ---
+      (and (msg/key-press? msg) (= :paste-start (:key msg)))
+      [(assoc state :pasting-since (System/currentTimeMillis)) nil]
+
+      (and (msg/key-press? msg) (= :paste-end (:key msg)))
+      [(dissoc state :pasting-since) nil]
+
+      ;; A pasted newline is part of the text, not Enter (which would send
+      ;; the first line and steer with the rest); a pasted tab isn't Tab.
+      (and (msg/key-press? msg) (pasting? state)
+           (or (msg/key-match? msg :enter) (msg/key-match? msg :tab)))
+      [(cond-> state
+         (typing-mode? state) (update :input insert-text (if (msg/key-match? msg :enter) "\n" "    ")))
+       nil]
+
+      ;; Pasted characters are text too: a leading `/` or `@` doesn't open a picker.
+      (and (pasting? state) (typing-mode? state) (picker/printable-char? msg))
+      (let [[input cmd] (ti/text-input-update (:input state) msg)]
+        [(assoc state :input input) cmd])
 
       ;; --- Global key bindings (mode-aware but handled at dispatcher level) ---
       (or (msg/quit? msg) (and (msg/key-press? msg) (msg/key-match? msg "ctrl+c")))

@@ -37,6 +37,26 @@
          view/rebuild-lines)
      nil]))
 
+(defn cmd-open-variant-picker [state]
+  (if (seq (:available-variants state))
+    [(picker/open-picker state :variant) nil]
+    [(-> state
+         (update :items conj {:type :system :level :info :text "This model has no variants."})
+         view/rebuild-lines)
+     nil]))
+
+(defn cmd-rename
+  "/rename <title>: the chat's new title (chat/update); the server confirms
+  with a `metadata` content, which updates it on screen."
+  [state args]
+  (let [title (str/trim (str args))
+        note  #(-> state (update :items conj {:type :system :level :info :text %}) view/rebuild-lines)]
+    (cond
+      (str/blank? title)      [(note "Usage: /rename <title>") nil]
+      (nil? (:chat-id state)) [(note "Nothing to rename yet: send a message first.") nil]
+      :else (do (protocol/update-chat! (:server state) (:chat-id state) {:title title})
+                [state nil]))))
+
 (defn cmd-new-chat [state]
   (if-let [old-chat-id (:chat-id state)]
     (do
@@ -103,6 +123,8 @@
 (def command-registry
   {"/model"    {:doc "Open model picker"                  :handler cmd-open-model-picker}
    "/agent"    {:doc "Open agent picker"                  :handler cmd-open-agent-picker}
+   "/variant"  {:doc "Pick the model's variant (e.g. reasoning effort)" :handler cmd-open-variant-picker}
+   "/rename"   {:doc "Rename the chat: /rename <title>"   :handler cmd-rename :args? true}
    "/mcp"      {:doc "View MCP server status"             :handler mcp/cmd-open-mcp-panel}
    "/new"      {:doc "Start a fresh chat"                 :handler cmd-new-chat}
    "/chats"    {:doc "Browse and resume previous chats"   :handler cmd-list-chats}

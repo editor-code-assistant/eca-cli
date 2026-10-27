@@ -245,6 +245,18 @@
                                             (str "  " (paint :success "→") " ") "    ")
            :else                  [(str "  " (paint :muted "waiting for your answer…"))]))))
 
+(defn- image-lines
+  "An image the agent produced: its kind, size and where it was saved."
+  [item width]
+  (let [kind (some-> (:media-type item) (str/replace #"^image/" ""))
+        size (when-let [b (:bytes item)]
+               (if (< b 1024) (str b " B") (str (Math/round (/ b 1024.0)) " KB")))
+        head (str (paint :accent "▣") " " (paint :bold "image")
+                  (some->> (not-empty (str/join " · " (remove nil? [kind size]))) (str "  ") (paint :muted)))]
+    (if-let [path (:path item)]
+      (into [head] (map #(str "  " (paint :md-url %)) (wrap/wrap-text path (max 1 (- width 2)))))
+      [head (str "  " (paint :error (str "couldn't save it: " (:error item))))])))
+
 (defn- flag-lines
   "A flag (checkpoint) as a rule across the chat: `── ⚑ text ─────`."
   [item width]
@@ -283,6 +295,7 @@
           :hook      (hook-lines item width)
           :question  (question-item-lines item width)
           :flag      (flag-lines item width)
+          :image     (image-lines item width)
 
           :url
           (let [inner-w (max 1 (- width 2))]

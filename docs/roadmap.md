@@ -23,13 +23,13 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion` ✅, `chat/queryCommands` autocomplete ✅, log viewer | 🟡 Partial | — |
 | [11](#phase-11-power-features) | Power Features | `@`-refs ✅ · jobs ✅ · rollback ✅ · fork ✅ | ✅ Complete | — |
 | [12](#phase-12-context-expansion) | Context Expansion | Full `chat/queryContext` picker (dirs/URLs/cursor/repoMap/MCP-resources); image-attach | 🆕 Planned | — |
-| [13](#phase-13-chat-management) | Chat Management | Rename + per-chat trust, server-side clear, `chat/statusChanged`, history pagination | 🆕 Planned | — |
+| [13](#phase-13-chat-management) | Chat Management | Rename ✅ + per-chat trust ✅, server-side clear, `chat/statusChanged` ✅, history pagination | 🟡 Partial | — |
 | [14](#phase-14-chat-navigation) | Chat Navigation | Flags/bookmarks, timeline jump, export transcript (server `/export`) | ✅ Complete | — |
 | [15](#phase-15-task-panel) | Task Panel | `TaskDetails` — checklist, N/M progress, priority, `blockedBy` graph | ✅ Complete | — |
 | [16](#phase-16-granular-approval) | Granular Approval | Per-shell-command approve & remember (`save:'session'`, `approvalKey`) | ✅ Complete | — |
 | [17](#phase-17-mcp-write-management) | MCP Write Management | MCP CRUD + start/stop/enable/disable/logout, OAuth (L) | 🆕 Planned | — |
 | [18](#phase-18-providers--config) | Providers & Config | Providers panel (auth, logout, cost badges); in-app global-config editor | 🆕 Planned | — |
-| [19](#phase-19-variant-picker) | Variant Picker | Interactive model/agent variant selector | 🆕 Planned | — |
+| [19](#phase-19-variant-picker) | Variant Picker | Interactive model/agent variant selector | ✅ Complete | — |
 | [20](#phase-20-context-breakdown) | Context Breakdown | segmented bar + `autoCompactPercentage` marker + legend (server `/context`) | ✅ Complete | — |
 | [21](#phase-21-multi-session--remote) | Multi-Session & Remote | Multi-workspace/concurrent servers; remote ECA host connect (L) | 🆕 Planned | — |
 
@@ -424,6 +424,8 @@ Numbered identities frozen in [#24](https://github.com/editor-code-assistant/eca
 
 **Goal:** Rename + per-chat trust (`chat/update`); server-side clear (`chat/clear`); `chat/statusChanged`; history pagination (`chat/history` cursors, "load older").
 
+**Status: 🟡 Partial.** `/rename` and `/trust` (`chat/update`), `metadata` titles, `chat/statusChanged` (running / `Stopping…`). Remaining: `chat/clear` and history pagination (needs the `incrementalUpdates` capability).
+
 ## Phase 14: Chat Navigation
 
 **Goal:** Flags/bookmarks (`chat/addFlag`/`removeFlag`); timeline (jump to message/flag); export transcript.
@@ -453,6 +455,8 @@ Numbered identities frozen in [#24](https://github.com/editor-code-assistant/eca
 ## Phase 19: Variant Picker
 
 **Goal:** Interactive model/agent **variant** selector (baseline today: status-bar display only).
+
+**Status: ✅ Complete.** `/variant` lists `-` (none) and the model's variants, as eca-emacs; the chosen one (or the server's suggestion) is sent with each `chat/prompt`.
 
 ## Phase 20: Context Breakdown
 

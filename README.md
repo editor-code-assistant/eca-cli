@@ -61,6 +61,8 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 |---|---|
 | `/model` | Pick a model (also `Ctrl+L`) |
 | `/agent` | Pick an agent |
+| `/variant` | Pick the model's variant (e.g. reasoning effort) |
+| `/rename <title>` | Rename the chat |
 | `/new` | Start a fresh chat |
 | `/chats` | Browse and resume previous chats |
 | `/mcp` | MCP servers status |

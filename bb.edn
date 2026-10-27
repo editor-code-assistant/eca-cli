@@ -28,6 +28,7 @@
                                 (require '[eca-cli.commands-test])
                                 (require '[eca-cli.core-test])
                                 (require '[eca-cli.dist-test])
+                                (require '[eca-cli.extras-test])
                                 (require '[eca-cli.history-test])
                                 (require '[eca-cli.jobs-test])
                                 (require '[eca-cli.lifecycle-test])
@@ -55,6 +56,7 @@
                                                               'eca-cli.commands-test
                                                               'eca-cli.core-test
                                                               'eca-cli.dist-test
+                                                              'eca-cli.extras-test
                                                               'eca-cli.history-test
                                                               'eca-cli.jobs-test
                                                               'eca-cli.lifecycle-test
