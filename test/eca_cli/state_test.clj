@@ -511,12 +511,36 @@
       (is (= :ready (:mode new-state)))
       (is (some #(= :system (:type %)) (:items new-state)))))
 
-  (testing "done action with no pending → :chatting"
+  (testing "done action with no pending (a login asked for by hand) → :ready, said so"
     (let [[new-state _] (state/update-state
-                          (assoc (base-state) :mode :chatting)
+                          (assoc (base-state) :mode :ready)
                           {:type :eca-login-action :provider "anthropic"
                            :action {:action "done"} :pending-message nil})]
-      (is (= :chatting (:mode new-state)))))
+      (is (= :ready (:mode new-state)))
+      (is (false? (:echo-pending new-state)))
+      (is (= "Logged in to anthropic." (:text (peek (:items new-state)))))))
+
+  (testing "done action with a pending message → :chatting, the message re-sent"
+    (let [prompts (atom [])]
+      (with-redefs [protocol/chat-prompt! (fn [_srv params _cb] (swap! prompts conj params))]
+        (let [[new-state _] (state/update-state
+                              (assoc (base-state) :mode :chatting
+                                     :server {:queue (java.util.concurrent.LinkedBlockingQueue.)})
+                              {:type :eca-login-action :provider "anthropic"
+                               :action {:action "done"} :pending-message "hi"})]
+          (is (= :chatting (:mode new-state)))
+          (is (true? (:echo-pending new-state)))
+          (is (= ["hi"] (map :message @prompts)))
+          (is (not-any? #(= "Logged in to anthropic." (:text %)) (:items new-state)))))))
+
+  (testing "an error answer (e.g. unknown provider) → :ready with the reason"
+    (let [[new-state _] (state/update-state
+                          (assoc (base-state) :mode :ready)
+                          {:type :eca-login-action :provider "nope"
+                           :action {:code -32603 :message "Unknown provider: nope"}})]
+      (is (= :ready (:mode new-state)))
+      (is (nil? (:login new-state)))
+      (is (= "Login failed: Unknown provider: nope" (:text (peek (:items new-state)))))))
 
   (testing "input action → :login mode with correct provider and pending"
     (let [[new-state _] (state/update-state

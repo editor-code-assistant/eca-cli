@@ -380,7 +380,7 @@
   "Command and chat picker labels carry a description after a separator:
   [main detail]."
   [kind label]
-  (let [sep (case kind :command "  —  " :chat "  •  " nil)
+  (let [sep (case kind :command "  —  " (:chat :providers) "  •  " nil)
         i   (when sep (str/index-of label sep))]
     (if i [(subs label 0 i) (subs label (+ i (count sep)))] [label nil])))
 
@@ -428,7 +428,7 @@
       (= :mcp kind)
       (let [sel (cl/selected-index list)]
         (str (theme/paint :accent-bold "MCP servers")
-             (theme/paint :muted "  Enter: connect  ·  Esc: close") "\n"
+             (theme/paint :muted "  Enter: actions  ·  Esc: close") "\n"
              (divider width) "\n"
              (str/join "\n" (map-indexed (fn [i row]
                                            (str (if (= i sel) (theme/paint :accent-bold "❯ ") "  ") row))
@@ -441,7 +441,10 @@
                     :variant       "Select variant"
                     :chat          "Select chat"
                     :command       "Select command"
-                    :at-file       "Select file"
+                    :at-file       (if (get-in state [:picker :hash?]) "Insert path" "Add context")
+                    :providers     "Providers"
+                    :provider-action (str "Provider " (get-in state [:picker :provider]))
+                    :mcp-action    (str "MCP " (get-in state [:picker :server]))
                     :rollback      "Roll back to before"
                     :rollback-type "Roll back what"
                     :flags         "Select flag"
@@ -456,9 +459,11 @@
   (status/render state))
 
 (defn render-login [state]
-  (let [{:keys [provider action field-idx]} (:login state)
+  (let [{:keys [provider action field-idx pending-message]} (:login state)
         action-type (:action action)
-        heading     (str "🔐 " (theme/paint :bold (str "Login required for " provider)))
+        ;; A prompt needed it, or the user asked for it (/login, /providers).
+        heading     (str "🔐 " (theme/paint :bold (str (if pending-message "Login required for " "Log in to ")
+                                                     provider)))
         cancel      (theme/paint :muted "Esc to cancel")
         field       (nth (:fields action) (or field-idx 0) nil)
         url         (fn [label u] (str "  " (theme/paint :muted label) (theme/paint :md-link u)))]
@@ -472,7 +477,7 @@
                         [cancel]))
 
       "input"
-      (str heading "\n"
+      (str heading "  " cancel "\n"
            "Enter " (theme/paint :bold (:label field)) ":")
 
       "authorize"

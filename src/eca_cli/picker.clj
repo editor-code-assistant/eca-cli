@@ -19,11 +19,38 @@
        (not (:ctrl m))
        (not (:alt m))))
 
+(defn- relative-to
+  "`path` relative to the directory `root` when it's inside it, else as is."
+  [path root]
+  (let [prefix (when root (if (str/ends-with? root "/") root (str root "/")))]
+    (if (and prefix (str/starts-with? path prefix) (< (count prefix) (count path)))
+      (subs path (count prefix))
+      path)))
+
+(defn at-label
+  "How a context reads in the prompt after `@` (or `#`), and is matched
+  there when sending (see `eca-cli.chat`): a file's path, relative to the
+  workspace `root` when it's in it, as eca-emacs shows them; a directory's
+  with a `/`; an MCP resource's `server:name`. A plain string is a file path."
+  ([ctx] (at-label ctx nil))
+  ([ctx root]
+   (if (string? ctx)
+     ctx
+     (case (:type ctx)
+       "file"        (relative-to (str (:path ctx)) root)
+       "directory"   (let [p (relative-to (str (:path ctx)) root)]
+                       (if (str/ends-with? p "/") p (str p "/")))
+       "mcpResource" (str (:server ctx) ":" (str/replace (str (:name ctx)) #"\s+" "-"))
+       "web"         (str (:url ctx))
+       (str (:type ctx))))))
+
 (defn item-display [kind item]
   (case kind
-    (:chat :rollback :rollback-type :flags :flag-action :timeline) (first item)
+    (:chat :rollback :rollback-type :flags :flag-action :timeline
+     :providers :provider-action :mcp-action) (first item)
     :command (str (first item) "  —  " (second item))
-    :at-file (str item)
+    ;; A path, or a server context labelled when it arrived: [label context].
+    :at-file (if (vector? item) (first item) (at-label item))
     :mcp (:name item)
     item))
 
@@ -74,28 +101,42 @@
         (update :input ti/reset))))
 
 (defn open-at-file-picker
-  "Opens the file picker with an empty list. Items arrive asynchronously
-  via :at-files-loaded and are spliced in by update-at-file-results."
-  [state]
-  (assoc state
-         :mode :picking
-         :picker {:kind     :at-file
-                  :list     (cl/item-list [] :height 8)
-                  :all      []
-                  :filtered []
-                  :query    ""}))
+  "Opens the context picker with an empty list: `@` adds a context (files,
+  directories, MCP resources; `chat/queryContext`), `hash?` the `#` picker,
+  which inserts a file's path for the LLM to read (`chat/queryFiles`), as in
+  eca-emacs. Items arrive asynchronously and are spliced in by
+  update-at-file-results."
+  ([state] (open-at-file-picker state false))
+  ([state hash?]
+   (assoc state
+          :mode :picking
+          :picker {:kind     :at-file
+                   :hash?    hash?
+                   :list     (cl/item-list [] :height 8)
+                   :all      []
+                   :filtered []
+                   :query    ""})))
 
 (defn update-at-file-results
-  "Splice server-returned file paths into the at-file picker, preserving
-  any query the user has typed since opening."
-  [state paths]
-  (if (= :at-file (get-in state [:picker :kind]))
-    (let [filtered (filter-items :at-file paths (get-in state [:picker :query]))]
-      (-> state
-          (assoc-in [:picker :all] paths)
-          (assoc-in [:picker :filtered] filtered)
-          (update-in [:picker :list] cl/set-items filtered)))
-    state))
+  "Splice the server's items into the open picker, keeping the query typed
+  since: file paths, or contexts (labelled here, relative to the
+  workspace). `from`, the query and picker the items answer, drops a late
+  answer to an older query (the user typed on)."
+  ([state items] (update-at-file-results state items nil))
+  ([state items from]
+   (let [picker (:picker state)]
+     (if (and (= :at-file (:kind picker))
+              (or (nil? from)
+                  (and (= (:query from) (:query picker))
+                       (= (boolean (:hash? from)) (boolean (:hash? picker))))))
+       (let [root     (get-in state [:opts :workspace])
+             items    (mapv #(if (map? %) [(at-label % root) %] %) items)
+             filtered (filter-items :at-file items (:query picker))]
+         (-> state
+             (assoc-in [:picker :all] items)
+             (assoc-in [:picker :filtered] filtered)
+             (update-in [:picker :list] cl/set-items (mapv #(item-display :at-file %) filtered))))
+       state))))
 
 (defn filter-picker [state ch]
   (let [query    (str (get-in state [:picker :query]) ch)
@@ -167,12 +208,12 @@
   (or (= \space ch) (= \newline ch) (= \tab ch)))
 
 (defn- insert-at-tag
-  "Insert `@<path>` into the text-input at the current cursor position,
-  always leaving exactly one space after the tag (and a leading space when
-  the char before the cursor is non-whitespace). Cursor ends past that
-  trailing space, so text typed next never extends the `@<path>` token —
+  "Insert `<prefix><path>` (`@` or `#`) into the text-input at the current
+  cursor position, always leaving exactly one space after the tag (and a
+  leading space when the char before the cursor is non-whitespace). Cursor
+  ends past that trailing space, so text typed next never extends the token —
   keeping it matchable by `contexts-for-text` at send time."
-  [input path]
+  [input prefix path]
   (let [value    (ti/value input)
         pos      (min (count value) (max 0 (or (ti/position input) (count value))))
         before   (subs value 0 pos)
@@ -181,21 +222,29 @@
         next-ch  (when (pos? (count after))  (.charAt ^String after 0))
         lead-sp? (and prev-ch (not (whitespace? prev-ch)))
         next-ws? (and next-ch (whitespace? next-ch))
-        insert   (str (when lead-sp? " ") "@" path (when-not next-ws? " "))
+        insert   (str (when lead-sp? " ") prefix path (when-not next-ws? " "))
         cursor   (+ pos (count insert) (if next-ws? 1 0))]
     (-> input
         (ti/set-value (str before insert after))
         (assoc :pos cursor))))
 
-(defn- select-at-file [state]
-  (let [{:keys [list filtered]} (:picker state)
-        idx                     (cl/selected-index list)
-        path                    (when (and (some? idx) (< idx (count filtered)))
-                                  (nth filtered idx))]
-    (if path
+(defn- select-at-file
+  "`@`: the context is added to the next prompt, `@label` marks it in the
+  text. `#`: just `#label` in the text, sent as the file's full path (see
+  `eca-cli.chat/expand-refs`)."
+  [state]
+  (let [{:keys [list filtered hash?]} (:picker state)
+        idx                           (cl/selected-index list)
+        item                          (when (and (some? idx) (< idx (count filtered)))
+                                        (nth filtered idx))
+        [label ctx]                   (cond
+                                        (string? item) [item {:type "file" :path item}]
+                                        (vector? item) item
+                                        :else          [(at-label item) item])]
+    (if item
       [(-> state
-           (update :input #(-> % (insert-at-tag path) ti/focus))
-           (update :pending-contexts (fnil conj []) {:type "file" :path path})
+           (update :input #(-> % (insert-at-tag (if hash? "#" "@") label) ti/focus))
+           (cond-> (not hash?) (update :pending-contexts (fnil conj []) ctx))
            (assoc :mode :ready)
            (dissoc :picker))
        nil]

@@ -173,8 +173,32 @@
   [srv chat-id fields]
   (send-request! srv "chat/update" (assoc fields :chatId chat-id) (fn [_])))
 
-(defn mcp-connect-server! [srv name]
-  (send-notification! srv "mcp/connectServer" {:name name}))
+(def ^:private mcp-methods
+  {:start   "mcp/startServer"
+   :stop    "mcp/stopServer"
+   :enable  "mcp/enableServer"
+   :disable "mcp/disableServer"
+   :logout  "mcp/logoutServer"
+   :connect "mcp/connectServer"})
+
+(defn mcp-server-action!
+  "Start, stop, enable, disable, log out of or connect (OAuth) MCP server
+  `name`; the server answers with tool/serverUpdated."
+  [srv action name]
+  (send-notification! srv (mcp-methods action) {:name name}))
+
+(defn providers-logout! [srv provider callback]
+  (send-request! srv "providers/logout" {:provider provider} callback))
+
+(defn chat-query-context!
+  "The contexts the user can add (files, directories, MCP resources, …),
+  filtered by `query`, minus the `contexts` already added.
+  Response: {:contexts [ChatContext]}."
+  [srv chat-id query contexts callback]
+  (send-request! srv "chat/queryContext"
+                 (cond-> {:query (or query "") :contexts (vec contexts)}
+                   chat-id (assoc :chatId chat-id))
+                 callback))
 
 (defn list-chats! [srv callback]
   (send-request! srv "chat/list" {:limit 20} callback))

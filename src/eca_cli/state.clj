@@ -14,6 +14,7 @@
             [eca-cli.mcp :as mcp]
             [eca-cli.question :as question]
             [eca-cli.history :as history]
+            [eca-cli.providers :as providers]
             [eca-cli.commands :as commands]))
 
 ;; Expose last-known state for nREPL inspection
@@ -40,15 +41,42 @@
                                     {:type :eca-initialize-response :response response})))
       nil)))
 
-(defn- query-files-cmd [srv chat-id query]
+(defn- query-files-cmd
+  "`#`: the files and directories matching `query`. The answer carries the
+  query, so a late one (the user typed on) is dropped."
+  [srv chat-id query]
   (program/cmd
     (fn []
       (let [p (promise)]
         (protocol/chat-query-files! srv chat-id query
           (fn [r] (deliver p (or (get-in r [:result :files]) []))))
-        (let [files (deref p 5000 [])
-              paths (mapv :path files)]
-          {:type :at-files-loaded :paths paths})))))
+        {:type :at-contexts-loaded :query query :hash? true
+         :contexts (vec (deref p 5000 []))}))))
+
+(def ^:private unoffered-contexts
+  "`cursor`: there's no editor cursor. `repoMap`: deprecated, the server's
+  directory tree tool replaced it."
+  #{"cursor" "repoMap"})
+
+(defn- query-context-cmd
+  "`@`: the contexts to offer (files, directories, MCP resources…), minus
+  the ones already added."
+  [srv chat-id query contexts]
+  (program/cmd
+    (fn []
+      (let [p (promise)]
+        (protocol/chat-query-context! srv chat-id query contexts
+          (fn [r] (deliver p (or (get-in r [:result :contexts]) []))))
+        {:type :at-contexts-loaded :query query :hash? false
+         :contexts (vec (remove #(unoffered-contexts (:type %)) (deref p 5000 [])))}))))
+
+(defn- at-picker-query-cmd
+  "The query behind the open `@`/`#` picker, for its current filter."
+  [state]
+  (let [query (get-in state [:picker :query])]
+    (if (get-in state [:picker :hash?])
+      (query-files-cmd (:server state) (:chat-id state) query)
+      (query-context-cmd (:server state) (:chat-id state) query (:pending-contexts state)))))
 
 (defn- handle-eca-notification [state notification]
   (case (:method notification)
@@ -89,6 +117,9 @@
 
     "tool/serverUpdated"
     (mcp/apply-server-update state (:params notification))
+
+    "tool/serverRemoved"
+    (mcp/apply-server-removed state (:params notification))
 
     "chat/askQuestion"
     [(question/handle-ask-question state notification) nil]
@@ -277,18 +308,20 @@
        (= "" (str/trim (ti/value (:input state))))))
 
 (defn- autocomplete-at?
-  "True when `@` should open the file picker: ready mode, and the char left
-  of the cursor is empty / space / newline (mid-word `@` is left to text-input)."
-  [state msg]
-  (and (picker/printable-char? msg)
-       (= "@" (:key msg))
-       (= :ready (:mode state))
-       (let [value (ti/value (:input state))
-             pos   (or (ti/position (:input state)) (count value))
-             prev  (when (pos? pos) (.charAt ^String value (dec pos)))]
-         (or (zero? pos)
-             (= \space prev)
-             (= \newline prev)))))
+  "True when `ch` (`@` contexts, `#` paths) should open the context picker:
+  ready mode, and the char left of the cursor is empty / space / newline
+  (mid-word, it's left to text-input)."
+  ([state msg] (autocomplete-at? state msg "@"))
+  ([state msg ch]
+   (and (picker/printable-char? msg)
+        (= ch (:key msg))
+        (= :ready (:mode state))
+        (let [value (ti/value (:input state))
+              pos   (or (ti/position (:input state)) (count value))
+              prev  (when (pos? pos) (.charAt ^String value (dec pos)))]
+          (or (zero? pos)
+              (= \space prev)
+              (= \newline prev))))))
 
 (defn- at-file-filter-keystroke?
   "True when `msg` is a keystroke that should re-query the server while the
@@ -355,8 +388,19 @@
       (= :eca-login-complete (:type msg))  (login/handle-eca-login-complete state msg)
       (= :eca-jobs-output (:type msg))     (jobs/handle-jobs-output state msg)
 
+      ;; Plain file paths for the picker (tests use it); the server's
+      ;; answers come as :at-contexts-loaded.
       (= :at-files-loaded (:type msg))
       [(picker/update-at-file-results state (:paths msg)) nil]
+
+      (= :at-contexts-loaded (:type msg))
+      [(picker/update-at-file-results state (:contexts msg) msg) nil]
+
+      (= :providers-loaded (:type msg))
+      [(providers/handle-loaded state (:providers msg)) nil]
+
+      (= :provider-logged-out (:type msg))
+      [(providers/handle-logged-out state msg) nil]
 
       (= :commands-loaded (:type msg))
       [(commands/apply-server-commands state (:commands msg)) nil]
@@ -411,6 +455,10 @@
 
       (autocomplete-at? state msg)
       [(picker/open-at-file-picker state)
+       (query-context-cmd (:server state) (:chat-id state) "" (:pending-contexts state))]
+
+      (autocomplete-at? state msg "#")
+      [(picker/open-at-file-picker state true)
        (query-files-cmd (:server state) (:chat-id state) "")]
 
       ;; --- Per-mode dispatch (single-arm delegation) ---
@@ -439,6 +487,16 @@
             item)
           [state nil]))
 
+      ;; Providers panel and MCP server actions.
+      (and (msg/key-press? msg) (msg/key-match? msg :enter)
+           (= :picking (:mode state))
+           (contains? providers/picker-kinds (get-in state [:picker :kind])))
+      (providers/handle-select state)
+
+      (and (msg/key-press? msg) (msg/key-match? msg :enter) (mcp/action-picker-open? state))
+      (let [[s cmd] (mcp/handle-action-select state)]
+        [(view/rebuild-lines s) cmd])
+
       ;; Rollback / flags / timeline pickers (history.clj).
       (and (msg/key-press? msg) (msg/key-match? msg :enter)
            (= :picking (:mode state))
@@ -450,19 +508,18 @@
       ;; Server returns a capped list for empty query; subsequent typing must
       ;; re-query so matches outside the capped initial set become findable.
       ;; Picker.clj still mutates :query / :filtered client-side for snappy
-      ;; UI feedback; the server response (`:at-files-loaded`) then splices
-      ;; the canonical ranked list in.
+      ;; UI feedback; the server response (`:at-contexts-loaded`) then
+      ;; splices the canonical ranked list in.
       (at-file-filter-keystroke? state msg)
       (let [[s' _] (picker/handle-key state msg)]
-        [s' (query-files-cmd (:server s') (:chat-id s')
-                             (get-in s' [:picker :query]))])
+        [s' (when (= :picking (:mode s')) (at-picker-query-cmd s'))])
 
       (and (= :picking (:mode state))
            (= :jobs (get-in state [:picker :kind])))
       (jobs/handle-key state msg)
 
-      ;; MCP-picker Enter arm — connect on requires-auth rows; everything else
-      ;; falls through to the generic picker dispatch (filter, navigation, Esc).
+      ;; MCP-panel Enter: the server's actions. Other keys go to the generic
+      ;; picker dispatch (filter, navigation, Esc).
       (and (msg/key-press? msg) (msg/key-match? msg :enter)
            (mcp/picker-open? state))
       (mcp/handle-key state msg)

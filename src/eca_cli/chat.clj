@@ -2,12 +2,14 @@
   "Chat-domain state helpers, ECA content handlers, and key dispatch for
   :ready / :chatting / :approving modes. No back-references to eca-cli.state
   or eca-cli.commands — features depend on leaf utils only."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [cheshire.core :as json]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-cli.protocol :as protocol]
             [eca-cli.chats :as chats]
+            [eca-cli.picker :as picker]
             [eca-cli.view :as view]
             [eca-cli.view.blocks :as blocks]))
 
@@ -342,24 +344,76 @@
 
 
 ;; --- Outbound prompt ---
+;;
+;; `@label` marks a context the user picked (the `@` picker), `#label` a
+;; path for the LLM to read (the `#` picker); labels are relative to the
+;; workspace where they can be (`picker/at-label`). As eca-emacs does, the
+;; text sent spells them out: `@/full/path` (which the server also reads as
+;; a context) and, for `#`, the bare full path. Ones typed by hand, or
+;; recalled from the history, count too when they name a workspace file.
 
-(def ^:private at-token-re
-  ;; Match @<non-space-token>, preceded by start-of-string or whitespace.
-  ;; Duplicated from view/blocks.clj's render-time regex (kept local to each
-  ;; namespace until a third call site emerges to justify extraction).
-  #"(?:^|\s)@(\S+)")
+(def ^:private ref-re
+  ;; `@token` or `#token`, preceded by start-of-string or whitespace. The
+  ;; `@` part matches view/blocks.clj's render-time regex.
+  #"(^|\s)([@#])(\S+)")
 
-(defn- at-paths-in
-  "Return a set of `@path` tokens present in `text` (paths only, no `@`)."
-  [text]
-  (set (map second (re-seq at-token-re (str text)))))
+(defn- refs-in
+  "The `sigil` (`@` or `#`) tokens of `text`, in order, without the sigil."
+  [text sigil]
+  (into [] (comp (keep (fn [[_ _ s token]] (when (= sigil s) token))) (distinct))
+        (re-seq ref-re (str text))))
+
+(defn- existing-path
+  "The full path of the file or directory `token` names (absolute, `~/…`,
+  or relative to `workspace`), when there's one. Only a token that looks
+  like a path (a `/` or a `.` in it) is looked up: pasted code's
+  `#include` or `@Override` stays text even next to an `include/`."
+  [token workspace]
+  (when (re-find #"[/.]" token)
+    (let [f (cond
+              (str/starts-with? token "/")  (io/file token)
+              (str/starts-with? token "~/") (io/file (System/getProperty "user.home") (subs token 2))
+              workspace                     (io/file workspace token))]
+      (when (and f (.exists ^java.io.File f))
+        (.getCanonicalPath ^java.io.File f)))))
+
+(defn- typed-context
+  "The context a workspace-relative `@token` typed by hand names, if any.
+  `@/abs`, `@~/…` and `@./…` ones the server reads from the text itself."
+  [token workspace]
+  (when-not (re-find #"^[/~.]" token)
+    (when-let [path (existing-path token workspace)]
+      {:type (if (.isDirectory (io/file path)) "directory" "file") :path path})))
 
 (defn- contexts-for-text
-  "Filter `contexts` to those whose `:path` still appears as an `@path` token
-  in `text`. Drops contexts the user deleted from the message before send."
-  [text contexts]
-  (let [present (at-paths-in text)]
-    (vec (filter #(contains? present (:path %)) contexts))))
+  "The contexts `text` refers to: the picked ones (`contexts`) whose `@label`
+  (see `picker/at-label`) it still has, so the ones deleted from the
+  message are dropped, then the workspace files and directories it names
+  with an `@` typed by hand."
+  ([text contexts] (contexts-for-text text contexts nil))
+  ([text contexts workspace]
+   (let [tokens  (refs-in text "@")
+         present (set tokens)
+         picked  (filter #(present (picker/at-label % workspace)) contexts)
+         labels  (set (map #(picker/at-label % workspace) picked))
+         typed   (keep #(when-not (labels %) (typed-context % workspace)) tokens)]
+     (vec (distinct (concat picked typed))))))
+
+(defn- expand-refs
+  "`text` as sent: the `@label`s of files and directories (`contexts`, or
+  typed by hand) spelled out as `@/full/path`, `#path`s that exist as the
+  bare full path. Anything else stays as typed."
+  [text contexts workspace]
+  (let [picked (into {} (keep (fn [ctx]
+                                (when (:path ctx) [(picker/at-label ctx workspace) (:path ctx)])))
+                     contexts)]
+    (str/replace (str text) ref-re
+                 (fn [[whole pre sigil token]]
+                   (if-let [path (if (= "@" sigil)
+                                   (or (get picked token) (:path (typed-context token workspace)))
+                                   (existing-path token workspace))]
+                     (str pre (when (= "@" sigil) "@") path)
+                     whole)))))
 
 (defn send-chat-prompt! [srv chat-id text opts]
   (protocol/chat-prompt!
@@ -387,23 +441,26 @@
   chat's messages can be told apart from other chats' (e.g. one the server
   forks off)."
   [state text]
-  (let [contexts (contexts-for-text text (:pending-contexts state))
-        chat-id  (or (:chat-id state) (str (random-uuid)))
-        _        (when-not (:chat-id state)
-                   (chats/save-chat-id! (get-in state [:opts :workspace]) chat-id))
+  (let [workspace (get-in state [:opts :workspace])
+        contexts  (contexts-for-text text (:pending-contexts state) workspace)
+        ;; What the server gets; the chat shows what was typed.
+        message   (expand-refs text contexts workspace)
+        chat-id   (or (:chat-id state) (str (random-uuid)))
+        _         (when-not (:chat-id state)
+                    (chats/save-chat-id! workspace chat-id))
         ;; Stashed on :opts so the login-retry path (login.clj) re-sends them
         ;; after authentication; dropped again by the next message.
-        opts'    (if (seq contexts)
-                   (assoc (:opts state) :contexts contexts)
-                   (dissoc (:opts state) :contexts))]
-    (send-chat-prompt! (:server state) chat-id text opts')
+        opts'     (if (seq contexts)
+                    (assoc (:opts state) :contexts contexts)
+                    (dissoc (:opts state) :contexts))]
+    (send-chat-prompt! (:server state) chat-id message opts')
     (-> state
         ;; A replayed chat (resumed, forked) ends without a `finished`,
         ;; leaving its last reply in :current-text.
         flush-current-text
         (assoc :chat-id chat-id)
         (update :items conj {:type :user :text text})
-        (assoc :mode :chatting :pending-message text :echo-pending true
+        (assoc :mode :chatting :pending-message message :echo-pending true
                :turn-started-at (System/currentTimeMillis))
         (assoc :pending-contexts [])
         (assoc :opts opts')

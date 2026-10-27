@@ -1,8 +1,9 @@
 (ns eca-cli.mcp
-  "MCP server status: `tool/serverUpdated` handler, /mcp panel, status-bar slot,
-  and `mcp/connectServer` dispatch. Owns the `:mcps` state slice — a map of
-  server-name → server info kept in sync with the ECA server. No back-references
-  to eca-cli.state.
+  "MCP servers: `tool/serverUpdated` / `tool/serverRemoved` handlers, the /mcp
+  panel and its actions (start, stop, connect, enable, disable, log out), the
+  status-bar slot. Owns the `:mcps` state slice — a map of server-name →
+  server info kept in sync with the ECA server. No back-references to
+  eca-cli.state.
 
   :mcps shape — keyed by name (string):
     {:name string
@@ -14,7 +15,6 @@
   (:require [charm.components.list :as cl]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
-            [charm.program :as program]
             [clojure.string :as str]
             [eca-cli.paths :as paths]
             [eca-cli.protocol :as protocol]
@@ -115,7 +115,7 @@
   (str (theme/paint (status-role status) "●") " " name
        (theme/paint :muted (str " · " (count tools) " tools · " status))
        (case status
-         "requires-auth" (theme/paint :accent " [connect]")
+         "requires-auth" (theme/paint :accent " (needs login)")
          "failed"        (theme/paint :muted (str " (check " (paths/home-relative (paths/log-file)) ")"))
          nil)))
 
@@ -154,18 +154,6 @@
         (str (theme/paint (health mcps) "●") " "
              (theme/paint :muted (str "MCP " running "/" (count enabled))))))))
 
-;; --- connect-server dispatch ---
-
-(defn connect-server!
-  "Sends `mcp/connectServer` notification for the given server name. Pure cmd
-  builder — returns [state cmd]."
-  [state name]
-  [state
-   (program/cmd
-     (fn []
-       (protocol/mcp-connect-server! (:server state) name)
-       nil))])
-
 ;; --- :picking :kind :mcp key dispatch ---
 
 (defn- selected-entry [state]
@@ -174,18 +162,61 @@
     (when (and (some? idx) (< idx (count filtered)))
       (nth filtered idx))))
 
-(defn handle-key
-  "Dispatches keys for the :mcp picker. Enter on requires-auth → connect;
-  otherwise no-op. Escape and filter behaviours are handled by picker.clj."
-  [state msg]
-  (cond
-    (and (msg/key-press? msg) (msg/key-match? msg :enter))
-    (if-let [entry (selected-entry state)]
-      (if (= "requires-auth" (:status entry))
-        (let [[s' cmd] (connect-server! state (:name entry))]
-          [(-> s' (assoc :mode :ready) (dissoc :picker) (update :input ti/focus)) cmd])
-        [state nil])
-      [state nil])
+(defn actions-for
+  "What can be done with an MCP server in its state, as eca-emacs offers:
+  [label action] pairs for `protocol/mcp-server-action!`. Enabling and
+  disabling are saved in the ECA config, starting and stopping aren't. Log
+  out forgets the server's OAuth login and restarts it."
+  [{:keys [status disabled hasAuth]}]
+  (let [disabled? (or disabled (= "disabled" status))]
+    (vec (concat
+           (case status
+             "requires-auth"        [["Connect (log in)" :connect]]
+             ("running" "starting") [["Stop" :stop]]
+             [["Start" :start]])
+           [(if disabled? ["Enable" :enable] ["Disable" :disable])]
+           (when hasAuth [["Log out" :logout]])))))
 
-    :else
+(defn- close [state]
+  (-> state (assoc :mode :ready) (dissoc :picker) (update :input ti/focus)))
+
+(defn handle-key
+  "Enter in the /mcp panel: the server's actions (`actions-for`). Escape and
+  filtering are picker.clj's."
+  [state msg]
+  (if-let [entry (and (msg/key-press? msg) (msg/key-match? msg :enter) (selected-entry state))]
+    (let [actions (mapv (fn [[label action]] [label [action (:name entry)]]) (actions-for entry))]
+      [(-> state
+           (assoc :picker {:kind     :mcp-action
+                           :query    ""
+                           :server   (:name entry)
+                           :list     (cl/item-list (mapv first actions) :height 8)
+                           :all      actions
+                           :filtered actions})
+           (update :input ti/reset))
+       nil])
     [state nil]))
+
+(defn action-picker-open? [state]
+  (and (= :picking (:mode state)) (= :mcp-action (get-in state [:picker :kind]))))
+
+(defn handle-action-select
+  "Enter on an MCP server action: sent; the server's tool/serverUpdated
+  shows the result in the status line and the panel."
+  [state]
+  (let [{:keys [list filtered]} (:picker state)
+        idx                     (cl/selected-index list)
+        [label [action name]]   (when (and (some? idx) (< idx (count filtered))) (nth filtered idx))]
+    (if action
+      (do (protocol/mcp-server-action! (:server state) action name)
+          [(-> (close state)
+               (update :items conj {:type :system :level :info
+                                    :text (str label ": " name)}))
+           nil])
+      [state nil])))
+
+(defn apply-server-removed
+  "`tool/serverRemoved`: the server is gone from the config."
+  [state {:keys [name]}]
+  (let [s (update state :mcps dissoc name)]
+    [(if (picker-open? s) (refresh-mcp-picker s) s) nil]))

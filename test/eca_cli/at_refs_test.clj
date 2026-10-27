@@ -57,7 +57,7 @@
       (is (= :picking (:mode s)))
       (is (= :at-file (get-in s [:picker :kind])))
       (is (= "" (get-in s [:picker :query])))
-      (is (some? cmd) "queryFiles cmd should be dispatched"))))
+      (is (some? cmd) "queryContext cmd should be dispatched"))))
 
 (deftest at-keystroke-mid-word-no-op-test
   (testing "mid-word `@` falls through to text-input: literal insert, no picker"
@@ -292,13 +292,13 @@
   (when (and cmd (= :cmd (:type cmd)) (:fn cmd))
     ((:fn cmd))))
 
-(deftest query-files-redispatched-on-filter-typing-test
-  (testing "Each filter keystroke fires chat/queryFiles with the current query"
+(deftest query-context-redispatched-on-filter-typing-test
+  (testing "Each filter keystroke fires chat/queryContext with the current query"
     (let [queries (atom [])]
-      (with-redefs [protocol/chat-query-files!
-                    (fn [_srv chat-id query cb]
+      (with-redefs [protocol/chat-query-context!
+                    (fn [_srv chat-id query _contexts cb]
                       (swap! queries conj {:chat-id chat-id :query query})
-                      (cb {:result {:files []}}))]
+                      (cb {:result {:contexts []}}))]
         (let [s0       (assoc (base-state)
                               :server {:queue (java.util.concurrent.LinkedBlockingQueue.)})
               [s1 c1]  (state/update-state s0 (msg/key-press "@"))

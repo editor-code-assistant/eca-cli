@@ -10,6 +10,7 @@
             [eca-cli.chat :as chat]
             [eca-cli.chats :as chats]
             [eca-cli.history :as history]
+            [eca-cli.providers :as providers]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
             [eca-cli.jobs :as jobs]
@@ -125,7 +126,8 @@
    "/agent"    {:doc "Open agent picker"                  :handler cmd-open-agent-picker}
    "/variant"  {:doc "Pick the model's variant (e.g. reasoning effort)" :handler cmd-open-variant-picker}
    "/rename"   {:doc "Rename the chat: /rename <title>"   :handler cmd-rename :args? true}
-   "/mcp"      {:doc "View MCP server status"             :handler mcp/cmd-open-mcp-panel}
+   "/mcp"      {:doc "MCP servers: status; start, stop, enable, disable, log out" :handler mcp/cmd-open-mcp-panel}
+   "/providers" {:doc "Providers: login state, models, quota; log in or out" :handler providers/cmd-open-providers}
    "/new"      {:doc "Start a fresh chat"                 :handler cmd-new-chat}
    "/chats"    {:doc "Browse and resume previous chats"   :handler cmd-list-chats}
    "/clear"    {:doc "Clear chat display (local only)"    :handler cmd-clear-chat}

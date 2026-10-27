@@ -22,13 +22,13 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [9](#phase-9-message-steering) | Message Steering | Influence a running prompt | ✅ Complete | — |
 | [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion` ✅, `chat/queryCommands` autocomplete ✅, log viewer | 🟡 Partial | — |
 | [11](#phase-11-power-features) | Power Features | `@`-refs ✅ · jobs ✅ · rollback ✅ · fork ✅ | ✅ Complete | — |
-| [12](#phase-12-context-expansion) | Context Expansion | Full `chat/queryContext` picker (dirs/URLs/cursor/repoMap/MCP-resources); image-attach | 🆕 Planned | — |
+| [12](#phase-12-context-expansion) | Context Expansion | Full `chat/queryContext` picker (dirs ✅ / MCP resources ✅); image-attach ✅; `#` paths ✅ | ✅ Complete | — |
 | [13](#phase-13-chat-management) | Chat Management | Rename ✅ + per-chat trust ✅, server-side clear, `chat/statusChanged` ✅, history pagination | 🟡 Partial | — |
 | [14](#phase-14-chat-navigation) | Chat Navigation | Flags/bookmarks, timeline jump, export transcript (server `/export`) | ✅ Complete | — |
 | [15](#phase-15-task-panel) | Task Panel | `TaskDetails` — checklist, N/M progress, priority, `blockedBy` graph | ✅ Complete | — |
 | [16](#phase-16-granular-approval) | Granular Approval | Per-shell-command approve & remember (`save:'session'`, `approvalKey`) | ✅ Complete | — |
-| [17](#phase-17-mcp-write-management) | MCP Write Management | MCP CRUD + start/stop/enable/disable/logout, OAuth (L) | 🆕 Planned | — |
-| [18](#phase-18-providers--config) | Providers & Config | Providers panel (auth, logout, cost badges); in-app global-config editor | 🆕 Planned | — |
+| [17](#phase-17-mcp-write-management) | MCP Write Management | start/stop/enable/disable/logout ✅, OAuth connect ✅, `tool/serverRemoved` ✅; add/update/remove servers (L) | 🟡 Partial | — |
+| [18](#phase-18-providers--config) | Providers & Config | Providers panel (auth ✅, logout ✅, quota ✅, cost badges); in-app global-config editor | 🟡 Partial | — |
 | [19](#phase-19-variant-picker) | Variant Picker | Interactive model/agent variant selector | ✅ Complete | — |
 | [20](#phase-20-context-breakdown) | Context Breakdown | segmented bar + `autoCompactPercentage` marker + legend (server `/context`) | ✅ Complete | — |
 | [21](#phase-21-multi-session--remote) | Multi-Session & Remote | Multi-workspace/concurrent servers; remote ECA host connect (L) | 🆕 Planned | — |
@@ -41,10 +41,11 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 
 Separate axis from the frozen numbering above. Principle: **ECA-checklist-required first** → **broad-value** → **L-sized speculative phases to the tail**, with one named value-exception. Re-weigh here (low churn) as priorities shift — do not touch #24.
 
-- **Next:** `12 Context Expansion` *(`6 Diff` and `8 Markdown` shipped)*
-- **Near:** `9 Steering` → `10 Server-Driven` → `11 Rollback/Fork`
-- **Later:** `15 Task Panel` · `16 Granular Approval` · `20 Context Breakdown` · `19 Variant` · `13 Chat Mgmt` · `14 Chat Nav` · `18 Providers & Config`
-- **Deferred (L):** `17 MCP Write Management` · `21 Multi-Session & Remote`
+The catch-up pass with the editor clients (eca-emacs as reference) shipped 9, 11, 12, 14, 15, 16, 19 and 20, and most of 10, 13, 17 and 18.
+
+- **Next:** the rest of `10 Server-Driven` (`/logs`) and `13 Chat Mgmt` (`chat/clear`, history pagination)
+- **Later:** `18 Providers & Config` (model cost badges, the config editor) · `17 MCP Write Management` (add/update/remove servers)
+- **Deferred (L):** `21 Multi-Session & Remote`
 
 ### Scope cuts — editor-client-only
 
@@ -399,15 +400,15 @@ A panel that reads `~/.cache/eca/eca-cli.log` and shows the tail with auto-scrol
 ### What to build
 
 **Context injection (`@` file references). ✅ Shipped.**  
-Typing `@` in the input triggers a fuzzy file search (using `chat/queryFiles`) and inserts the selected file as a context in the `chat/prompt` call. This mirrors pi's `@` shortcut exactly. The context appears as a reference in the user message display.
+Typing `@` in the input triggers a fuzzy file search (using `chat/queryFiles`; since Phase 12 `chat/queryContext`, with `#` for paths) and inserts the selected file as a context in the `chat/prompt` call. This mirrors pi's `@` shortcut exactly. The context appears as a reference in the user message display.
 
 **Background jobs panel. ✅ Shipped.**  
 ECA tracks long-running background jobs (dev servers, watchers, etc.) via `jobs/list` and `jobs/updated`. eca-cli shows a compact jobs indicator in the status bar (e.g., `[2 jobs]`) that the user can expand into a panel listing job names, statuses, and elapsed times. Killing a job (`jobs/kill`) is possible from the panel.
 
-**Chat rollback (`/rollback`). ⬜ Remaining.**  
+**Chat rollback (`/rollback`). ✅ Shipped.**  
 A command that shows the chat history and lets the user pick a message to roll back to. Sends `chat/rollback` to ECA. ECA sends `chat/cleared` followed by the kept messages, which eca-cli re-renders. This is the eca-cli equivalent of pi's `/tree` for branching.
 
-**Chat fork (`/fork`). ⬜ Remaining.**  
+**Chat fork (`/fork`). ✅ Shipped** (the server's `/fork`, or from a flag).  
 Fork the current chat at a selected message. Sends `chat/fork` to ECA, which creates a new chat. eca-cli receives `chat/opened` with the new chat-id and switches to it. The forked chat appears in `/chats`.
 
 ---
@@ -419,6 +420,8 @@ Numbered identities frozen in [#24](https://github.com/editor-code-assistant/eca
 ## Phase 12: Context Expansion
 
 **Goal:** Full `chat/queryContext` picker — directories, URLs, cursor, repoMap, MCP resources — beyond the file-only `queryFiles` shipped in Phase 11. Plus image-**attach** (`ImageContext`).
+
+**Status: ✅ Complete**, as eca-emacs does it: `@` offers what `chat/queryContext` returns (files, directories, MCP resources), labelled relative to the workspace; `#` inserts a path (`chat/queryFiles`) for the agent to read without attaching it. Both are spelled out in the text sent (`@/full/path`, bare path), and `@`/`#` paths typed by hand count too. Images attach as file contexts (`@shot.png`), which the protocol makes equivalent to `ImageContext` for clients that can give a path. Deviations: no `cursor` context (no editor cursor: an editor-client-only scope cut) and no `repoMap` (deprecated by the server); the server offers no web contexts (eca-emacs doesn't either).
 
 ## Phase 13: Chat Management
 
@@ -448,9 +451,13 @@ Numbered identities frozen in [#24](https://github.com/editor-code-assistant/eca
 
 **Goal (L):** MCP CRUD + start/stop/enable/disable/logout, OAuth beyond connect, `tool/serverRemoved`. Phase 7 delivered read-only MCP (part 1).
 
+**Status: 🟡 Partial.** In `/mcp`, Enter on a server offers what its state allows, as eca-emacs does: start, stop, connect (OAuth), enable, disable, log out (`mcp/*` notifications); `tool/serverRemoved` drops a server. Remaining: the add / update / remove server forms (`mcp/addServer`, `mcp/updateServer`, `mcp/removeServer`).
+
 ## Phase 18: Providers & Config
 
 **Goal:** Providers panel (auth status, `providers/logout`, model + cost badges); in-app global-config JSONC editor.
+
+**Status: 🟡 Partial.** `/providers` (`providers.clj`), like eca-emacs's panel: login state and where the credentials come from (login, config, environment, local), expiry, model count and subscription quota, sorted logged-in first; Enter logs in (or adds an API key) through the usual login flow, or logs out (`providers/logout`). Remaining: per-model cost badges (eca-emacs lists a provider's models with their settings) and the config editor.
 
 ## Phase 19: Variant Picker
 

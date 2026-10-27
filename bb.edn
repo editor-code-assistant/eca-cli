@@ -35,6 +35,7 @@
                                 (require '[eca-cli.markdown-test])
                                 (require '[eca-cli.markdown.highlight-test])
                                 (require '[eca-cli.mcp-test])
+                                (require '[eca-cli.panels-test])
                                 (require '[eca-cli.protocol-test])
                                 (require '[eca-cli.question-test])
                                 (require '[eca-cli.steer-test])
@@ -63,6 +64,7 @@
                                                               'eca-cli.markdown-test
                                                               'eca-cli.markdown.highlight-test
                                                               'eca-cli.mcp-test
+                                                              'eca-cli.panels-test
                                                               'eca-cli.protocol-test
                                                               'eca-cli.question-test
                                                               'eca-cli.steer-test

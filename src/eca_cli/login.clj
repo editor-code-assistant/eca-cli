@@ -32,6 +32,31 @@
              :action          (deref login-result 10000 nil)
              :pending-message pending-message}))))))
 
+(defn login-provider-cmd
+  "Start logging in to `provider` (e.g. from /providers), through the same
+  login UI as the automatic flow."
+  [srv provider]
+  (program/cmd
+    (fn []
+      (let [result (promise)]
+        (protocol/providers-login! srv provider nil
+                                   (fn [r] (deliver result (or (:result r) (:error r)))))
+        {:type     :eca-login-action
+         :provider provider
+         :action   (deref result 10000 nil)}))))
+
+(defn- after-login
+  "Login done: back to the turn that needed it, or, started by hand (/login,
+  /providers), to the prompt, saying so."
+  [state pending provider]
+  (cond-> (-> state
+              (assoc :mode (if pending :chatting :ready) :echo-pending (boolean pending))
+              (dissoc :login)
+              (update :input ti/focus))
+    (not pending) (-> (update :items conj {:type :system :level :info
+                                           :text (str "Logged in" (when provider (str " to " provider)) ".")})
+                      view/rebuild-lines)))
+
 (defn choose-login-method-cmd [srv provider method]
   (program/cmd
     (fn []
@@ -66,10 +91,7 @@
             srv       (:server state)
             opts      (:opts state)
             chat-id   (:chat-id state)
-            new-state (-> state
-                          (assoc :mode :chatting :echo-pending (boolean pending))
-                          (dissoc :login)
-                          (update :input ti/focus))]
+            new-state (after-login state pending provider-id)]
         [new-state (when pending
                      (program/cmd (fn []
                                     (chat/send-chat-prompt! srv chat-id pending opts)
@@ -82,11 +104,16 @@
   (let [{:keys [provider action]} msg
         pending (or (:pending-message msg) (get-in state [:login :pending-message]))]
     (cond
-      (nil? action)
+      ;; No answer, or an error (an unknown provider, a failed OAuth start…).
+      (or (nil? action) (nil? (:action action)))
       [(-> state
            (assoc :mode :ready)
+           (dissoc :login)
            (update :input ti/focus)
-           (update :items conj {:type :system :text "Login failed: timed out"})
+           (update :items conj {:type :system
+                                :text (str "Login failed: " (if (nil? action)
+                                                              "timed out"
+                                                              (or (:message action) (pr-str action))))})
            view/rebuild-lines)
        nil]
 
@@ -94,11 +121,7 @@
       (do
         (when pending
           (chat/send-chat-prompt! (:server state) (:chat-id state) pending (:opts state)))
-        [(-> state
-             (assoc :mode :chatting :echo-pending (boolean pending))
-             (dissoc :login)
-             (update :input ti/focus))
-         nil])
+        [(after-login state pending provider) nil])
 
       :else
       (let [needs-input? (or (= "input" (:action action))
@@ -114,15 +137,17 @@
              (update :input #(if needs-input? (ti/focus %) (ti/blur %))))
          nil]))))
 
-(defn handle-eca-login-complete [state msg]
-  (let [pending (:pending-message msg)]
-    (when pending
-      (chat/send-chat-prompt! (:server state) (:chat-id state) pending (:opts state)))
-    [(-> state
-         (assoc :mode :chatting :echo-pending (boolean pending))
-         (dissoc :login)
-         (update :input ti/focus))
-     nil]))
+(defn handle-eca-login-complete
+  "The login input was accepted. `providers/updated` may have finished the
+  login already (it can come first): then there's nothing left to do, and
+  the pending message mustn't be sent twice."
+  [state msg]
+  (if (= :login (:mode state))
+    (let [pending (:pending-message msg)]
+      (when pending
+        (chat/send-chat-prompt! (:server state) (:chat-id state) pending (:opts state)))
+      [(after-login state pending (get-in state [:login :provider])) nil])
+    [state nil]))
 
 ;; --- :login mode key dispatch ---
 

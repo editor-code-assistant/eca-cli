@@ -110,6 +110,9 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 - `src/eca_cli/chat.clj` — chat content handlers, tool-call lifecycle, approvals queue, chat routing/switching, prompt submission
 - `src/eca_cli/commands.clj` — slash commands: local registry, server commands (`chat/queryCommands`), dispatch, `/` picker items
 - `src/eca_cli/question.clj` — `chat/askQuestion`: question queue, `:asking` keys, answers
+- `src/eca_cli/picker.clj` — the pickers (model, agent, variant, chat, `@`/`#`): filtering, selection, `at-label`
+- `src/eca_cli/mcp.clj` — `:mcps` (`tool/serverUpdated` / `tool/serverRemoved`), the `/mcp` panel and its per-state actions (`actions-for` → `protocol/mcp-server-action!`), the status-line slot
+- `src/eca_cli/providers.clj` — `/providers`: the `providers/list` panel (login state, source, expiry, models, quota), log in through `login.clj`'s flow, `providers/logout`
 - `src/eca_cli/history.clj` — `/rollback`, `/flag`, `/flags` (jump / fork / remove), `/timeline`: two-step pickers over the chat's `:user` items (`:content-id` from the server's echo) and `:flag` items. Rollback and add-flag make the server clear the chat and replay it.
 - `src/eca_cli/view.clj` — pure rendering: chat lines (cached, batched), gutter (connecting / working), approval prompt, pickers, login, layout
 - `src/eca_cli/view/blocks.clj` — one renderer per chat item type: messages, tool calls (diffs, argument/output boxes), thinking, hooks, links, system notes
@@ -153,6 +156,16 @@ Chat routing: `chat/contentReceived` is shown only for the chat on screen, or ne
 ### Slash commands
 
 `commands/dispatch-command` handles Enter on `/…`: eca-cli's registry first (with arguments, a name the server also has goes to the server, e.g. `/model x/y`); otherwise the text is sent as a prompt and the server runs its own command (`/compact`, `/fork`, MCP prompts, skills…). Text that only starts with a slash (a path) is a message. A name neither knows is rejected only once the server's list is loaded. The list comes from `chat/queryCommands` into `:server-commands`: fetched after `initialize` and whenever the `/` picker opens.
+
+### Context references (`@` / `#`)
+
+As in eca-emacs: `@` at the start of a word opens a picker of contexts (`chat/queryContext`: files, directories, MCP resources; `cursor` and the deprecated `repoMap` left out), `#` one of paths (`chat/queryFiles`). Labels are relative to the workspace when inside it, directories end in `/` (`picker/at-label`); server items sit in the picker as `[label context]`. Answers carry the query they were for and are dropped when the user typed on. Picking with `@` adds the context to `:pending-contexts` and `@label` to the text; with `#`, only `#label`.
+
+On send (`chat/start-turn`), the contexts are the picked ones whose `@label` is still in the text, plus workspace files named by hand with `@` (only tokens that look like paths, with a `/` or `.`, so pasted code's `@Override` or `#include` stay text). The text the server gets spells them out (`expand-refs`): `@/full/path`, and the bare full path for `#`. The chat shows what was typed.
+
+### MCP and provider actions
+
+`/mcp`: Enter on a server opens its actions (`mcp/actions-for`, by status); they're notifications and the result comes back as `tool/serverUpdated`. Enable/disable rewrite the user's ECA config file, and log out drops the server's stored OAuth credentials (server-side, global): only start/stop are harmless to try against a real config. `/providers` logs in through the same `:login` flow as a prompt needing login; with no pending message the login ends in `:ready` with a note.
 
 ### Protocol reference
 

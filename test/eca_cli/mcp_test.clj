@@ -9,6 +9,7 @@
             [eca-cli.paths :as paths]
             [eca-cli.picker :as picker]
             [eca-cli.protocol :as protocol]
+            [eca-cli.state :as state]
             [eca-cli.theme :as theme]))
 
 (defn- base-state []
@@ -17,6 +18,11 @@
    :items []
    :input (ti/text-input)
    :width 160})
+
+(defn- mcps-fixture []
+  {"alpha" {:name "alpha" :status "running"       :tools []}
+   "bravo" {:name "bravo" :status "requires-auth" :tools []}
+   "delta" {:name "delta" :status "running"       :tools []}})
 
 ;; --- tool/serverUpdated handler ---
 
@@ -103,7 +109,7 @@
           lines  (mapv theme/strip-ansi styled)]
       (is (= 3 (count lines)))
       (is (str/starts-with? (nth lines 0) "● alpha"))
-      (is (str/includes? (nth lines 0) "[connect]"))
+      (is (str/includes? (nth lines 0) "(needs login)"))
       (is (str/starts-with? (nth lines 1) "● bravo"))
       (is (str/includes? (nth lines 1) "2 tools"))
       (is (str/includes? (nth lines 1) (str "check " (paths/home-relative (paths/log-file))))
@@ -115,48 +121,121 @@
         (is (str/starts-with? (nth styled 1) (theme/sgr :error)))
         (is (str/starts-with? (nth styled 2) (theme/sgr :success)))))))
 
-;; --- /mcp command + connect dispatch ---
+;; --- /mcp command + server actions ---
 
-(deftest mcp-connect-server-dispatch-test
-  (testing "Enter on requires-auth row triggers mcp-connect-server!"
-    (let [sent (atom [])
-          state (assoc (base-state)
-                       :mode :picking
-                       :server :stub
-                       :picker {:kind :mcp
-                                :list (cl/item-list ["fs"] :height 8)
-                                :all      [{:name "fs" :status "requires-auth"}]
-                                :filtered [{:name "fs" :status "requires-auth"}]
-                                :query ""})]
-      (with-redefs [protocol/mcp-connect-server!
-                    (fn [_srv name] (swap! sent conj name))]
-        (let [[_ cmd] (mcp/handle-key state (msg/key-press :enter))]
-          ;; cmd is a charm cmd; execute it to fire the notification
-          (when cmd ((:fn cmd)))
-          (is (= ["fs"] @sent))))))
+(defn- panel-on [entry]
+  (assoc (base-state)
+         :mode :picking
+         :server :stub
+         :picker {:kind     :mcp
+                  :list     (cl/item-list [(:name entry)] :height 8)
+                  :all      [entry]
+                  :filtered [entry]
+                  :query    ""}))
 
-  (testing "Enter on running row does NOT send notification"
-    (let [sent (atom [])
-          state (assoc (base-state)
-                       :mode :picking
-                       :server :stub
-                       :picker {:kind :mcp
-                                :list (cl/item-list ["fs"] :height 8)
-                                :all      [{:name "fs" :status "running"}]
-                                :filtered [{:name "fs" :status "running"}]
-                                :query ""})]
-      (with-redefs [protocol/mcp-connect-server!
-                    (fn [_srv name] (swap! sent conj name))]
-        (let [[_ cmd] (mcp/handle-key state (msg/key-press :enter))]
-          (when cmd ((:fn cmd)))
-          (is (empty? @sent)))))))
+(defn- action-labels [state]
+  (mapv first (get-in state [:picker :all])))
+
+(deftest mcp-actions-for-test
+  (testing "by state, as eca-emacs offers them"
+    (is (= [["Connect (log in)" :connect] ["Disable" :disable]]
+           (mcp/actions-for {:status "requires-auth"})))
+    (is (= [["Stop" :stop] ["Disable" :disable]]
+           (mcp/actions-for {:status "running"})))
+    (is (= [["Stop" :stop] ["Disable" :disable]]
+           (mcp/actions-for {:status "starting"})))
+    (is (= [["Start" :start] ["Disable" :disable]]
+           (mcp/actions-for {:status "stopped"})))
+    (is (= [["Start" :start] ["Disable" :disable]]
+           (mcp/actions-for {:status "failed"}))))
+  (testing "a disabled server can be enabled (or started once)"
+    (is (= [["Start" :start] ["Enable" :enable]]
+           (mcp/actions-for {:status "disabled" :disabled true})))
+    (is (= [["Stop" :stop] ["Enable" :enable]]
+           (mcp/actions-for {:status "running" :disabled true}))
+        "started by hand while disabled in the config"))
+  (testing "a server with an OAuth login can be logged out of"
+    (is (= [["Stop" :stop] ["Disable" :disable] ["Log out" :logout]]
+           (mcp/actions-for {:status "running" :hasAuth true})))))
+
+(deftest mcp-enter-opens-actions-test
+  (testing "Enter on a server opens its actions; nothing is sent yet"
+    (let [sent    (atom [])]
+      (with-redefs [protocol/mcp-server-action! (fn [_srv action name] (swap! sent conj [action name]))]
+        (let [[s cmd] (mcp/handle-key (panel-on {:name "fs" :status "requires-auth"}) (msg/key-press :enter))]
+          (is (nil? cmd))
+          (is (= :picking (:mode s)))
+          (is (= :mcp-action (get-in s [:picker :kind])))
+          (is (= "fs" (get-in s [:picker :server])))
+          (is (= ["Connect (log in)" "Disable"] (action-labels s)))
+          (is (empty? @sent))))))
+
+  (testing "a running server: stop / disable"
+    (let [[s _] (mcp/handle-key (panel-on {:name "fs" :status "running"}) (msg/key-press :enter))]
+      (is (= ["Stop" "Disable"] (action-labels s)))))
+
+  (testing "keys other than Enter are left to the picker"
+    (let [st    (panel-on {:name "fs" :status "running"})
+          [s _] (mcp/handle-key st (msg/key-press "x"))]
+      (is (= st s)))))
+
+(deftest mcp-action-select-test
+  (testing "Enter on an action sends it for that server and closes the panel"
+    (let [sent (atom [])]
+      (with-redefs [protocol/mcp-server-action! (fn [_srv action name] (swap! sent conj [action name]))]
+        (let [[opened _] (mcp/handle-key (panel-on {:name "fs" :status "requires-auth"}) (msg/key-press :enter))
+              _          (is (mcp/action-picker-open? opened))
+              [s cmd]    (mcp/handle-action-select opened)]
+          (is (nil? cmd))
+          (is (= [[:connect "fs"]] @sent))
+          (is (= :ready (:mode s)))
+          (is (nil? (:picker s)))
+          (is (= "Connect (log in): fs" (:text (peek (:items s)))))))))
+
+  (testing "the selected action is the one sent"
+    (let [sent (atom [])]
+      (with-redefs [protocol/mcp-server-action! (fn [_srv action name] (swap! sent conj [action name]))]
+        (let [[opened _] (mcp/handle-key (panel-on {:name "fs" :status "running"}) (msg/key-press :enter))
+              moved      (update-in opened [:picker :list] cl/select 1)]
+          (mcp/handle-action-select moved)
+          (is (= [[:disable "fs"]] @sent))))))
+
+  (testing "an action through the state dispatcher shows its note"
+    (with-redefs [protocol/mcp-server-action! (fn [_ _ _])]
+      (let [[opened _] (mcp/handle-key (panel-on {:name "fs" :status "running"}) (msg/key-press :enter))
+            [s _]      (state/update-state (assoc opened :chat-lines [] :scroll-offset 0 :height 24)
+                                           (msg/key-press :enter))]
+        (is (some #(str/includes? (theme/strip-ansi %) "Stop: fs") (:chat-lines s)))))))
+
+(deftest mcp-server-action-protocol-test
+  (testing "each action is its mcp/* notification, with the server's name"
+    (let [sent (atom [])]
+      (with-redefs [protocol/send-notification! (fn [_srv method params] (swap! sent conj [method params]))]
+        (doseq [a [:start :stop :enable :disable :logout :connect]]
+          (protocol/mcp-server-action! :srv a "fs"))
+        (is (= [["mcp/startServer" {:name "fs"}] ["mcp/stopServer" {:name "fs"}]
+                ["mcp/enableServer" {:name "fs"}] ["mcp/disableServer" {:name "fs"}]
+                ["mcp/logoutServer" {:name "fs"}] ["mcp/connectServer" {:name "fs"}]]
+               @sent))))))
+
+(deftest tool-server-removed-test
+  (testing "tool/serverRemoved drops the server"
+    (let [[s _] (mcp/apply-server-removed (assoc (base-state) :mcps (mcps-fixture)) {:name "bravo"})]
+      (is (= #{"alpha" "delta"} (set (keys (:mcps s)))))))
+
+  (testing "with the panel open, its rows follow"
+    (let [[opened _] (mcp/cmd-open-mcp-panel (assoc (base-state) :mcps (mcps-fixture)))
+          [s _]      (mcp/apply-server-removed opened {:name "bravo"})]
+      (is (= ["alpha" "delta"] (mapv :name (get-in s [:picker :filtered]))))
+      (is (= 2 (count (mcp/render-mcp-panel-lines s))))))
+
+  (testing "through the notification dispatcher"
+    (let [[s _] (state/update-state (assoc (base-state) :mcps (mcps-fixture) :server nil)
+                                    {:type :eca-tick
+                                     :msgs [{:method "tool/serverRemoved" :params {:name "alpha"}}]})]
+      (is (= #{"bravo" "delta"} (set (keys (:mcps s))))))))
 
 ;; --- picker/render in lockstep ---
-
-(defn- mcps-fixture []
-  {"alpha" {:name "alpha" :status "running"       :tools []}
-   "bravo" {:name "bravo" :status "requires-auth" :tools []}
-   "delta" {:name "delta" :status "running"       :tools []}})
 
 (deftest picker-renders-filtered-after-query-test
   (testing "panel rows reflect picker :filtered after a filter is typed, and
@@ -169,12 +248,13 @@
           lines      (mcp/render-mcp-panel-lines filtered)]
       (is (= 1 (count lines)))
       (is (str/starts-with? (theme/strip-ansi (first lines)) "● bravo"))
-      (with-redefs [protocol/mcp-connect-server!
-                    (fn [_srv n] (swap! sent conj n))]
-        (let [[_ cmd] (mcp/handle-key filtered (msg/key-press :enter))]
-          (when cmd ((:fn cmd)))
-          (is (= ["bravo"] @sent)
-              "Enter targets the one filtered (visible) row, not the original list"))))))
+      (with-redefs [protocol/mcp-server-action!
+                    (fn [_srv action n] (swap! sent conj [action n]))]
+        (let [[actions _] (mcp/handle-key filtered (msg/key-press :enter))]
+          (is (= "bravo" (get-in actions [:picker :server]))
+              "Enter targets the one filtered (visible) row, not the original list")
+          (mcp/handle-action-select actions)
+          (is (= [[:connect "bravo"]] @sent)))))))
 
 (deftest picker-filters-by-name-only-test
   (testing "typing filters :mcp rows by :name, not by status/tool text"
@@ -210,8 +290,8 @@
                             (some #(when (= "bravo" (:name %)) (:status %))))))
       (let [lines (mcp/render-mcp-panel-lines updated)]
         (is (= 3 (count lines)))
-        (is (not (some #(str/includes? % "[connect]") lines))
-            "row [connect] suffix gone after status transitions to running"))))
+        (is (not (some #(str/includes? % "(needs login)") lines))
+            "row (needs login) suffix gone after status transitions to running"))))
 
   (testing "with non-empty filter, update preserves :query and selection by name"
     (let [state      (-> (base-state) (assoc :mcps (mcps-fixture)))

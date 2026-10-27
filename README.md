@@ -40,7 +40,8 @@ eca-cli
 - Follow the agent's plan in a task panel above the prompt
 - The server's commands, skills and prompts from the `/` picker
 - A status line showing agent, model, context window use, cost and MCP health at a glance
-- Add files as context with `@`
+- Add files, folders, images and MCP resources as context with `@`; point the agent at a file's path with `#`
+- Log in and out of providers, and start, stop, connect or disable MCP servers, from panels
 - Resume, fork and roll back chats; flag checkpoints and jump between them
 - Collapsible tool calls, thinking and sub-agent blocks
 - Takes on your terminal's colour theme, dark or light (`NO_COLOR` turns colours off)
@@ -65,7 +66,8 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `/rename <title>` | Rename the chat |
 | `/new` | Start a fresh chat |
 | `/chats` | Browse and resume previous chats |
-| `/mcp` | MCP servers status |
+| `/mcp` | MCP servers: status; start, stop, connect, enable, disable, log out |
+| `/providers` | Providers: login state, models, quota; log in or out |
 | `/jobs` | Background shell jobs |
 | `/trust` | Toggle trust mode (run tool calls without asking) |
 | `/rollback` | Roll the chat back to before one of your messages |
@@ -82,6 +84,7 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | Key | Action |
 |---|---|
 | `Enter` | Send message / toggle the focused block; while the agent works, steer it |
+| `@` / `#` | Add a context / insert a path (at the start of a word) |
 | `Alt+Enter` | While the agent works, queue a message for when it's done |
 | `↑` on an empty input | While the agent works, take back what you steered or queued |
 | `y` / `n` / `Y` | Approve / reject / approve and remember a tool call for the chat |
