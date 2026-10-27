@@ -183,8 +183,17 @@
 
 (defn- finalize-handler-result [new-state cmd]
   [(cond-> (view/rebuild-lines new-state)
-     (= :ready (:mode new-state)) (update :input #(-> % ti/reset ti/focus)))
+     (#{:ready :chatting} (:mode new-state)) (update :input #(-> % ti/reset ti/focus)))
    cmd])
+
+(def ^:private during-turn
+  "eca-cli commands that make sense while the agent works; any other text
+  typed then steers the running prompt (the server has its own rules for its
+  commands)."
+  #{"/trust" "/help" "/clear" "/quit"})
+
+(defn runs-during-turn? [text]
+  (contains? during-turn (str/trim text)))
 
 (defn- parse-command
   "`/name args…` → [\"/name\" args-or-nil]. Nil when the text only starts

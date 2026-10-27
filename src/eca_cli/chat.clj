@@ -269,8 +269,8 @@
       (cond-> (assoc state :mode mode)
         (contains? state :input-draft) (-> (update :input ti/set-value (:input-draft state))
                                            (dissoc :input-draft))
-        (= :ready mode)                (update :input ti/focus)
-        (= :chatting mode)             (update :input ti/blur)))))
+        ;; Live while the agent works too, for steering.
+        :always                        (update :input ti/focus)))))
 
 (defn request-approval
   "Ask the user to approve tool call `id` of chat `chat-id`, now or after
@@ -362,6 +362,98 @@
              :model   (:model result)
              :status  (:status result)}))))
 
+(defn- start-turn
+  "Send `text` as the user's next message and show it; the input is left
+  alone. A new chat gets its id here, as the protocol recommends, so this
+  chat's messages can be told apart from other chats' (e.g. one the server
+  forks off)."
+  [state text]
+  (let [contexts (contexts-for-text text (:pending-contexts state))
+        chat-id  (or (:chat-id state) (str (random-uuid)))
+        _        (when-not (:chat-id state)
+                   (chats/save-chat-id! (get-in state [:opts :workspace]) chat-id))
+        ;; Stashed on :opts so the login-retry path (login.clj) re-sends them
+        ;; after authentication; dropped again by the next message.
+        opts'    (if (seq contexts)
+                   (assoc (:opts state) :contexts contexts)
+                   (dissoc (:opts state) :contexts))]
+    (send-chat-prompt! (:server state) chat-id text opts')
+    (-> state
+        ;; A replayed chat (resumed, forked) ends without a `finished`,
+        ;; leaving its last reply in :current-text.
+        flush-current-text
+        (assoc :chat-id chat-id)
+        (update :items conj {:type :user :text text})
+        (assoc :mode :chatting :pending-message text :echo-pending true
+               :turn-started-at (System/currentTimeMillis))
+        (assoc :pending-contexts [])
+        (assoc :opts opts')
+        view/rebuild-lines)))
+
+(defn submit-prompt
+  "Send what the user typed, `text`, as their next message (slash commands
+  included: the server runs its own). The input stays live, for steering."
+  [state text]
+  [(-> state
+       (start-turn text)
+       (update :input #(-> % ti/reset ti/focus))
+       (update :input-history conj text)
+       (assoc :history-idx nil))
+   nil])
+
+;; --- Steering & queue ---
+;;
+;; While the agent works, the input stays live. Enter steers the running
+;; prompt (chat/promptSteer): the server injects the text at the next turn
+;; boundary and echoes it as a user message, which clears :steered. Alt+Enter
+;; queues a message for after the turn (:queued). Whatever wasn't consumed is
+;; sent as the next prompt when the turn ends; Esc (stop) or ↑ on an empty
+;; input gives it back to the input instead.
+
+(defn- join-lines [& texts]
+  (str/join "\n" (remove str/blank? texts)))
+
+(defn pending-text
+  "What was steered but not consumed yet, then what was queued; nil if none."
+  [state]
+  (not-empty (join-lines (:steered state) (:queued state))))
+
+(defn- take-typed
+  "Clear the input after its text was used, recording it in the history."
+  [state text]
+  (-> state
+      (update :input ti/reset)
+      (update :input-history conj text)
+      (assoc :history-idx nil)))
+
+(defn- steer [state text]
+  (protocol/steer-prompt! (:server state) (:chat-id state) text)
+  (-> state (update :steered join-lines text) (take-typed text)))
+
+(defn- queue-message [state text]
+  (-> state (update :queued join-lines text) (take-typed text)))
+
+(defn take-back-pending
+  "Give the unsent steer and queued text back to the input, in front of
+  whatever is typed, and withdraw the steer from the server."
+  [state]
+  (if-let [text (pending-text state)]
+    (do (when (:steered state)
+          (protocol/steer-prompt-remove! (:server state) (:chat-id state)))
+        (-> state
+            (dissoc :steered :queued)
+            (update :input #(ti/set-value % (join-lines text (ti/value %))))))
+    state))
+
+(defn- send-pending
+  "The turn ended: send what was steered too late or queued as the next
+  prompt (not while a question still waits for an answer)."
+  [state]
+  (if-let [text (and (empty? (:questions state)) (pending-text state))]
+    (start-turn (dissoc state :steered :queued) text)
+    state))
+
+
 ;; --- ECA content handler ---
 
 (defn- finish-turn
@@ -394,6 +486,7 @@
             (as-> s (if (seq (:questions s))
                       (enter-asking s)
                       (-> s (assoc :mode :ready) (update :input ti/focus))))
+            send-pending
             view/rebuild-lines)
 
         ;; Also a turn the server started itself (e.g. in a chat it forked
@@ -401,7 +494,7 @@
         "running"
         (cond-> state
           (nil? (:turn-started-at state)) (assoc :turn-started-at (System/currentTimeMillis))
-          (= :ready (:mode state))        (-> (assoc :mode :chatting) (update :input ti/blur)))
+          (= :ready (:mode state))        (assoc :mode :chatting))
 
         state)
 
@@ -597,9 +690,12 @@
             (:echo-pending state)
             [(assoc state :echo-pending false) nil]
 
+            ;; A replayed message, or the steer the server just injected
+            ;; into the running turn (all of it: steers add up).
             :else
             [(-> state
                  flush-current-text
+                 (dissoc :steered)
                  (update :items conj {:type :user :text (or (:text content) "")})
                  view/rebuild-lines)
              nil])
@@ -678,48 +774,19 @@
                       :backward (if (nil? cur-idx) (last paths)  (nth paths (mod (dec cur-idx) n))))]
         [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines ensure-focus-visible) nil]))))
 
-(defn submit-prompt
-  "Send `text` as the user's next message; slash commands included, the
-  server runs its own. A new chat gets its id here, as the protocol
-  recommends, so this chat's messages can be told apart from other chats'
-  (e.g. one the server forks off)."
-  [state text]
-  (let [contexts  (contexts-for-text text (:pending-contexts state))
-        chat-id   (or (:chat-id state) (str (random-uuid)))
-        _         (when-not (:chat-id state)
-                    (chats/save-chat-id! (get-in state [:opts :workspace]) chat-id))
-        ;; Stashed on :opts so the login-retry path (login.clj) re-sends them
-        ;; after authentication; dropped again by the next message.
-        opts'     (if (seq contexts)
-                    (assoc (:opts state) :contexts contexts)
-                    (dissoc (:opts state) :contexts))
-        new-state (-> state
-                      ;; A replayed chat (resumed, forked) ends without a
-                      ;; `finished`, leaving its last reply in :current-text.
-                      flush-current-text
-                      (assoc :chat-id chat-id)
-                      (update :items conj {:type :user :text text})
-                      (assoc :mode :chatting :pending-message text :echo-pending true
-                             :turn-started-at (System/currentTimeMillis))
-                      (assoc :pending-contexts [])
-                      (assoc :opts opts')
-                      (update :input #(-> % ti/reset ti/blur))
-                      (update :input-history conj text)
-                      (assoc :history-idx nil)
-                      view/rebuild-lines)]
-    (send-chat-prompt! (:server state) chat-id text opts')
-    [new-state nil]))
-
 (defn- enter-submit-prompt [state]
   (let [text (str/trim (ti/value (:input state)))]
     (if (seq text)
       (submit-prompt state text)
       [state nil])))
 
-(defn- escape-cancel-chatting [state]
+(defn- escape-cancel-chatting
+  "Stop the running prompt; unsent steer and queued text go back to the
+  input rather than being sent."
+  [state]
   (when (:chat-id state)
     (protocol/stop-prompt! (:server state) (:chat-id state)))
-  [(-> state (assoc :mode :ready) (update :input ti/focus)) nil])
+  [(-> state take-back-pending (assoc :mode :ready) (update :input ti/focus)) nil])
 
 (defn- history-prev [state]
   (let [history (:input-history state)
@@ -791,6 +858,14 @@
            ensure-focus-visible)
        nil])))
 
+(defn alt-enter?
+  "Alt+Enter. Most terminals send it as ESC CR, which charm reads as an
+  Alt'ed \"\\r\" character rather than :enter."
+  [msg]
+  (and (msg/key-press? msg)
+       (or (msg/key-match? msg "alt+enter")
+           (and (:alt msg) (contains? #{"\r" "\n"} (:key msg))))))
+
 (defn- expandable? [item]
   (#{:tool-call :thinking :hook} (:type item)))
 
@@ -847,8 +922,24 @@
       [(-> state (update-in item-path update :expanded? not) view/rebuild-lines) nil])
 
     ;; --- Enter in :ready: non-slash text submission. State.clj handles slash dispatch. ---
-    (and (msg/key-press? msg) (msg/key-match? msg :enter) (= :ready (:mode state)))
+    (and (or (and (msg/key-press? msg) (msg/key-match? msg :enter)) (alt-enter? msg))
+         (= :ready (:mode state)))
     (enter-submit-prompt state)
+
+    ;; --- While the agent works: Enter steers, Alt+Enter queues, ↑ on an
+    ;; empty input takes them back for editing ---
+    ;; (Alt+Enter first: matching :enter ignores the modifier.)
+    (and (alt-enter? msg) (= :chatting (:mode state)))
+    (let [text (str/trim (ti/value (:input state)))]
+      [(if (seq text) (queue-message state text) state) nil])
+
+    (and (msg/key-press? msg) (msg/key-match? msg :enter) (= :chatting (:mode state)))
+    (let [text (str/trim (ti/value (:input state)))]
+      [(if (seq text) (steer state text) state) nil])
+
+    (and (msg/key-press? msg) (msg/key-match? msg :up) (= :chatting (:mode state))
+         (str/blank? (ti/value (:input state))) (pending-text state))
+    [(take-back-pending state) nil]
 
     ;; --- Escape during :chatting cancels the in-flight prompt ---
     (and (msg/key-press? msg) (msg/key-match? msg :escape) (= :chatting (:mode state)))

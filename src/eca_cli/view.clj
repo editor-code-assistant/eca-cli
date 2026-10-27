@@ -90,15 +90,19 @@
       lines
       (into (vec (repeat (- height n) "")) lines))))
 
-(defn render-chat [state]
-  (let [visible-height (max 1 (- (:height state) 5))
-        lines          (:chat-lines state)
-        total          (count lines)
-        offset         (:scroll-offset state)
-        end            (max 0 (- total offset))
-        start          (max 0 (- end visible-height))
-        visible        (pad-to-height (subvec lines start end) visible-height)]
-    (str/join "\n" visible)))
+(defn render-chat
+  "The chat lines on screen: `visible-height` of them (the screen minus the
+  rest of the layout), shifted up by :scroll-offset."
+  ([state] (render-chat state (- (:height state) 5)))
+  ([state visible-height]
+   (let [visible-height (max 1 visible-height)
+         lines          (:chat-lines state)
+         total          (count lines)
+         offset         (:scroll-offset state)
+         end            (max 0 (- total offset))
+         start          (max 0 (- end visible-height))
+         visible        (pad-to-height (subvec lines start end) visible-height)]
+     (str/join "\n" visible))))
 
 (def ^:private spinner-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
 
@@ -128,16 +132,37 @@
            (#{:preparing :running} (:state last-item)))                 "Running tools…"
       :else                                                             "Working…")))
 
+(declare clip)
+
 (defn render-working
   "Gutter line during a turn: spinner, what's happening, for how long, and
-  how to stop it."
+  what the keys do now (steer, queue, stop)."
   [state now]
-  (let [elapsed (some->> (:turn-started-at state) (- now) (max 0))]
+  (let [elapsed (some->> (:turn-started-at state) (- now) (max 0))
+        head    (str (spinner-frame now) " " (activity state)
+                     (when elapsed (str " " (or (blocks/format-duration elapsed) (str (quot elapsed 1000) "s")))))
+        hint    (cond
+                  (seq (str/trim (str (ti/value (:input state)))))
+                  "enter to steer · alt+enter to queue · esc to interrupt"
+                  (or (:steered state) (:queued state)) "↑ to edit · esc to interrupt"
+                  :else                                 "esc to interrupt")
+        room    (- (:width state 80) (theme/width head) 2)]
     (str (theme/paint :accent (spinner-frame now)) " "
          (theme/paint :bold (activity state))
          (when elapsed
            (theme/paint :muted (str " " (or (blocks/format-duration elapsed) (str (quot elapsed 1000) "s")))))
-         (theme/paint :subtle "  esc to interrupt"))))
+         (when (> room 8) (theme/paint :subtle (str "  " (clip hint room)))))))
+
+(defn- pending-lines
+  "`Steering: …` and `Queued: …` lines, above the prompt while the agent works."
+  [state]
+  (let [width (:width state 80)
+        line  (fn [label role text]
+                (str (theme/paint role label)
+                     (theme/paint :muted (clip (str/replace text #"\s+" " ") (max 1 (- width (count label)))))
+                     "\n"))]
+    (str (some->> (:steered state) (line "Steering: " :warning))
+         (some->> (:queued state) (line "Queued: " :accent)))))
 
 (def disconnected-hint "ECA server is not running. Press Ctrl+C to exit.")
 
@@ -373,7 +398,7 @@
                      (render-picker state)
 
                      (= :chatting mode)
-                     ""
+                     (str (pending-lines state) (prompt-input (:input state)))
 
                      (= :disconnected mode)
                      (str (theme/paint :error "✗ ") (theme/paint :muted disconnected-hint))
@@ -396,8 +421,11 @@
                      :asking     (theme/paint :accent "◆ Waiting for your answer")
                      :ready      (or (command-hint state) "")
                      "")
-        rule-role  (case mode :approving :warning :asking :accent :disconnected :error :border)]
-    (str (render-chat state)
+        rule-role  (case mode :approving :warning :asking :accent :disconnected :error :border)
+        ;; Chat, gutter, rule, input area, rule, status line: the chat gets
+        ;; what the (possibly multi-line) input area leaves.
+        input-h    (count (str/split input-area #"\n" -1))]
+    (str (render-chat state (- (:height state) 4 input-h))
          "\n" gutter
          "\n" (divider (:width state) rule-role)
          "\n" input-area

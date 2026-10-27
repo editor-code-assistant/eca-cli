@@ -36,6 +36,7 @@ eca-cli
 - Chat with any model and agent configured in ECA, with streaming responses rendered as markdown: syntax-highlighted code, tables, lists and links
 - Approve tool calls inline, with coloured diffs for file edits and a breakdown of shell commands; remember approvals for the chat
 - Answer the agent's questions by picking an option or typing your own answer
+- Steer the agent while it works, or queue your next message
 - The server's commands, skills and prompts from the `/` picker
 - A status line showing agent, model, context window use, cost and MCP health at a glance
 - Add files as context with `@`
@@ -73,7 +74,9 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 
 | Key | Action |
 |---|---|
-| `Enter` | Send message / toggle the focused block |
+| `Enter` | Send message / toggle the focused block; while the agent works, steer it |
+| `Alt+Enter` | While the agent works, queue a message for when it's done |
+| `↑` on an empty input | While the agent works, take back what you steered or queued |
 | `y` / `n` / `Y` | Approve / reject / approve and remember a tool call for the chat |
 | `Esc` | Stop the running prompt, close a picker, clear focus |
 | `Tab` / `Shift+Tab` | Cycle focus through chat blocks |

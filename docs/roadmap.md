@@ -19,7 +19,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [6](#phase-6-tool-call-diff-display) | Tool-Call Diff Display | Render file-edit tool calls as unified diffs | ✅ Complete | [#25](https://github.com/editor-code-assistant/eca-cli/issues/25) |
 | [7](#phase-7-mcp-integration) | MCP Integration | Status indicator, details panel, server update notifications | ✅ Complete | — |
 | [8](#phase-8-markdown-rendering) | Markdown Rendering | md→ANSI (bb's nextjournal.markdown), code highlighting, tables, `url` items | ✅ Complete | — |
-| [9](#phase-9-message-steering) | Message Steering | Influence a running prompt | ⬜ Unbuilt | — |
+| [9](#phase-9-message-steering) | Message Steering | Influence a running prompt | ✅ Complete | — |
 | [10](#phase-10-server-driven-interaction) | Server-Driven Interaction | `chat/askQuestion` ✅, `chat/queryCommands` autocomplete ✅, log viewer | 🟡 Partial | — |
 | [11](#phase-11-power-features) | Power Features | `@`-refs ✅ · jobs ✅ · rollback + fork remain | 🟡 Partial | — |
 | [12](#phase-12-context-expansion) | Context Expansion | Full `chat/queryContext` picker (dirs/URLs/cursor/repoMap/MCP-resources); image-attach | 🆕 Planned | — |
@@ -323,6 +323,8 @@ With markdown rendering in place, `url` items (`{:type "url" :title "..." :url "
 ## Phase 9: Message Steering
 
 **Goal:** Send messages to influence a running prompt without stopping it — the eca-cli equivalent of pi's message queue.
+
+**Status: ✅ Complete**, following eca-emacs: Enter while the agent works steers right away (`chat/promptSteer`; the server injects it at the next turn boundary and echoes it as a user message), Alt+Enter queues a follow-up. Both show above the prompt; leftovers are sent as one prompt when the turn finishes. Esc stops and gives unsent text back to the input (`chat/promptSteerRemove`), ↑ on an empty input does the same without stopping. Deviation from the plan below: steering is the default for Enter (not queue-then-steer), as in eca-emacs.
 
 ### What to build
 

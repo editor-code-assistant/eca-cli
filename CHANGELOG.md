@@ -18,6 +18,7 @@ Catch-up pass: eca-cli gains the features of the ECA editor clients it was missi
 - A chat the server forks off the current one (`/fork`, `/btw`) is shown and remembered; other chats' messages stay out of view.
 - The agent can ask you questions (`chat/askQuestion`, Phase 10): the `ask_user` tool, which the server disabled for eca-cli until it advertised support, and the choices of the server's `/login`. The question takes over the input: ↑/↓ and Enter pick an option, typing gives your own answer when allowed, Esc cancels. Questions asked together are answered in turn, approvals and questions never interrupt each other, and what you were typing comes back afterwards. The answer stays in the chat, on the `ask_user` call's line.
 - Server requests eca-cli doesn't support are answered with an error instead of leaving the server waiting.
+- Message steering (Phase 9): the input stays live while the agent works. Enter steers the running prompt (`chat/promptSteer`, injected at the next turn boundary), Alt+Enter queues a message for when it's done, both shown above the prompt. Whatever wasn't consumed is sent when the turn ends; Esc (stop) or ↑ on an empty input gives it back to the input instead (`chat/promptSteerRemove`). `/trust`, `/help`, `/clear` and `/quit` still run mid-turn. The gutter says which keys do what.
 
 - Markdown rendering (Phase 8) for replies, prompts and the welcome text: headings, emphasis, inline code, links, nested and task lists, quotes, GFM tables (cells wrap to fit), and fenced code with syntax highlighting. Built on babashka's bundled nextjournal.markdown; falls back to plain text if rendering fails.
 - `theme.clj`: colour roles on the terminal's ANSI palette, so eca-cli follows dark and light themes alike. `NO_COLOR` is honoured.
@@ -41,6 +42,7 @@ Catch-up pass: eca-cli gains the features of the ECA editor clients it was missi
 - After resuming a chat, the next message landed above the chat's last reply, and the new reply was glued onto it.
 - `@`-file contexts stuck to every later message instead of only the one that mentioned them.
 - Tests wrote to the real chats file; they now use a temp one.
+- A multi-line input area (an approval with a diff, a question) pushed the screen past the terminal's height; the chat now gives up the lines.
 - About 25 state tests never ran: a missing paren nested them inside another test.
 - Dividers and boxes rendered as `qqqq…` / `xxxx` inside tmux/screen: JLine draws box glyphs through the terminal's alternate charset, which with `screen-256color`/`tmux-256color` terminfo (SO/SI) requires `enacs` first. eca-cli now sends the terminal's `enacs` on startup (`terminal.clj`).
 - "Error: Stream closed" on NixOS/musl: `bb upgrade-eca` installed the glibc-linked build, which can't run there. Linux x86_64 now uses the static build, like the editor plugins.

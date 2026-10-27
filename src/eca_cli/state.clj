@@ -258,10 +258,13 @@
 ;; pending step-9 extraction.
 
 (defn- enter-slash-command? [state msg]
-  (and (msg/key-press? msg)
-       (msg/key-match? msg :enter)
-       (= :ready (:mode state))
-       (str/starts-with? (str/trim (ti/value (:input state))) "/")))
+  (let [text (str/trim (ti/value (:input state)))]
+    (and (msg/key-press? msg)
+         (msg/key-match? msg :enter)
+         (str/starts-with? text "/")
+         (or (= :ready (:mode state))
+             ;; Mid-turn, a few of eca-cli's commands; other text steers.
+             (and (= :chatting (:mode state)) (commands/runs-during-turn? text))))))
 
 (defn- autocomplete-slash? [state msg]
   (and (picker/printable-char? msg)

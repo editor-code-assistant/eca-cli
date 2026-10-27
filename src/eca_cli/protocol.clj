@@ -149,6 +149,17 @@
   (send-notification! srv "chat/promptStop"
                       (prompt-stop-params chat-id)))
 
+(defn steer-prompt!
+  "chat/promptSteer: inject `message` into the running prompt at its next
+  turn boundary (after the current tool calls). Steers add up server-side."
+  [srv chat-id message]
+  (send-notification! srv "chat/promptSteer" {:chatId chat-id :message message}))
+
+(defn steer-prompt-remove!
+  "chat/promptSteerRemove: drop the steer not consumed yet (idempotent)."
+  [srv chat-id]
+  (send-notification! srv "chat/promptSteerRemove" {:chatId chat-id}))
+
 (defn selected-model-changed! [srv model]
   (send-notification! srv "chat/selectedModelChanged" {:model model}))
 

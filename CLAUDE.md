@@ -74,7 +74,7 @@ The drain loop starts at init and is self-sustaining: the `:eca-tick` handler re
 
 - `:connecting` — waiting for the `initialize` response
 - `:ready` — input focused, awaiting user message
-- `:chatting` — LLM active, streaming; input blurred
+- `:chatting` — LLM active, streaming. The input stays live: Enter steers (`chat/promptSteer`, text in `:steered` until the server echoes it as a user message), Alt+Enter queues (`:queued`); both are sent as the next prompt when the turn ends (`chat/send-pending`), or given back to the input by Esc / ↑ (`take-back-pending`). Only `commands/runs-during-turn?` commands run mid-turn; other `/…` text steers. Alt+Enter arrives as an Alt'ed `"\r"` (ESC CR), see `chat/alt-enter?`.
 - `:approving` — a tool call (main chat or sub-agent) waiting on `y`/`n`/`Y`; more may wait in `:approval-queue`
 - `:asking` — the server asked a question (`chat/askQuestion`, `question.clj`), answered from the input area; more may wait in `:questions`. Approvals and questions don't interrupt each other: `chat/settle-mode` picks what comes next once one is answered (then `:chatting` while `:turn-started-at` says a turn runs, else `:ready`). A server `progress: running` marks a turn as running even when the server started it.
 - `:disconnected` — server exited (or failed to spawn / refused `initialize`). The reader thread queues a `:reader-error` whose `:error` is a ready-to-show report (exit code + tail of the server log, `server/exit-report`). Only scrolling and quitting work; quitting skips the protocol `shutdown` (also skipped in `:connecting`).

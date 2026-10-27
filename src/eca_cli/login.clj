@@ -69,7 +69,7 @@
             new-state (-> state
                           (assoc :mode :chatting :echo-pending (boolean pending))
                           (dissoc :login)
-                          (update :input ti/blur))]
+                          (update :input ti/focus))]
         [new-state (when pending
                      (program/cmd (fn []
                                     (chat/send-chat-prompt! srv chat-id pending opts)
@@ -97,7 +97,7 @@
         [(-> state
              (assoc :mode :chatting :echo-pending (boolean pending))
              (dissoc :login)
-             (update :input ti/blur))
+             (update :input ti/focus))
          nil])
 
       :else
@@ -121,7 +121,7 @@
     [(-> state
          (assoc :mode :chatting :echo-pending (boolean pending))
          (dissoc :login)
-         (update :input ti/blur))
+         (update :input ti/focus))
      nil]))
 
 ;; --- :login mode key dispatch ---
