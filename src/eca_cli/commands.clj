@@ -17,6 +17,7 @@
             [eca-cli.mcp :as mcp]
             [eca-cli.welcome :as welcome]
             [eca-cli.theme :as theme]
+            [eca-cli.transcript :as transcript]
             [eca-cli.view :as view]))
 
 (declare command-registry)
@@ -76,7 +77,7 @@
   [(update state :input ti/reset) (chats/list-chats-cmd (:server state))])
 
 (defn cmd-clear-chat [state]
-  [(assoc state :items [] :chat-lines [] :scroll-offset 0) nil])
+  [(-> state (transcript/reset-items []) (assoc :chat-lines [] :scroll-offset 0)) nil])
 
 (defn cmd-show-help [state]
   (let [cmds  (sort-by key command-registry)

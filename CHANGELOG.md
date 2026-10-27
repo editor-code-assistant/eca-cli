@@ -14,6 +14,8 @@ First-impression pass: eca-cli opens on a welcome screen with ECA's logo, Ctrl+C
 
 ### Added
 
+- `Ctrl+O` toggles a full-screen transcript for inspecting, expanding and scrolling through the current chat; `PgUp` opens it too, without losing a draft or pending approval/question.
+- `--fullscreen` preserves the previous full-screen experience.
 - A welcome screen opens each new chat, in the spirit of Claude Code's: ECA's logo drawn in braille, eca-cli's and the server's versions, the model, agent and workspace, tips to get started (`/init` while the project has no AGENTS.md) and the latest chats to resume with `/chats` ("Welcome back!"). It fits itself to the terminal's width, and replaces the server's default welcome text; a `welcomeMessage` of your own still shows below it.
 - Ctrl+C works as in Claude Code instead of quitting at once: it clears what's typed, or stops the agent while it works (like Esc); otherwise the first press shows `Press Ctrl+C again to exit` in the status line's place, and a second one within 2 seconds quits. Ctrl+D on an empty input does the same. `/quit` still quits right away.
 - `demo.gif` in the README, recorded by `bb demo`: eca-cli in tmux against a scripted ECA server, in a demo project under a temporary HOME, so it needs no account and shows no one's data.
@@ -48,6 +50,10 @@ First-impression pass: eca-cli opens on a welcome screen with ECA's logo, Ctrl+C
 
 ### Fixed
 
+- Replayed unfinished tools, thoughts, hooks and unanswered questions stay live until final; confirmed turn completion releases orphan activity without dismissing questions. Removing chat items no longer skips or duplicates later terminal output.
+- Resizing and switching to/from the transcript preserve terminal history and live-row alignment; rapid resizes are debounced, and clearing or switching chats appends a new section instead of repainting old history.
+- Short terminals keep the input cursor, selected question option and picker selection visible.
+- The welcome waits for initialization tasks as well as startup facts, so late model discovery is included before it becomes terminal history.
 - A `HOME` set for one run was ignored (the JVM takes the home directory from the user's account), so eca-cli kept reading and writing the real home's chats, cache and `~/` paths. `$HOME` now comes first.
 - Sub-agents: their content landed in the main chat (and their `finished` ended the main turn) because eca-cli looked for a `subagentDetails` field and an `eca__spawn_agent` name the server never sends. Spawn calls are now recognised by their `subagent` details.
 - A sub-agent tool call that needed approval hung the chat with nothing to approve; it now asks, answered with the sub-agent's chat id.
@@ -78,7 +84,7 @@ First-impression pass: eca-cli opens on a welcome screen with ECA's logo, Ctrl+C
 
 ### Changed
 
-- A chat starts at the top of the screen and grows down, like Claude Code's and eca-emacs's, instead of growing up from the prompt.
+- Inline is now the default: a compact live area starts below the launch command and grows with content, while completed chat stays in native terminal scrollback after exit. `bb demo`, which records the README's GIF, uses this layout with its isolated scripted server.
 - ECA server management matches the editor plugins: no pinned version. On startup eca-cli resolves `--eca` → `eca` on PATH → a managed binary in `~/.cache/eca/eca-cli/`, which it installs on first run and updates to the latest GitHub release (checked at most hourly). Downloads are sha256-verified, checked to run, and swapped in atomically, with an `eca-version` marker. Offline, the installed binary is used with a notice. No `curl`/`unzip` needed anymore. Dropped the scavenging of nvim/emacs plugin binaries.
 - `bb upgrade-eca` checks for and installs the latest release now; `--force` reinstalls.
 - Connecting is asynchronous with no 10s `initialize` timeout (a config fetching a provider token can take longer): a "Connecting to ECA server…" spinner shows elapsed time, and points at the server log when it drags on.

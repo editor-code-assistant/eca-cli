@@ -124,6 +124,8 @@ These are client notifications (no response expected) that inform ECA of the use
 
 **Goal:** Smooth everyday interaction — not a planned phase, delivered incrementally.
 
+**Status: ✅ Delivered, with an inline-by-default follow-up.** The compact UI now starts below the launch command and keeps completed chat in native terminal scrollback after exit. Ctrl+O toggles the full-screen transcript for inspection/expansion; PgUp opens it. `--fullscreen` preserves the original behavior below, including app-owned mouse scrolling; inline uses the terminal's own scrollback. New, cleared and resumed chats start a new current transcript without erasing previously printed history.
+
 - `alt-screen true` — fullscreen mode; native mouse selection (Shift+drag) works out of the box
 - Mouse wheel scroll — DECSET 1000 mouse reporting lets the app own scroll; 3 lines per tick
 - Input history — Up/Down in `:ready` recalls previously sent messages

@@ -297,7 +297,7 @@
                        [{:type :tool-call :name "read_file" :state :called
                          :expanded? false :focused? false}]))
           s0 (-> (base-state)
-                 (assoc :items items :mode :ready :height 10 :scroll-offset 25)
+                 (assoc :items items :mode :ready :transcript? true :height 10 :scroll-offset 25)
                  view/rebuild-lines)
           [s _] (chat/handle-key s0 (msg/key-press :tab))]
       (is (= [30] (:focus-path s)))
@@ -308,7 +308,7 @@
     (let [items [{:type :tool-call :name "a" :state :called :expanded? false :focused? false}
                  {:type :tool-call :name "b" :state :called :expanded? false :focused? false}]
           s0 (-> (base-state)
-                 (assoc :items items :mode :ready :height 24 :scroll-offset 0)
+                 (assoc :items items :mode :ready :transcript? true :height 24 :scroll-offset 0)
                  view/rebuild-lines)
           [s _] (chat/handle-key s0 (msg/key-press :tab))]
       (is (= [0] (:focus-path s)))

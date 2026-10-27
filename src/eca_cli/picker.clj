@@ -6,7 +6,8 @@
             [charm.components.text-input :as ti]
             [charm.message :as msg]
             [eca-cli.protocol :as protocol]
-            [eca-cli.chats :as chats]))
+            [eca-cli.chats :as chats]
+            [eca-cli.transcript :as transcript]))
 
 (defn printable-char?
   "True when msg is a keypress carrying a single printable character (no
@@ -198,7 +199,8 @@
     (when chat-id
       (chats/save-chat-id! (get-in state [:opts :workspace]) chat-id))
     [(-> state
-         (assoc :mode :ready :items [] :chat-lines [] :scroll-offset 0)
+         (transcript/reset-items [])
+         (assoc :mode :ready :chat-lines [] :scroll-offset 0)
          (assoc :chat-id (or chat-id (:chat-id state)))
          (dissoc :picker)
          (update :input ti/focus))

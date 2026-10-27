@@ -11,6 +11,7 @@
             [eca-cli.chats :as chats]
             [eca-cli.paths :as paths]
             [eca-cli.picker :as picker]
+            [eca-cli.transcript :as transcript]
             [eca-cli.view :as view]
             [eca-cli.view.blocks :as blocks]
             [eca-cli.welcome :as welcome]))
@@ -254,6 +255,27 @@
                      (assoc-in items [i :focused?] true)))
                  items)]
     (assoc state :items items')))
+
+(defn toggle-transcript
+  "Ctrl+O: inspect the whole chat in the alternate screen, or return to the
+  inline prompt. The draft and any approval/question stay as they were."
+  [state]
+  (if (get-in state [:opts :fullscreen])
+    state
+    (-> state
+        (update :transcript? not)
+        (assoc :focus-path nil :scroll-offset 0)
+        sync-focus
+        view/rebuild-lines)))
+
+(defn- live-focusable-paths
+  "Inline, only items still on screen can be selected. The transcript and
+  --fullscreen keep navigation over the whole chat."
+  [state]
+  (let [paths (focusable-paths (:items state))]
+    (if (view/fullscreen? state)
+      paths
+      (filterv #(>= (first %) (or (:committed state) 0)) paths))))
 
 (defn register-subagent [state tool-id subagent-chat-id]
   (if-let [idx (first (keep-indexed #(when (= tool-id (:id %2)) %1) (:items state)))]
@@ -571,13 +593,12 @@
 ;; --- ECA content handler ---
 
 (defn- finish-turn
-  "Record how long the turn took (status line) once the prompt finished."
+  "Settle orphan activity on confirmed completion and record the turn duration."
   [state]
-  (if-let [t0 (:turn-started-at state)]
-    (-> state
-        (assoc :last-turn-ms (- (System/currentTimeMillis) t0))
-        (dissoc :turn-started-at))
-    state))
+  (cond-> (transcript/settle-turn state)
+    (:turn-started-at state)
+    (-> (assoc :last-turn-ms (- (System/currentTimeMillis) (:turn-started-at state)))
+        (dissoc :turn-started-at))))
 
 (defn handle-content [state params]
   (let [content (:content params)]
@@ -725,7 +746,8 @@
                                                                 (assoc-in [:opts :variant] (:selectVariant chat)))
                 (and mine? (contains? chat :selectTrust))   (-> (assoc :trust (true? (:selectTrust chat)))
                                                                 (assoc-in [:opts :trust] (true? (:selectTrust chat))))
-                own-welcome                     (update :items conj {:type :assistant-text :text own-welcome}))]
+                own-welcome                     (update :items conj {:type :assistant-text :text own-welcome})
+                chat                            (welcome/arrived :config))]
     [(cond-> (welcome/refresh s') own-welcome view/rebuild-lines) nil]))
 
 (defn- this-chat?
@@ -736,7 +758,8 @@
 
 (defn- clear-chat-view [state]
   (-> state
-      (assoc :items [] :current-text "" :chat-lines [] :scroll-offset 0
+      (transcript/reset-items [])
+      (assoc :current-text "" :chat-lines [] :scroll-offset 0
              :subagent-chats {} :tool-calls {} :focus-path nil)
       (dissoc :tasks :task-loading?)
       clear-approvals))
@@ -891,13 +914,30 @@
 ;; State.clj's dispatcher catches Ctrl+L, Ctrl+C, Enter+slash, "/" autocomplete
 ;; BEFORE delegating here, so handle-key never needs to know about commands.
 
+(defn block-navigation-key?
+  "Keys owned by block navigation in a transcript. Plain arrows, Enter and
+  Escape belong to the pending interaction unless a block is focused."
+  [state msg]
+  (and (msg/key-press? msg)
+       (not (:ctrl msg))
+       (if (:alt msg)
+         (or (msg/key-match? msg "alt+up")
+             (msg/key-match? msg "alt+down")
+             (contains? #{"g" "G" "o" "c"} (:key msg)))
+         (or (msg/key-match? msg :tab)
+             (and (:focus-path state)
+                  (some #(msg/key-match? msg %) [:up :down :enter :escape]))))))
+
 (defn- ensure-focus-visible
-  "Adjust :scroll-offset so the focused item's line span sits inside the
-  visible window. Top-level path [i] uses span i; sub-item path [i j] falls
-  back to parent span [i]. Prefers showing the start of the item if its span
-  exceeds visible-height. No-op if no focus-path or span unknown."
+  "Open transcript if inline tail clipping could hide the selected block,
+  then scroll its span into view. Child paths use the parent's span."
   [state]
-  (let [path (:focus-path state)]
+  (let [state (cond-> state
+                (and (:focus-path state)
+                     (not (view/fullscreen? state))
+                     (> (count (str/split-lines (view/view state))) (:height state)))
+                (assoc :transcript? true))
+        path (when (view/fullscreen? state) (:focus-path state))]
     (if-let [[i] path]
       (if-let [[s e] (get (:chat-line-spans state) i)]
         (let [total          (count (:chat-lines state))
@@ -920,7 +960,7 @@
       state)))
 
 (defn- focus-paths-cycle [state direction]
-  (let [paths (focusable-paths (:items state))]
+  (let [paths (live-focusable-paths state)]
     (if (empty? paths)
       [state nil]
       (let [cur     (:focus-path state)
@@ -972,11 +1012,15 @@
        nil])))
 
 (defn- scroll-page [state direction]
-  (let [page       (max 1 (- (:height state) 5))
-        max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 5)))]
-    (case direction
-      :up   [(update state :scroll-offset #(min max-offset (+ % page))) nil]
-      :down [(update state :scroll-offset #(max 0 (- % page))) nil])))
+  (if (and (= :down direction) (not (view/fullscreen? state)))
+    [state nil]
+    (let [state      (cond-> state
+                       (not (view/fullscreen? state)) (assoc :transcript? true))
+          page       (max 1 (- (:height state) 5))
+          max-offset (max 0 (- (count (:chat-lines state)) page))]
+      (case direction
+        :up   [(update state :scroll-offset #(min max-offset (+ (or % 0) page))) nil]
+        :down [(update state :scroll-offset #(max 0 (- (or % 0) page))) nil]))))
 
 (defn- scroll-wheel [state direction]
   (let [max-offset (max 0 (- (count (:chat-lines state)) (- (:height state) 5)))]
@@ -985,13 +1029,13 @@
       :down [(update state :scroll-offset #(max 0 (- % 3))) nil])))
 
 (defn- top-level-paths
-  "Filter focusable-paths to top-level entries only (`[[i] ...]`),
+  "Filter selectable paths to top-level entries only (`[[i] ...]`),
   used for Alt+↑/↓ block-jumps that skip sub-items."
-  [items]
-  (filterv #(= 1 (count %)) (focusable-paths items)))
+  [state]
+  (filterv #(= 1 (count %)) (live-focusable-paths state)))
 
 (defn- jump-top-level [state direction]
-  (let [paths (top-level-paths (:items state))]
+  (let [paths (top-level-paths state)]
     (if (empty? paths)
       [state nil]
       (let [cur     (:focus-path state)
@@ -1005,7 +1049,7 @@
         [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines ensure-focus-visible) nil]))))
 
 (defn- focus-edge [state edge]
-  (let [paths (focusable-paths (:items state))]
+  (let [paths (live-focusable-paths state)]
     (if (empty? paths)
       [state nil]
       [(-> state
@@ -1031,12 +1075,13 @@
                (cond-> item
                  (expandable? item)   (assoc :expanded? expanded?)
                  (:sub-items item)    (update :sub-items #(mapv walk %))))
-        items' (mapv walk (:items state))]
-    [(-> state (assoc :items items') view/rebuild-lines) nil]))
+        from   (if (view/fullscreen? state) 0 (or (:committed state) 0))
+        items' (mapv (fn [i item] (if (< i from) item (walk item))) (range) (:items state))]
+    [(-> state (assoc :items items') view/rebuild-lines ensure-focus-visible) nil]))
 
 (defn handle-key
-  "Dispatch keypresses + mouse-wheel events when mode is :ready or :chatting.
-  Caller guarantees mode is :ready or :chatting."
+  "Dispatch chat input, scrolling and block navigation. Other modes delegate
+  only scrolling and transcript block-navigation keys here."
   [state msg]
   (cond
     ;; --- Block navigation (Alt-prefixed; safe alongside text input) ---
@@ -1080,7 +1125,7 @@
     (and (msg/key-press? msg) (msg/key-match? msg :enter) (some? (:focus-path state)))
     (let [[i j] (:focus-path state)
           item-path (if j [:items i :sub-items j] [:items i])]
-      [(-> state (update-in item-path update :expanded? not) view/rebuild-lines) nil])
+      [(-> state (update-in item-path update :expanded? not) view/rebuild-lines ensure-focus-visible) nil])
 
     ;; --- Enter in :ready: non-slash text submission. State.clj handles slash dispatch. ---
     (and (or (and (msg/key-press? msg) (msg/key-match? msg :enter)) (alt-enter? msg))

@@ -68,6 +68,67 @@
       {:lines [] :spans {}}
       (map-indexed vector all))))
 
+;; --- The terminal's history (inline mode) ---
+
+(defn- separated?
+  "Whether a blank line comes between `prev` and `item`: the spacing of
+  `rebuild-chat-lines`, decided by the item before rather than the one after."
+  [prev item]
+  (boolean (and prev
+                (not= :user (:type prev))
+                (not (and (compact? prev) (compact? item))))))
+
+(defn- unfocused
+  "`item` without the focus highlight: the history keeps no selection."
+  [item]
+  (if (or (:focused? item) (some :focused? (:sub-items item)))
+    (cond-> (assoc item :focused? false)
+      (:sub-items item) (update :sub-items #(mapv (fn [s] (assoc s :focused? false)) %)))
+    item))
+
+(defn- item-range-lines
+  "Render a range with leading separators; only printed history drops focus."
+  [items from to width printed?]
+  (let [items (vec items)]
+    (into []
+          (mapcat (fn [i]
+                    (let [item (nth items i)
+                          prev (when (pos? i) (nth items (dec i)))]
+                      (concat (when (separated? prev item) [""])
+                              (render-item (if printed? (unfocused item) item) width)))))
+          (range from to))))
+
+(defn history-lines
+  "The lines of `items` `from`..`to` (exclusive) as they go to the
+  terminal's history, without focus highlights. Leading separators keep
+  the spacing identical to the full-screen chat."
+  [items from to width]
+  (item-range-lines items from to width true))
+
+(defn- with-streaming
+  "The chat's items, and the reply streaming in as the last one."
+  [state]
+  (cond-> (vec (:items state))
+    (seq (:current-text state)) (conj {:type :streaming-text :text (:current-text state)})))
+
+(defn fullscreen?
+  "Whether the full-screen layout is on screen: started with --fullscreen,
+  or the transcript (Ctrl+O) is open. Otherwise eca-cli draws inline, the
+  chat going to the terminal's own history (`eca-cli.render`)."
+  [state]
+  (boolean (or (get-in state [:opts :fullscreen]) (:transcript? state))))
+
+(defn- live-chat-lines
+  "Inline: what of the chat isn't in the terminal's history yet (items still
+  changing, the reply streaming in), then a blank line before the prompt,
+  as in the full-screen chat."
+  [state]
+  (let [items (with-streaming state)
+        n     (count items)
+        from  (min n (or (:committed state) 0))]
+    (into (item-range-lines items from n (:width state) false)
+          (when (and (pos? n) (not= :user (:type (peek items)))) [""]))))
+
 (def ^:dynamic *rebuild-deferred*
   "Bound to a volatile while a batch of server messages is processed: each
   `rebuild-lines` then just flags it, and the batch rebuilds once at the end
@@ -293,21 +354,28 @@
             (recur (inc i) (conj row [i c]) rows
                    (+ col (if (< (int c) 0x7f) 1 (max 1 (theme/width (str c))))))))))))
 
+(defn- input-row-budget [state]
+  ;; Gutter, two rules and status remain outside the input area. Other
+  ;; panels may be tail-clipped, but the prompt's cursor row must survive.
+  (max 1 (- (:height state 24) 4)))
+
 (defn- prompt-input
   "The prompt: `> ` in the prompt colour, then the text wrapped to `width`
   (charm's input would run off the screen), the cursor in reverse video. A
-  long text shows the rows around the cursor."
+  long text shows the rows around the cursor within the terminal's budget."
   ([input] (prompt-input input 80))
-  ([input width]
-   (let [value  (str (ti/value input))
+  ([input width] (prompt-input input width max-input-lines))
+  ([input width row-budget]
+   (let [row-budget (max 1 (min max-input-lines row-budget))
+         value  (str (ti/value input))
          text   (if (= :password (:echo-mode input))
                   (apply str (repeat (count value) (or (:echo-char input) \•)))
                   value)
          pos    (min (count text) (max 0 (or (ti/position input) (count text))))
          rows   (input-rows text (max 4 (- width 3)))
          here   (or (first (keep-indexed (fn [r row] (when (some #(= pos (first %)) row) r)) rows)) 0)
-         start  (max 0 (min (- here (dec max-input-lines)) (- (count rows) max-input-lines)))
-         shown  (subvec rows start (min (count rows) (+ start max-input-lines)))
+         start  (max 0 (min (- here (dec row-budget)) (- (count rows) row-budget)))
+         shown  (subvec rows start (min (count rows) (+ start row-budget)))
          cell   (fn [[i c]] (if (and (= i pos) (:focused input))
                               (theme/paint {:reverse true} (str c))
                               (str c)))]
@@ -320,9 +388,9 @@
                             shown)))))
 
 (defn render-question
-  "The input area while the server asks a question (`eca-cli.question`): the
-  question, its options (the highlighted one picked by Enter), how to answer,
-  then the prompt when a free answer is allowed."
+  "The question input area, bounded to the space above the fixed chrome.
+  Keep the selected option and free-answer cursor visible; window options
+  and shorten only the displayed header when the complete panel won't fit."
   [state]
   (when-let [{:keys [question options allow-freeform?]} (first (:questions state))]
     (let [width  (:width state 80)
@@ -347,13 +415,31 @@
                         (pos? n)                       (str "↑↓ Enter or 1-" (min 9 n) " to pick")
                         :else                          "type your answer, Enter to send")
                       " · Esc cancels"
-                      (when (pos? more) (str " · " more " more question" (when (> more 1) "s"))))]
+                      (when (pos? more) (str " · " more " more question" (when (> more 1) "s"))))
+          header (vec (blocks/prefixed (blocks/question-lines question (- width 2))
+                                       (str (theme/paint :accent-bold "?") " ") "  "))
+          budget (input-row-budget state)
+          ;; Reserve a header, hint and selected option before allocating a
+          ;; multi-line draft. prompt-input still windows around its cursor.
+          prompt (when allow-freeform?
+                   (prompt-input (:input state) width (max 1 (- budget 2 (if (pos? n) 1 0)))))
+          prompt-lines (if prompt (str/split prompt #"\n" -1) [])
+          room (- budget (count prompt-lines))
+          option-min (if (and (pos? n) (pos? room)) 1 0)
+          hint? (> room option-min)
+          hint-rows (if hint? 1 0)
+          header-min (if (> room (+ option-min hint-rows)) 1 0)
+          option-count (min n (max 0 (- room hint-rows header-min)))
+          header-count (min (count header) (max 0 (- room hint-rows option-count)))
+          start (max 0 (min (- n option-count) (- cursor (quot option-count 2))))
+          shown-header (cond-> (vec (take header-count header))
+                         (and (pos? header-count) (< header-count (count header)))
+                         (update (dec header-count) #(clip (str % " …") width)))]
       (str/join "\n"
-                (concat (blocks/prefixed (blocks/question-lines question (- width 2))
-                                         (str (theme/paint :accent-bold "?") " ") "  ")
-                        rows
-                        [(theme/paint :muted (clip hint width))]
-                        (when allow-freeform? [(prompt-input (:input state) width)]))))))
+                (concat shown-header
+                        (take option-count (drop start rows))
+                        (when hint? [(theme/paint :muted (clip hint width))])
+                        prompt-lines)))))
 
 (defn command-hint
   "While the input starts with a server command that takes arguments, its
@@ -419,8 +505,22 @@
          (when (pos? n)
            (theme/paint :subtle (str "  " (inc (or (cl/selected-index lst) 0)) "/" n))))))
 
+(defn- fit-picker-list
+  "A render-only window: keep the selection visible without changing the
+  model's list height or its scrolling offset."
+  [lst available]
+  (let [height (max 1 (min available (if (pos? (:height lst 0)) (:height lst) available)))
+        selected (or (cl/selected-index lst) 0)
+        offset (-> (or (:offset lst) 0)
+                   (min selected)
+                   (max (- (inc selected) height))
+                   (min (max 0 (- (count (:items lst)) height)))
+                   (max 0))]
+    (assoc lst :height height :offset offset)))
+
 (defn- render-picker [state]
   (let [{:keys [kind query list]} (:picker state)
+        display-list (fit-picker-list list (max 1 (- (:height state 24) 6)))
         width (:width state)]
     (cond
       (= :jobs kind)
@@ -434,9 +534,9 @@
         (str (theme/paint :accent-bold "MCP servers")
              (theme/paint :muted "  Enter: actions  ·  Esc: close") "\n"
              (divider width) "\n"
-             (str/join "\n" (map-indexed (fn [i row]
-                                           (str (if (= i sel) (theme/paint :accent-bold "❯ ") "  ") row))
-                                         (mcp/render-mcp-panel-lines state)))))
+             (str/join "\n" (map (fn [[i row]]
+                                   (str (if (= i sel) (theme/paint :accent-bold "❯ ") "  ") row))
+                                 (visible-rows (assoc display-list :items (mcp/render-mcp-panel-lines state)))))))
 
       :else
       (let [title (case kind
@@ -457,7 +557,7 @@
                     "Select item")]
         (str (picker-header title query list) "\n"
              (divider width) "\n"
-             (render-list kind list width))))))
+             (render-list kind display-list width))))))
 
 (defn render-status-bar [state]
   (status/render state))
@@ -516,7 +616,7 @@
         field (nth (:fields action) (or field-idx 0) nil)]
     (prompt-input (cond-> (:input state)
                     (= "secret" (:type field)) (assoc :echo-mode :password :echo-char \•))
-                  (:width state 80))))
+                  (:width state 80) (input-row-budget state))))
 
 (defn view [state]
   (let [mode       (:mode state)
@@ -532,7 +632,7 @@
                      (render-picker state)
 
                      (= :chatting mode)
-                     (str (task-block state) (pending-lines state) (prompt-input (:input state) (:width state 80)))
+                     (str (task-block state) (pending-lines state) (prompt-input (:input state) (:width state 80) (input-row-budget state)))
 
                      (= :disconnected mode)
                      (str (theme/paint :error "✗ ") (theme/paint :muted disconnected-hint))
@@ -547,7 +647,7 @@
                          (render-login state)))
 
                      :else
-                     (str (task-block state) (prompt-input (:input state) (:width state 80))))
+                     (str (task-block state) (prompt-input (:input state) (:width state 80) (input-row-budget state))))
         gutter     (case mode
                      :connecting (render-connecting state now)
                      :chatting   (render-working state now)
@@ -555,15 +655,44 @@
                      :asking     (theme/paint :accent "◆ Waiting for your answer")
                      :ready      (or (command-hint state)
                                      (when (:stopping? state) (theme/paint :muted "◌ Stopping…"))
+                                     (when-not (fullscreen? state)
+                                       (theme/paint :subtle (clip "ctrl+o for transcript" (:width state))))
                                      "")
                      "")
         rule-role  (case mode :approving :warning :asking :accent :disconnected :error :border)
-        ;; Chat, gutter, rule, input area, rule, status line: the chat gets
-        ;; what the (possibly multi-line) input area leaves.
-        input-h    (count (str/split input-area #"\n" -1))]
-    (str (render-chat state (- (:height state) 4 input-h))
-         "\n" gutter
+        ;; Chat, gutter, rule, input area, rule, status line. Full screen,
+        ;; the chat gets what the (possibly multi-line) input area leaves;
+        ;; inline, only what isn't in the terminal's history yet.
+        input-h    (count (str/split input-area #"\n" -1))
+        chat       (if (fullscreen? state)
+                     (str (render-chat state (- (:height state) 4 input-h)) "\n")
+                     (let [lines (live-chat-lines state)]
+                       (when (seq lines) (str (str/join "\n" lines) "\n"))))]
+    (str chat
+         gutter
          "\n" (divider (:width state) rule-role)
          "\n" input-area
          "\n" (divider (:width state))
-         "\n" (or (quit-hint state) (render-status-bar state)))))
+         "\n" (or (quit-hint state)
+                   (when (:transcript? state)
+                     (theme/paint :muted
+                                  (clip "Transcript · Ctrl+O to return · PgUp/PgDn to scroll · Tab to focus" (:width state))))
+                   (render-status-bar state)))))
+
+(defn frame
+  "What `eca-cli.render` draws for `state`: the full-screen layout or the
+  inline live region (`:content`), and unless started with --fullscreen,
+  the chat as the terminal's history should hold it: `:committed` items of
+  `:total` (the reply streaming in counts, for the last frame), their
+  `:lines`, and the `:epoch` they belong to."
+  [state]
+  (let [items (with-streaming state)
+        width (:width state)]
+    {:fullscreen? (fullscreen? state)
+     :content     (view state)
+     :history     (when-not (get-in state [:opts :fullscreen])
+                    {:epoch     (or (:epoch state) 0)
+                     :removals  (or (:history-removals state) [])
+                     :committed (min (count (:items state)) (or (:committed state) 0))
+                     :total     (count items)
+                     :lines     (fn [from to] (history-lines items from to width))})}))

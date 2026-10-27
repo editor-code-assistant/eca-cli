@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest is testing]]
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
+            [eca-cli.render :as render]
             [eca-cli.theme :as theme]
             [eca-cli.view :as view]))
 
@@ -134,6 +135,254 @@
         (is (= [] (:chat-lines s)))))
     (testing "otherwise it rebuilds"
       (is (= ["◆ hi" ""] (mapv theme/strip-ansi (:chat-lines (view/rebuild-lines state))))))))
+
+;; --- Inline: the terminal's history and the live region ---
+
+(def ^:private mixed-items
+  "Every spacing rule: user messages, stacked compact rows, an expanded one,
+  text, notes."
+  [{:type :user :text "hi"}
+   {:type :thinking :id "r1" :status :thought :text "hmm"}
+   {:type :tool-call :id "a" :state :called :summary "one"}
+   {:type :tool-call :id "b" :state :called :summary "two"}
+   {:type :assistant-text :text "done"}
+   {:type :tool-call :id "c" :state :called :summary "three" :expanded? true :args-text "{}"}
+   {:type :hook :id "h" :name "lint" :status :ok}
+   {:type :system :text "note"}
+   {:type :user :text "again"}
+   {:type :assistant-text :text "sure"}])
+
+(defn- history+tail
+  "The history lines of all `items`, with the live region's blank line."
+  [items width]
+  (into (view/history-lines items 0 (count items) width)
+        (when (not= :user (:type (peek items))) [""])))
+
+(deftest history-lines-test
+  (testing "the history reads like the full-screen chat, whatever is printed when"
+    (is (= (:lines (view/rebuild-chat-lines mixed-items "" 80)) (history+tail mixed-items 80)))
+    (is (= (:lines (view/rebuild-chat-lines (pop mixed-items) "" 80)) (history+tail (pop mixed-items) 80))
+        "ending on a user message")
+    (testing "printed in several goes, the same lines"
+      (let [n (count mixed-items)]
+        (doseq [cut (range 1 n)]
+          (is (= (view/history-lines mixed-items 0 n 80)
+                 (into (view/history-lines mixed-items 0 cut 80) (view/history-lines mixed-items cut n 80)))
+              (str "cut at " cut))))))
+  (testing "no focus highlight in the history"
+    (let [focused (assoc mixed-items 2 (assoc (nth mixed-items 2) :focused? true))]
+      (is (= (view/history-lines mixed-items 0 4 80) (view/history-lines focused 0 4 80)))
+      (is (not= (:lines (view/rebuild-chat-lines mixed-items "" 80))
+                (:lines (view/rebuild-chat-lines focused "" 80)))
+          "the full-screen chat does show it"))))
+
+(defn- inline-state [& {:as extra}]
+  (merge {:mode :ready :items [] :current-text "" :committed 0 :epoch 1 :tool-calls {} :questions []
+          :input (ti/focus (ti/text-input)) :width 80 :height 24 :chat-lines [] :scroll-offset 0
+          :opts {:workspace "/tmp/ws"} :mcps {} :init-tasks {}}
+         extra))
+
+(deftest inline-view-test
+  (let [items [{:type :user :text "first question"} {:type :assistant-text :text "first answer"}
+               {:type :user :text "second question"}
+               {:type :tool-call :id "t" :state :running :summary "Reading a.txt"}]
+        s     (inline-state :mode :chatting :turn-started-at 1 :items items :committed 3
+                            :current-text "streaming reply")
+        out   (theme/strip-ansi (view/view s))
+        lines (str/split-lines out)]
+    (testing "only what isn't in the terminal's history yet: no padding, no scrolling"
+      (is (not (str/includes? out "first question")))
+      (is (not (str/includes? out "second question")))
+      (is (str/includes? out "Reading a.txt"))
+      (is (str/includes? out "streaming reply"))
+      (is (< (count lines) 24)))
+    (testing "the prompt and the status line close it"
+      (is (some #(str/starts-with? % "> ") lines))
+      (is (= 4 (count (drop-while #(not (re-find #"^─+$" %)) lines)))
+          "rule, input, rule, status: the last lines"))
+    (testing "nothing left to show: just the prompt"
+      (let [idle (theme/strip-ansi (view/view (inline-state :items (subvec items 0 2) :committed 2)))]
+        (is (not (str/includes? idle "first answer")))
+        (is (= ["" "ctrl+o for transcript" (apply str (repeat 80 "─"))]
+               (take 3 (str/split-lines idle)))
+            "the blank after the chat, the transcript hint, the rule")))
+    (testing "full screen (--fullscreen, or the transcript): the whole chat, the whole screen"
+      (doseq [fs [(assoc-in s [:opts :fullscreen] true) (assoc s :transcript? true)]]
+        (let [fs  (view/rebuild-lines fs)
+              out (theme/strip-ansi (view/view fs))]
+          (is (str/includes? out "first question"))
+          (is (= 24 (count (str/split-lines (view/view fs))))))))))
+
+(defn- visible-tail [state]
+  ;; Exercise the view's output under the terminal's tail-clipping constraint,
+  ;; without depending on renderer internals or starting a terminal process.
+  (str/join "\n" (take-last (:height state) (str/split (view/view state) #"\n" -1))))
+
+(deftest short-terminal-keeps-prompt-cursor-visible-test
+  (let [draft (str/join "\n" (map #(str % "-draft row") "ABCDEFGHIJKL"))]
+    (doseq [mode [:ready :chatting :login :asking]
+            height [5 7 10]
+            layout [:inline :transcript :fullscreen]
+            marker ["A" "F" "L"]]
+      (testing (str mode " height " height " " layout " cursor " marker)
+        (let [s (-> (inline-state :mode mode :height height :turn-started-at 1
+                                  :input (-> (ti/text-input) (ti/set-value draft) ti/focus
+                                             (assoc :pos (str/index-of draft (str marker "-"))))
+                                  :tasks {:tasks (mapv #(hash-map :subject (str "task " %) :status "pending") (range 10))}
+                                  :tasks-expanded? true :steered "steering" :queued "queued"
+                                  :login {:provider "test" :field-idx 0
+                                          :action {:action "input" :fields [{:key "user" :label "User" :type "text"}]}}
+                                  :questions [{:question "A long question to answer" :allow-freeform? true
+                                               :options [{:label "First"} {:label "Second"}]}])
+                    (cond-> (= :transcript layout) (assoc :transcript? true)
+                            (= :fullscreen layout) (assoc-in [:opts :fullscreen] true)))
+              out (visible-tail s)]
+          (is (str/includes? out (theme/paint {:reverse true} marker))
+              "the cursor cell must survive tail clipping, including at the start of a long draft")
+          (is (= draft (ti/value (:input s)))))))))
+
+(deftest short-terminal-login-secret-remains-masked-test
+  (let [s (inline-state :mode :login :height 5 :width 20
+                        :input (-> (ti/text-input) (ti/set-value "secret-value-that-wraps-over-many-rows") ti/focus (assoc :pos 0))
+                        :login {:provider "test" :field-idx 0
+                                :action {:action "input" :fields [{:key "token" :label "Token" :type "secret"}]}})
+        out (visible-tail s)]
+    (is (str/includes? out (theme/paint {:reverse true} "•")))
+    (is (not (str/includes? (view/view s) "secret-value")))))
+
+(deftest short-terminal-picker-keeps-selection-visible-test
+  (doseq [height [5 7 9]
+          selected [0 5 11]
+          layout [:inline :transcript :fullscreen]]
+    (testing (str "height " height ", selected " selected ", " layout)
+      (let [labels (mapv #(format "choice-%02d" %) (range 12))
+            ;; Deliberately stale offsets exercise a resize after selection.
+            lst (-> (cl/item-list labels :height 8) (cl/select selected)
+                    (assoc :offset (if (zero? selected) 4 0)))
+            s (cond-> (inline-state :mode :picking :height height
+                                    :picker {:kind :model :query "" :list lst})
+                (= :transcript layout) (assoc :transcript? true)
+                (= :fullscreen layout) (assoc-in [:opts :fullscreen] true))
+            out (theme/strip-ansi (visible-tail s))
+            all (theme/strip-ansi (view/view s))]
+        (is (str/includes? out (str "❯ " (nth labels selected))))
+        (is (<= (count (re-seq #"choice-\d+" all)) (max 1 (- height 6))))
+        (is (= lst (get-in s [:picker :list])) "rendering must not resize or scroll the model list")
+        (is (= 8 (get-in s [:picker :list :height])))))))
+
+(defn- question-layout-state [height cursor layout]
+  (cond-> (inline-state :mode :asking :height height :question-cursor cursor
+                        :questions [{:question "Which option?" :allow-freeform? false
+                                     :options (mapv #(hash-map :label (format "Option-%02d" %)
+                                                              :description (str "Detail " %))
+                                                    (range 12))}])
+    (= :transcript layout) (assoc :transcript? true)
+    (= :fullscreen layout) (assoc-in [:opts :fullscreen] true)))
+
+(defn- clipped-frame-content [state]
+  (str/join "\n" (render/content-lines (:content (view/frame state)) (:height state))))
+
+(deftest question-option-window-survives-frame-clipping-test
+  (doseq [height [8 10 12]
+          selected [0 5 11]
+          layout [:inline :transcript :fullscreen]
+          freeform? [false true]
+          question ["Which option?" (str/join "\n\n" (repeat 20 "A long question paragraph."))]]
+    (testing (str "height " height ", selected " selected ", " layout ", freeform " freeform?)
+      (let [s (-> (question-layout-state height selected layout)
+                  (assoc-in [:questions 0 :question] question)
+                  (assoc-in [:questions 0 :allow-freeform?] freeform?))
+            out (theme/strip-ansi (clipped-frame-content s))
+            area (str/split-lines (view/render-question s))]
+        (is (str/includes? out (str "❯ " (inc selected) ". " (format "Option-%02d" selected))))
+        (is (= 1 (count (re-seq #"❯ " out))))
+        (is (str/includes? out "↑↓ Enter"))
+        (is (<= (count area) (- height 4)))
+        (is (every? #(<= (theme/width %) (:width s)) area))))))
+
+(deftest question-option-and-free-answer-cursor-stay-visible-test
+  (let [draft (str/join "\n" (map #(str % "-draft row") "ABCDEFGHIJKL"))]
+    (doseq [height [8 10 12]
+            selected [0 5 11]
+            layout [:inline :transcript :fullscreen]
+            marker ["A" "F" "L"]]
+      (let [s (-> (question-layout-state height selected layout)
+                  (assoc-in [:questions 0 :allow-freeform?] true)
+                  (assoc-in [:questions 0 :question] (str/join "\n\n" (repeat 20 "Long question.")))
+                  (assoc :input (-> (ti/text-input) (ti/set-value draft) ti/focus
+                                    (assoc :pos (str/index-of draft (str marker "-"))))))
+            out (clipped-frame-content s)]
+        (is (str/includes? (theme/strip-ansi out)
+                           (str "❯ " (inc selected) ". " (format "Option-%02d" selected))))
+        (is (str/includes? out (theme/paint {:reverse true} marker))
+            (str "cursor " marker " at height " height))
+        (is (<= (count (str/split-lines (view/render-question s))) (- height 4)))
+        (is (= draft (ti/value (:input s))))))))
+
+(deftest question-layout-keeps-all-details-when-they-fit-test
+  (doseq [layout [:inline :transcript :fullscreen]]
+    (let [s (-> (question-layout-state 12 1 layout)
+                (assoc :questions [{:question "First paragraph.\n\nSecond paragraph."
+                                   :allow-freeform? true
+                                   :options [{:label "First" :description "First detail"}
+                                             {:label "Second" :description "Second detail"}]}]
+                       :input (-> (ti/text-input) (ti/set-value "First draft line\nSecond draft line") ti/focus)))
+          out (theme/strip-ansi (clipped-frame-content s))]
+      (doseq [text ["? First paragraph." "Second paragraph." "1. First" "First detail"
+                    "❯ 2. Second" "Second detail" "↑↓ Enter to pick, or type an answer · Esc cancels"
+                    "First draft line" "Second draft line"]]
+        (is (str/includes? out text) text))
+      (is (not (str/includes? (theme/strip-ansi (view/render-question s)) "…"))))))
+
+(deftest question-window-does-not-truncate-history-or-model-test
+  (let [question (str (str/join "\n\n" (repeat 15 "A long question paragraph."))
+                      "\n\nQuestion tail preserved.")
+        item {:type :question :question question :answer "Full selected option text"}
+        s (-> (question-layout-state 8 0 :inline)
+              (assoc-in [:questions 0 :question] question)
+              (assoc :items [item] :committed 1 :history-removals [1 0])
+              view/rebuild-lines)
+        frame (view/frame s)
+        history (theme/strip-ansi (str/join "\n" ((get-in frame [:history :lines]) 0 1)))
+        short (theme/strip-ansi (clipped-frame-content s))
+        enlarged (theme/strip-ansi (clipped-frame-content (assoc s :height 80)))]
+    (is (not (str/includes? short "Question tail preserved.")))
+    (is (str/includes? history "Question tail preserved."))
+    (is (str/includes? history "Full selected option text"))
+    (is (str/includes? (theme/strip-ansi (str/join "\n" (:chat-lines s))) "Question tail preserved."))
+    (is (str/includes? enlarged "Question tail preserved."))
+    (doseq [i (range 12)]
+      (is (str/includes? enlarged (format "Option-%02d" i)))
+      (is (str/includes? enlarged (str "Detail " i))))
+    (is (= question (get-in s [:questions 0 :question])))
+    (is (= [1 0] (get-in frame [:history :removals])))))
+
+(deftest inline-focus-highlight-test
+  (let [items [{:type :tool-call :id "live" :name "read_file" :state :running
+                :summary "Reading file" :focused? true}]
+        s (inline-state :items items :committed 0)
+        live-row (first (str/split-lines (:content (view/frame s))))
+        full-row (first (:lines (view/rebuild-chat-lines items "" 80)))
+        printed-row (first (view/history-lines items 0 1 80))]
+    (is (= full-row live-row) "inline selection is as visible as full-screen selection")
+    (is (not= printed-row live-row) "only permanent history strips the focus highlight")
+    (is (= (view/history-lines (mapv #(dissoc % :focused?) items) 0 1 80)
+           (view/history-lines items 0 1 80)))))
+
+(deftest frame-test
+  (let [s (inline-state :items [{:type :user :text "hi"} {:type :assistant-text :text "hello"}]
+                        :committed 1 :epoch 7 :current-text "more")
+        {:keys [fullscreen? content history]} (view/frame s)]
+    (is (false? fullscreen?))
+    (is (= (view/view s) content))
+    (is (= {:epoch 7 :committed 1 :total 3 :removals []} (dissoc history :lines)) "the reply streaming in counts in the total")
+    (is (= (view/history-lines (conj (:items s) {:type :streaming-text :text "more"}) 1 3 80)
+           ((:lines history) 1 3)))
+    (testing "committed never past the items"
+      (is (= 2 (:committed (:history (view/frame (assoc s :committed 9)))))))
+    (testing "full screen"
+      (is (:fullscreen? (view/frame (assoc s :transcript? true))))
+      (is (:fullscreen? (view/frame (assoc-in s [:opts :fullscreen] true)))))))
 
 (deftest pad-to-height-test
   (testing "shorter than height — the chat starts at the top, blank lines below"

@@ -114,5 +114,5 @@
     (is (str/includes? out "Queued: queue me"))
     (is (str/includes? out "> more"))
     (is (str/includes? out "enter to steer · alt+enter to queue · esc to interrupt"))
-    (testing "the screen still fits: the chat gives up the lines"
-      (is (= 24 (count (str/split-lines (view/view s))))))))
+    (testing "full screen, the screen still fits: the chat gives up the lines"
+      (is (= 24 (count (str/split-lines (view/view (assoc-in s [:opts :fullscreen] true)))))))))

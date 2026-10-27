@@ -39,8 +39,10 @@
                                 (require '[eca-cli.protocol-test])
                                 (require '[eca-cli.question-test])
                                 (require '[eca-cli.quit-test])
+                                (require '[eca-cli.render-test])
                                 (require '[eca-cli.steer-test])
                                 (require '[eca-cli.tasks-test])
+                                (require '[eca-cli.transcript-test])
                                 (require '[eca-cli.view-test])
                                 (require '[eca-cli.view.blocks-test])
                                 (require '[eca-cli.view.status-test])
@@ -70,8 +72,10 @@
                                                               'eca-cli.protocol-test
                                                               'eca-cli.question-test
                                                               'eca-cli.quit-test
+                                                              'eca-cli.render-test
                                                               'eca-cli.steer-test
                                                               'eca-cli.tasks-test
+                                                              'eca-cli.transcript-test
                                                               'eca-cli.view-test
                                                               'eca-cli.view.blocks-test
                                                               'eca-cli.view.status-test

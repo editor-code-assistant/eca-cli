@@ -1189,6 +1189,7 @@
   (testing "Tab in :ready with tool-call items sets focus-path to first focusable"
     (let [base (assoc (base-state)
                       :mode :ready
+                      :transcript? true
                       :focus-path nil
                       :items [{:type :user :text "hi"}
                               {:type :tool-call :name "read_file" :state :called
@@ -1199,6 +1200,7 @@
   (testing "Enter on focused tool-call toggles :expanded?"
     (let [base (assoc (base-state)
                       :mode :ready
+                      :transcript? true
                       :focus-path [0]
                       :items [{:type :tool-call :name "read_file" :state :called
                                :expanded? false :focused? true}])
@@ -1208,6 +1210,7 @@
   (testing "Escape clears focus, does not change mode"
     (let [base (assoc (base-state)
                       :mode :ready
+                      :transcript? true
                       :focus-path [0]
                       :items [{:type :tool-call :name "read_file" :state :called
                                :expanded? false :focused? true}])
@@ -1218,6 +1221,7 @@
   (testing "Tab skips sub-items of a collapsed spawn block"
     (let [base (assoc (base-state)
                       :mode :ready
+                      :transcript? true
                       :focus-path nil
                       :items [{:type :tool-call :name "read_file" :state :called
                                :expanded? false :focused? false}
@@ -1235,6 +1239,7 @@
   (testing "Tab reaches sub-items when spawn block is expanded"
     (let [base (assoc (base-state)
                       :mode :ready
+                      :transcript? true
                       :focus-path nil
                       :items [{:type :tool-call :name "eca__spawn_agent" :state :called
                                :expanded? true :focused? false
@@ -1248,6 +1253,7 @@
   (testing "Enter on focused sub-item toggles its :expanded?"
     (let [base (assoc (base-state)
                       :mode :ready
+                      :transcript? true
                       :focus-path [0 0]
                       :items [{:type :tool-call :name "eca__spawn_agent" :state :called
                                :expanded? true :focused? false

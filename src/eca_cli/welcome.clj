@@ -8,6 +8,7 @@
             [charm.program :as program]
             [eca-cli.paths :as paths]
             [eca-cli.protocol :as protocol]
+            [eca-cli.transcript :as transcript]
             [eca-cli.upgrade :as upgrade]
             [eca-cli.version :as version]
             [eca-cli.view :as view]))
@@ -29,7 +30,7 @@
 (defn fresh
   "A new chat's screen: the welcome alone."
   [state]
-  (-> state (assoc :items [(item state)]) view/rebuild-lines))
+  (-> state (transcript/reset-items [(item state)]) view/rebuild-lines))
 
 (defn refresh
   "Bring the welcome at the top of the chat up to date, when it's there."
@@ -37,6 +38,20 @@
   (if (= :welcome (:type (first (:items state))))
     (-> state (assoc-in [:items 0] (item state)) view/rebuild-lines)
     state))
+
+(defn pending
+  "What the welcome waits for after startup, as `:welcome-pending`: it goes to
+  the terminal's history once they're all in (see `eca-cli.transcript`)."
+  [opts]
+  (cond-> #{:config :recent-chats}
+    ;; Not a managed install: `eca --version` tells.
+    (nil? (:eca-version opts)) (conj :server-version)))
+
+(defn arrived
+  "One of the facts the welcome waits for is in, or won't come."
+  [state fact]
+  (cond-> state
+    (:welcome-pending state) (update :welcome-pending disj fact)))
 
 ;; --- What arrives after startup ---
 
@@ -74,7 +89,8 @@
 (defn handle-recent-chats
   "`chats` nil: the server didn't answer, there's no recent section."
   [state chats]
-  (if (nil? chats) state (refresh (assoc state :recent-chats chats))))
+  (cond-> (arrived state :recent-chats)
+    (some? chats) (-> (assoc :recent-chats chats) refresh)))
 
 (defn server-version-cmd
   "The ECA binary's version from `eca --version`, as eca-emacs asks it, when
@@ -86,7 +102,8 @@
        :version (try (upgrade/binary-version binary) (catch Exception _ nil))})))
 
 (defn handle-server-version [state version]
-  (if version (refresh (assoc state :server-version version)) state))
+  (cond-> (arrived state :server-version)
+    version (-> (assoc :server-version version) refresh)))
 
 (defn custom-message?
   "Whether the server's welcome message is the user's own: its default

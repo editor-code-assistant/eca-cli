@@ -108,8 +108,38 @@
     (testing "/flags: jump to one scrolls it to the top"
       (let [s     (-> (run s0 "/flags") (press :enter) (press :enter))
             [start] (get (:chat-line-spans s) 1)]
+        (is (true? (:transcript? s)))
+        (is (view/fullscreen? s))
         (is (pos? (:scroll-offset s)))
         (is (= start (- (count (:chat-lines s)) (:scroll-offset s) 7)))))
     (testing "/timeline lists your messages and flags, newest first"
       (let [s (run s0 "/timeline")]
         (is (= ["⚑ checkpoint" "┃ q"] (map first (get-in s [:picker :all]))))))))
+
+(deftest history-jumps-open-transcript-at-target-test
+  (doseq [fullscreen? [false true]
+          [command keys target] [["/timeline" [:down :enter] 1]
+                                 ["/timeline" [:enter] 2]
+                                 ["/flags" [:enter :enter] 2]]]
+    (testing (str command " target " target " fullscreen " fullscreen?)
+      (let [items [{:type :assistant-text :text "preface"}
+                   {:type :user :text "question" :content-id "u1"}
+                   {:type :flag :text "checkpoint" :content-id "f1"}
+                   {:type :assistant-text :text (apply str (repeat 100 "long answer "))}]
+            s0 (base :items items :committed (count items)
+                     :opts {:workspace "/tmp/ws" :fullscreen fullscreen?})
+            picking (run s0 command)
+            s (apply press picking keys)
+            [start] (get (:chat-line-spans s) target)
+            visible (- (:height s) 5)]
+        (is (= :picking (:mode picking)))
+        (is (not (:transcript? picking)) "opening a picker alone does not open transcript")
+        (is (= :ready (:mode s)))
+        (is (nil? (:picker s)))
+        (is (view/fullscreen? s))
+        (if fullscreen?
+          (is (not (:transcript? s)) "--fullscreen needs no temporary transcript flag")
+          (is (true? (:transcript? s))))
+        (is (= items (:items s)))
+        (is (= (count items) (:committed s)))
+        (is (= start (- (count (:chat-lines s)) (:scroll-offset s) visible)))))))

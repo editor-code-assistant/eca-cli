@@ -16,6 +16,7 @@
             [eca-cli.history :as history]
             [eca-cli.providers :as providers]
             [eca-cli.welcome :as welcome]
+            [eca-cli.transcript :as transcript]
             [eca-cli.commands :as commands]))
 
 ;; Expose last-known state for nREPL inspection
@@ -142,8 +143,18 @@
   (-> state
       chat/flush-current-text
       chat/clear-approvals
+      transcript/settle-turn
+      ;; No server remains to receive answers. Finalize the unanswered
+      ;; markers too, without changing questions already answered/cancelled.
+      (update :items (fn [items]
+                       (mapv (fn [item]
+                               (if (and (= :question (:type item))
+                                        (not (transcript/item-final? state item)))
+                                 (assoc item :cancelled? true)
+                                 item))
+                             items)))
       (assoc :mode :disconnected :questions [])
-      (dissoc :picker :login)
+      (dissoc :picker :login :turn-started-at :stopping?)
       (update :items conj {:type :system :text report})
       (update :input ti/blur)
       view/rebuild-lines))
@@ -215,10 +226,13 @@
    :server                srv
    :opts                  opts
    :server-version        (:eca-version opts)   ; nil: asked of the binary
+   :welcome-pending       (welcome/pending opts)
    :trust                 (boolean (:trust opts))
    :chat-id               nil
    :chat-title            nil
    :items                 []
+   :committed             0                     ; items in the terminal's history
+   :epoch                 0                     ; bumped when :items start over
    :jobs                  {}
    :current-text          ""
    :tool-calls            {}
@@ -240,6 +254,7 @@
    :input-history         []
    :history-idx           nil
    :focus-path            nil
+   :transcript?           false
    :subagent-chats        {}
    :chat-lines            []
    :scroll-offset         0
@@ -286,7 +301,8 @@
              welcome/fresh
              (add-notices (:startup-notices opts))
              (disconnect (str "Could not start the ECA server: "
-                              (or (ex-message srv) (str srv)))))
+                              (or (ex-message srv) (str srv))))
+             transcript/advance)
          nil]
         [(-> (initial-state srv opts) welcome/fresh (add-notices (:startup-notices opts)))
          (program/batch (init-cmd srv (:workspace opts))
@@ -367,7 +383,7 @@
       (msg/wheel-up? msg)
       (msg/wheel-down? msg)))
 
-(defn update-state [state msg]
+(defn- dispatch [state msg]
   (reset! debug-state {:state (dissoc state :server :input)
                        :msg-type (or (:type msg) (:method msg))
                        :queue-size (when-let [q (get-in state [:server :queue])] (.size q))})
@@ -463,6 +479,21 @@
       (commands/press-quit-key state (if (msg/key-match? msg "ctrl+c") "ctrl+c" "ctrl+d")
                                (System/currentTimeMillis))
 
+      (and (msg/key-press? msg) (msg/key-match? msg "ctrl+o"))
+      [(chat/toggle-transcript state) nil]
+
+      ;; Transcript inspection must not submit the draft, approve a tool,
+      ;; answer a question or select a picker entry when Enter unfolds a block.
+      (and (:transcript? state) (chat/block-navigation-key? state msg))
+      (chat/handle-key state msg)
+
+      ;; PageUp opens the transcript even while an approval/question waits.
+      ;; The terminal owns the mouse wheel in inline mode.
+      (scroll-msg? msg)
+      (if (or (msg/key-press? msg) (view/fullscreen? state))
+        (chat/handle-key state msg)
+        [state nil])
+
       (and (msg/key-press? msg) (msg/key-match? msg "ctrl+l") (= :ready (:mode state)))
       (commands/cmd-open-model-picker state)
 
@@ -484,13 +515,11 @@
       ;; --- Per-mode dispatch (single-arm delegation) ---
       (= :login (:mode state))      (login/handle-key state msg)
       (= :approving (:mode state))  (chat/handle-approval-key state msg)
-      (= :asking (:mode state))     (if (scroll-msg? msg)
-                                      (chat/handle-key state msg)
-                                      (question/handle-key state msg))
+      (= :asking (:mode state))     (question/handle-key state msg)
 
-      ;; Server gone: scrolling (to read the exit report) is all that's left.
+      ;; Server gone: only the global transcript/scroll/quit keys above.
       (= :disconnected (:mode state))
-      (if (scroll-msg? msg) (chat/handle-key state msg) [state nil])
+      [state nil]
 
       ;; Command-picker selection lives here so picker.clj can stay free
       ;; of a commands.clj dependency (which would create a cycle).
@@ -548,4 +577,17 @@
       (#{:ready :chatting} (:mode state))  (chat/handle-key state msg)
 
       :else [state nil])))
+
+(defn update-state
+  "charm's update fn: `[new-state cmd]` for `msg`. Whatever the message, the
+  items that became final go to the terminal's history after it (see
+  `eca-cli.transcript`)."
+  [state msg]
+  (let [[s cmd] (dispatch state msg)
+        s       (transcript/advance s)
+        [i]     (:focus-path s)]
+    [(if (and i (not (view/fullscreen? s)) (< i (or (:committed s) 0)))
+       (-> s (assoc :focus-path nil) chat/sync-focus view/rebuild-lines)
+       s)
+     cmd]))
 

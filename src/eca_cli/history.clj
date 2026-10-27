@@ -18,6 +18,7 @@
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
             [eca-cli.protocol :as protocol]
+            [eca-cli.transcript :as transcript]
             [eca-cli.view :as view]))
 
 (def picker-kinds #{:rollback :rollback-type :flags :flag-action :timeline})
@@ -63,7 +64,8 @@
   (if-let [[start _] (get (:chat-line-spans state) idx)]
     (let [total   (count (:chat-lines state))
           visible (max 1 (- (:height state) 5))]
-      (assoc state :scroll-offset (max 0 (min (- total visible) (- total start visible)))))
+      (cond-> (assoc state :scroll-offset (max 0 (min (- total visible) (- total start visible))))
+        (not (view/fullscreen? state)) (assoc :transcript? true)))
     state))
 
 ;; --- Commands ---
@@ -158,9 +160,8 @@
             :remove (do (protocol/remove-flag! (:server state) (:chat-id state) (:content-id flag))
                         [(-> state
                              close
-                             (update :items (fn [items] (vec (remove #(and (= :flag (:type %))
-                                                                           (= (:content-id flag) (:content-id %)))
-                                                                     items))))
+                             (transcript/remove-items #(and (= :flag (:type %))
+                                                            (= (:content-id flag) (:content-id %))))
                              view/rebuild-lines)
                          nil])))
 

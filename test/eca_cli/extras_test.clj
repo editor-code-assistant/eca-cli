@@ -147,10 +147,13 @@
         (is (some #(str/starts-with? % "> xxx") lines))
         (is (some #(str/starts-with? % "  xxx") lines))))
     (testing "a long text shows the rows around the cursor, and the screen still fits"
-      (let [lines (shown (input (str/join "\n" (map #(str "row " %) (range 30)))))]
+      (let [text  (input (str/join "\n" (map #(str "row " %) (range 30))))
+            lines (shown text)]
         (is (some #{"  row 29"} lines))
         (is (not-any? #{"> row 0"} lines))
-        (is (= 24 (count lines)))))))
+        (is (< (count lines) 24) "inline: only what it needs")
+        (is (= 24 (count (str/split-lines (view/view (base :input text :opts {:workspace "/tmp/ws" :fullscreen true})))))
+            "full screen: exactly the screen")))))
 
 (deftest event-loop-handle-test
   (let [handle! @#'eca-cli.program/handle!

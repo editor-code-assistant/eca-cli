@@ -14,6 +14,19 @@
            (:opts (core/parse-args ["--workspace" "/tmp/p" "--model" "m" "--agent" "a"
                                     "--trust" "--eca" "/bin/eca" "--nrepl" "7888"]))))))
 
+(deftest parse-args-fullscreen-test
+  (testing "inline is the default; --fullscreen is a boolean flag"
+    (is (not (get-in (core/parse-args []) [:opts :fullscreen])))
+    (let [{:keys [opts exit]} (core/parse-args ["--fullscreen"])]
+      (is (nil? exit))
+      (is (true? (:fullscreen opts)))
+      (is (= (System/getProperty "user.dir") (:workspace opts)))))
+  (testing "the flag composes with other options without consuming their values"
+    (doseq [args [["--fullscreen" "--workspace" "/tmp/p" "--model" "m"]
+                 ["--workspace" "/tmp/p" "--model" "m" "--fullscreen"]]]
+      (is (= {:workspace "/tmp/p" :model "m" :fullscreen true}
+             (:opts (core/parse-args args)))))))
+
 (deftest parse-args-info-test
   (testing "--version prints the version, exits 0"
     (is (= {:exit 0 :message (str "eca-cli " version/version)}
@@ -24,7 +37,7 @@
       (let [{:keys [exit message]} (core/parse-args [flag])]
         (is (zero? exit))
         (is (str/includes? message "Usage: eca-cli [options]"))
-        (doseq [opt ["--workspace" "--model" "--agent" "--trust" "--eca" "--nrepl" "--version" "--help"]]
+        (doseq [opt ["--workspace" "--model" "--agent" "--trust" "--fullscreen" "--eca" "--nrepl" "--version" "--help"]]
           (is (str/includes? message opt) opt))))))
 
 (deftest parse-args-error-test

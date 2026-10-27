@@ -19,13 +19,15 @@
    :model     {:desc "Model to use" :ref "<model>"}
    :agent     {:desc "Agent to use" :ref "<agent>"}
    :trust     {:desc "Auto-approve all tool calls" :coerce :boolean}
+   :fullscreen {:desc "Take over the whole screen, instead of keeping the chat in the terminal's scrollback"
+                :coerce :boolean}
    :eca       {:desc "ECA server binary, a path or a command (default: `eca` on PATH, else auto-installed)"
                :ref  "<path>"}
    :nrepl     {:desc "Start an nREPL server on this port (development)" :ref "<port>" :coerce :int}
    :version   {:desc "Print the version and exit" :coerce :boolean}
    :help      {:desc "Show this help and exit" :alias :h :coerce :boolean}})
 
-(def ^:private cli-order [:workspace :model :agent :trust :eca :nrepl :version :help])
+(def ^:private cli-order [:workspace :model :agent :trust :fullscreen :eca :nrepl :version :help])
 
 (defn usage []
   (str "eca-cli " version/version " - ECA (Editor Code Assistant) in your terminal\n"
@@ -110,15 +112,12 @@
                       (Thread. (fn []
                                  ;; Show the cursor, shift back in to G0 (SI) in
                                  ;; case we died mid alternate-charset run, and
-                                 ;; turn bracketed paste back off.
-                                 (print "\033[?25h\017\033[?2004l")
+                                 ;; turn bracketed paste and mouse tracking off.
+                                 (print "\033[?25h\017\033[?2004l\033[?1006l\033[?1000l")
                                  (flush))))
-    (program/run {:init       (state/make-init opts)
-                  :update     state/update-state
-                  :view       view/view
-                  :alt-screen true
-                  :mouse      :normal
-                  :fps        20})))
+    (program/run {:init   (state/make-init opts)
+                  :update state/update-state
+                  :frame  view/frame})))
 
 (defn -main [& args]
   (let [{:keys [opts exit message]} (parse-args args)]

@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-bb run                        # start eca-cli TUI
+bb run                        # start inline; completed chat stays in terminal scrollback
+bb run --fullscreen           # use the previous full-screen TUI
 bb run --trust                # start with auto-approved tool calls
 bb run --eca /path/to/eca     # specify ECA binary explicitly
 bb run --workspace /path      # set workspace root (default: cwd)
@@ -45,9 +46,10 @@ ECA process stdout
   → LinkedBlockingQueue
   → drain-queue-cmd (state.clj) — polls every 50ms
   → :eca-tick message
-  → update-state (state.clj)
-  → charm.clj render loop
-  → view (view.clj)
+  → update-state (state.clj) → transcript/advance
+  → program.clj event loop (batch updates, then render once)
+  → view/frame (view.clj)
+  → render/plan → terminal executor (render.clj)
 ```
 
 Responses to requests (e.g. `chat/prompt` → `{chatId, model}`) are routed through the queue via a callback that calls `.put queue` — so all server messages flow through the same path.
@@ -56,16 +58,16 @@ Requests *from* the server (an `:id` and a `:method`, e.g. `chat/askQuestion`) a
 
 ### Startup
 
-`core/parse-args` handles `--help`, `--version` and invalid options (unknown flags and stray arguments exit 1 with a hint) without touching the workspace or the server. Otherwise `core/-main` resolves the ECA binary *before* the TUI takes over the terminal (`upgrade/resolve-binary!`, which may download/update the managed binary with progress on stderr; fatal errors print and exit 1), sends the terminal's `enacs` sequence (`terminal/enable-alt-charset!`, see below), then starts charm.clj.
+`core/parse-args` handles `--help`, `--version` and invalid options (unknown flags and stray arguments exit 1 with a hint) without touching the workspace or the server. Otherwise `core/-main` resolves the ECA binary *before* the TUI takes over the terminal (`upgrade/resolve-binary!`, which may download/update the managed binary with progress on stderr; fatal errors print and exit 1), sends the terminal's `enacs` sequence (`terminal/enable-alt-charset!`, see below), then starts `program/run` with `:init`, `:update` and `:frame view/frame`. Inline is the default; `--fullscreen` opts into the previous alternate-screen layout.
 
-### charm.clj Elm loop
+### Event loop (adapted from charm.clj)
 
-`eca-cli.program/run` (a copy of charm's `run` with a different loop) drives the TUI with three fns. charm's loop handles one message per 10 ms tick and renders after each: typing/pasting capped at ~100 keys/s, and a big paste overflowed core.async's 1024 pending puts, killing charm's input thread. Ours wakes on the first message, drains the queue (up to 1000), renders once. It also turns on bracketed paste: pasted text comes between `:paste-start`/`:paste-end` keys, and `state.clj` keeps its newlines/tabs/leading `/` `@` as text. charm's text input doesn't scroll or wrap, so `view/prompt-input` lays the input out itself (rows at the width, newlines, a window around the cursor).
+`eca-cli.program/run` adapts charm's input loop, command execution and resize checks, but owns event batching and terminal rendering. Its options are `:init`, `:update` and `:frame` (replacing the previous `:view` contract). charm's loop handles one message per 10 ms tick and renders after each: typing/pasting capped at ~100 keys/s, and a big paste overflowed core.async's 1024 pending puts, killing charm's input thread. Ours wakes on the first message, drains the queue (up to 1000), renders once. It also turns on bracketed paste: pasted text comes between `:paste-start`/`:paste-end` keys, and `state.clj` keeps its newlines/tabs/leading `/` `@` as text. charm's text input doesn't scroll or wrap, so `view/prompt-input` lays the input out itself (rows at the width, newlines, a window around the cursor).
 
 The three fns:
-- `state/make-init` — returns a fn that spawns ECA, starts the reader thread, returns `[initial-state (batch init-cmd drain-queue-cmd)]` (the state opening on the welcome; plus `eca --version` when the version isn't known). Must never throw: charm calls it outside its try/finally, so a spawn failure becomes a `:disconnected` state instead.
-- `state/update-state` — pure dispatch: returns `[new-state cmd-or-nil]`
-- `view/view` — pure render: returns a string from state
+- `state/make-init` — returns a fn that spawns ECA, starts the reader thread, returns `[initial-state (batch init-cmd drain-queue-cmd)]` (the state opening on the welcome; plus `eca --version` when the version isn't known). Must never throw: `program/run` calls it outside its try/finally, so a spawn failure becomes a `:disconnected` state instead.
+- `state/update-state` — dispatches an event, advances the final-item boundary with `transcript/advance`, and clears inline focus if its item just committed; returns `[new-state cmd-or-nil]`.
+- `view/frame` — returns a frame with `:fullscreen?`, `:content` and `:history`: `:content` is the layout string from `view/view`; `:history` carries the epoch, removal ledger, committed/total counts and a function rendering an item range. Streaming text counts in the total for the final flush. `--fullscreen` omits history; a temporary Ctrl+O transcript retains it.
 
 The drain loop starts at init and is self-sustaining: the `:eca-tick` handler returns a new `drain-queue-cmd` until the mode is `:disconnected`. If the cmd fn returns nil, charm.clj drops it — so the tick message is always `{:type :eca-tick :msgs [...]}` even when the queue is empty.
 
@@ -94,13 +96,33 @@ Approvals: the server decides who asks. Trust mode and remembered approvals are 
 
 ### View rendering
 
-No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a flat vec of rendered strings kept in state, rebuilt via `view/rebuild-lines` after content changes. `render-chat` slices the last N visible lines adjusted by `:scroll-offset`. A chat shorter than the screen starts at the top, blank lines below (`pad-to-height`), as in Claude Code and eca-emacs.
+Two layouts share the item renderers. Inline starts below the launch command and grows with content: only uncommitted items, streaming text and the input/status area are redrawn. Completed items are printed above that live region into native terminal scrollback. `view/history-lines` preserves inter-item spacing and removes focus highlights from printed history.
+
+Full screen (`--fullscreen` or `:transcript?` via Ctrl+O) keeps the previous layout: `:chat-lines` is a flat vector rebuilt by `view/rebuild-lines`; `render-chat` slices it using `:scroll-offset`, padding short chats below with `pad-to-height`. Input and panel row budgets keep the input cursor and question/picker selection visible on short terminals.
+
+Inline navigation only focuses expandable items at or after `:committed`; completed blocks are inspected in the transcript. Selecting or expanding a live block opens the transcript if the layout would exceed the viewport. Ctrl+O toggles `:transcript?`, resets focus/scroll, and preserves the draft and pending interactions; it is a no-op with `--fullscreen`. PgUp opens and scrolls the transcript even during approvals/questions; PgDn does nothing inline. Transcript block-navigation keys take precedence over pending interactions, so Enter on a focused block expands it rather than submitting, approving or answering. With no block focused, ordinary arrows/Enter/Esc still belong to the pending interaction. Mouse reporting is enabled only in full screen; inline leaves the wheel and selection to the terminal.
 
 - Items render in `view/blocks.clj`. Message text (assistant, streaming, user) goes through `markdown/render`: babashka's built-in nextjournal.markdown parses it, eca-cli lays the AST out for the width (`markdown/highlight.clj` colours fenced code). Finished items are memoized by value and width, so only the reply still streaming re-renders.
 - A server tick applies its whole batch of messages with `view/*rebuild-deferred*` bound: the handlers' `rebuild-lines` calls collapse into one rebuild per batch.
 - Colours come from `theme.clj` roles via `theme/paint`, mostly on the ANSI 16 palette so the terminal's theme picks the actual colours (dark or light); `NO_COLOR` drops them, keeping bold/italic.
 - The status line (`view/status.clj`) is a list of segments with priorities; on a narrow terminal the least important are dropped (or shortened) until it fits.
 - JLine constraints every renderer must respect: each line is parsed on its own, so styles never carry over to the next line (every line opens its styles and ends with a reset); a line wider than the terminal is cut *and loses all its colours*, so wrap or fit to the width; trailing spaces are dropped even when styled, so no full-width background bars and no badge ending a line with a space.
+
+### Transcript commitment and terminal rendering
+
+`transcript.clj` owns the logical history boundary, not terminal I/O:
+
+- `:committed` counts the leading final items. `advance` walks in order and stops at the first non-final item, holding back everything after it. Finality is **not** inferred from idle mode or the absence of a running turn.
+- `item-final?`: `:settled? true` explicitly releases an item; tools otherwise need `:called` or `:rejected`, thinking must no longer have status `:thinking`, hooks must no longer be `:running`, and questions need an `:answer` key or `:cancelled?`. The welcome has its own startup gate; other item types are final. Streaming text lives separately in `:current-text` until flushed into an item.
+- `settle-turn` releases orphan tools/thinking/hooks, recursively including sub-items, on confirmed completion (`progress: finished`), leaving already-final rows unchanged. Idle replay and a local stop request do not establish completion. **Questions remain live across turn completion**; disconnect separately cancels unanswered question markers because no server remains to receive answers.
+- `reset-items` replaces items, resets `:committed` and `:history-removals`, and increments `:epoch` for a fresh chat, clear or replay. A new epoch appends a new terminal section, never destructively repaints earlier history.
+- `remove-items` records all removal indices in `:history-removals`, each relative to the items after prior removals, including uncommitted/unprinted items. It rebases `:committed`, `:subagent-chats` indices and `:focus-path`. The renderer independently consumes unseen ledger entries to rebase its actual `:printed` count: multiple updates can occur before a frame, so item counts alone cannot distinguish removal-plus-append from an unchanged list. Previously printed terminal output is not erased.
+
+`render.clj` separates the pure `plan` (drawing steps, next `:shown`, optional `:retry-at`) from the executor. Inline printing erases only JLine's live rows, prints the new history lines, resets that display and redraws below. Bookkeeping commits only after successful output; alternate-screen entry is tracked separately so partial failures still clean up. Frames use synchronized terminal output.
+
+JLine receives **hard-delimited rows**: each attributed line ends with a newline so `Display.resize` cannot concatenate independent short rows. Every draw supplies an explicit physical cursor at column zero of the last new row, inside the new content even after a panel shrinks; never rely on a stale cursor or pending-wrap state.
+
+Normal inline resizing uses native terminal history reflow and JLine live-region reflow, with a **150 ms debounce** after the last resize (`render/due?` retries even without input). Full-screen geometry changes reset only the alternate screen. The sole inline reanchor case is when the old live region, measured after reflow, exceeds the viewport and its origin is lost: clear only the visible live screen and establish a new origin. This condition stays latched across subsequent resizes, even while the transcript hides the normal screen. **Never clear terminal scrollback**, on resize, transcript toggles or epoch changes.
 
 ### Welcome screen
 
@@ -110,15 +132,21 @@ A new chat opens on a `:welcome` item, the first of `:items`: `welcome.clj` buil
 - the model, variant and agent: `config/updated` (`chat/handle-config-updated`); later picks don't update it, as in Claude Code
 - the recent chats: `chat/list` after `initialize` (`:recent-chats-loaded`)
 
+Before committing the welcome to terminal history, `welcome-settled?` requires both an empty `:welcome-pending` set and every `:init-tasks` entry to be `:done?` (`$/progress`). Early config can precede model discovery, so receiving config alone is insufficient. Disconnect or the first user item releases this wait.
+
 Resuming a chat (`/chats`, `chat/cleared`) and `/clear` drop it. The server's default `welcomeMessage` (it starts `# Welcome to ECA!` and is written for editors) is dropped; one the user configured follows the box (`welcome/custom-message?`). The logo is braille traced from eca's `images/logo.png`, 18×8 cells: the cubes in the accent colour, the `>` in bold.
 
 ### Quitting
 
 Ctrl+C and Ctrl+D go through `commands/press-quit-key`, as in Claude Code. Ctrl+C clears a typed input, or stops a running turn (`chat/cancel-turn`, Esc's path); neither counts as a first press. Otherwise the first press sets `:quit-armed {:key :at}`, which the view shows in the status line's place, and a timer cmd sends `:quit-hint-expired` after `quit-window-ms` (ignored if a newer press re-armed). A second press of the same key within the window runs `cmd-quit`. Ctrl+D counts only on an empty input, where it isn't delete-forward. `msg/quit?` and `/quit` quit at once.
 
+On exit, `render/finish!` bypasses the resize debounce, leaves the alternate screen if necessary, and flushes all remaining inline history (including streaming text) without a prompt/status area. `--fullscreen` does not print chat into terminal history. Cleanup steps are independent and exception-guarded: disable bracketed paste, flush the final frame, stop the renderer (end synchronized output, disable mouse reporting, leave the alternate screen, show the cursor), restore terminal attributes, then close the terminal. A failed output stream must not prevent the later restorations.
+
 ### Key files
 
-- `src/eca_cli/program.clj` — the event loop (charm's `run`, draining the queue per render) and bracketed paste
+- `src/eca_cli/program.clj` — batched event loop, `:frame` callback, bracketed paste, resize/repaint scheduling and independent cleanup
+- `src/eca_cli/render.clj` — pure frame planner and JLine terminal executor for inline/history and alternate-screen rendering
+- `src/eca_cli/transcript.clj` — item finality, committed boundary, epochs and removal/rebasing ledger
 - `src/eca_cli/server.clj` — process spawn, Content-Length JSON-RPC framing (synchronized writes that return false instead of throwing once the server is gone), reader thread, exit report, queue drain
 - `src/eca_cli/protocol.clj` — message constructors, request ID tracking, response correlation
 - `src/eca_cli/state.clj` — Elm state machine, ECA content handlers, all key bindings
@@ -129,7 +157,7 @@ Ctrl+C and Ctrl+D go through `commands/press-quit-key`, as in Claude Code. Ctrl+
 - `src/eca_cli/mcp.clj` — `:mcps` (`tool/serverUpdated` / `tool/serverRemoved`), the `/mcp` panel and its per-state actions (`actions-for` → `protocol/mcp-server-action!`), the status-line slot
 - `src/eca_cli/providers.clj` — `/providers`: the `providers/list` panel (login state, source, expiry, models, quota), log in through `login.clj`'s flow, `providers/logout`
 - `src/eca_cli/history.clj` — `/rollback`, `/flag`, `/flags` (jump / fork / remove), `/timeline`: two-step pickers over the chat's `:user` items (`:content-id` from the server's echo) and `:flag` items. Rollback and add-flag make the server clear the chat and replay it.
-- `src/eca_cli/view.clj` — pure rendering: chat lines (cached, batched), gutter (connecting / working), approval prompt, pickers, login, layout
+- `src/eca_cli/view.clj` — `frame` contract, inline/history and full-screen layouts, chat lines (cached, batched), gutter, approval prompt, pickers and login
 - `src/eca_cli/view/blocks.clj` — one renderer per chat item type: messages, tool calls (diffs, argument/output boxes), thinking, hooks, links, system notes
 - `src/eca_cli/view/status.clj` — the status line: segments, priorities, context-window bar, usage/cost/quota
 - `src/eca_cli/welcome.clj` / `src/eca_cli/view/welcome.clj` — the welcome screen: the `:welcome` item and what refreshes it / the logo and the box's layouts
@@ -159,7 +187,7 @@ Every push to `main` is a release, no tag needed (`.github/workflows/ci.yml`): u
 
 ### Demo GIF
 
-`demo.gif` (the README's, at the repo root like the other ECA clients') is recorded by `bb demo [out.gif]` (`build/eca_cli/demo.clj`). It runs eca-cli from source in a private tmux server against `build/demo/fake_eca.clj`, a scripted ECA server (made-up models, chats and MCP servers, one conversation written in advance: read a file, propose an edit, sum up), in a demo project at `~/dev/my-app` under a temporary HOME. HOME and the `XDG_*` dirs point there, so the user's chats file and config are neither shown nor written. `play!` is the storyboard (keystrokes, waits on screen text); frames are captured with `tmux capture-pane -e` whenever the screen changes, turned into HTML, screenshotted by headless Chrome and assembled by ffmpeg. The version shown is `bb release-version`'s. Look through the frames before committing a new GIF: the repo is public.
+`demo.gif` (the README's, at the repo root like the other ECA clients') is recorded by `bb demo [out.gif]` (`build/eca_cli/demo.clj`). It runs eca-cli from source in the default inline layout in a private tmux server against `build/demo/fake_eca.clj`, a scripted ECA server (made-up models, chats and MCP servers, one conversation written in advance: read a file, propose an edit, sum up), in a demo project at `~/dev/my-app` under a temporary HOME. HOME and the `XDG_*` dirs point there, so the user's chats file and config are neither shown nor written. `play!` is the storyboard (keystrokes, waits on screen text); frames are captured with `tmux capture-pane -e` whenever the screen changes, turned into HTML, screenshotted by headless Chrome and assembled by ffmpeg. The version shown is `bb release-version`'s. Look through the frames before committing a new GIF: the repo is public.
 
 ### ECA binary discovery order
 

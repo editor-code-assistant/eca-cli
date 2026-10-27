@@ -64,7 +64,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private itest-workspace "/tmp/eca-cli-itest")
-(def ^:private itest-cmd (str "bb run --workspace " itest-workspace))
+(def ^:private itest-cmd (str "bb run --fullscreen --workspace " itest-workspace))
 
 (def ^:private chats-file
   (str (System/getProperty "user.home") "/.cache/eca/eca-cli-chats.edn"))

@@ -33,6 +33,10 @@ cd your-project
 eca-cli
 ```
 
+By default, ECA starts below your command and grows with the conversation. Completed chat stays in your terminal's native scrollback, even after you exit.
+
+Press `Ctrl+O` to open the full-screen transcript: inspect, expand and scroll through blocks, then press it again to return. Prefer the old full-screen experience? Run `eca-cli --fullscreen`.
+
 ## Features
 
 - Opens on a welcome screen: ECA's logo, the versions, your model and agent, tips to get started and your recent chats to resume
@@ -52,7 +56,7 @@ eca-cli
 ## Usage
 
 ```
-eca-cli [--workspace <path>] [--model <model>] [--agent <agent>] [--trust] [--eca <path>]
+eca-cli [--workspace <path>] [--model <model>] [--agent <agent>] [--trust] [--fullscreen] [--eca <path>]
 ```
 
 Run `eca-cli --help` for details.
@@ -82,6 +86,8 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `/help` | Show available commands |
 | `/quit` | Exit |
 
+`/new`, `/clear` and resuming a chat each start a new current transcript; previously printed terminal history stays. `/clear` only clears the local display, not the chat on the server.
+
 ### Keybindings
 
 | Key | Action |
@@ -92,13 +98,19 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `↑` on an empty input | While the agent works, take back what you steered or queued |
 | `y` / `n` / `Y` | Approve / reject / approve and remember a tool call for the chat |
 | `Esc` | Stop the running prompt, close a picker, clear focus |
-| `Tab` / `Shift+Tab` | Cycle focus through chat blocks |
+| `Ctrl+O` | Toggle the full-screen transcript (when started inline) |
+| `Tab` | Focus the next block; `↑` / `↓` move focus once selected |
 | `Alt+↑` / `Alt+↓` | Jump between top-level blocks |
-| `Alt+c` / `Alt+o` | Collapse / expand all blocks |
+| `Alt+g` / `Alt+G` | Focus the first / last block |
+| `Alt+c` / `Alt+o` | Collapse / expand blocks (live blocks inline; all in full screen) |
 | `Ctrl+T` | Show / hide the agent's task list |
 | `↑` / `↓` | Input history (or move focus) |
-| `PgUp` / `PgDn`, mouse wheel | Scroll |
+| `PgUp` | Open the transcript and scroll up; in full screen, scroll up |
+| `PgDn` | Scroll down in full screen (no action inline) |
+| Mouse wheel | Native terminal scrollback inline; chat scrolling in full screen |
 | `Ctrl+C` | Clear the input, or stop the agent; press twice to quit (`Ctrl+D` on an empty input too) |
+
+Inline, only live blocks can be focused; use the transcript to inspect completed ones. Selecting or expanding a live block opens the transcript if it would not fit on screen. In the transcript, `Enter` toggles a focused block without submitting your draft or answering a pending interaction; `Esc` clears focus, and `Ctrl+O` returns inline.
 
 ## Troubleshooting
 
