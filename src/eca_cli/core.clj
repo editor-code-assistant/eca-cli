@@ -90,12 +90,14 @@
   "Resolve the workspace and ECA server, then hand the terminal to the TUI
   until the user quits."
   [opts]
-  (let [workspace              (resolve-workspace! (:workspace opts))
-        {:keys [path notices]} (resolve-binary! opts)
-        opts                   (assoc opts
-                                      :workspace workspace
-                                      :eca path
-                                      :startup-notices notices)]
+  (let [workspace                      (resolve-workspace! (:workspace opts))
+        {:keys [path notices version]} (resolve-binary! opts)
+        opts                           (assoc opts
+                                              :workspace workspace
+                                              :eca path
+                                              ;; Known for the managed install only.
+                                              :eca-version version
+                                              :startup-notices notices)]
     ;; Terminal writes go before the --nrepl stdio redirect below.
     (terminal/enable-alt-charset!)
     (when-let [port (:nrepl opts)]

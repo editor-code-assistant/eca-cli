@@ -10,8 +10,13 @@ UX pass: chats render as markdown, the status line becomes a colourful modeline 
 
 Catch-up pass: eca-cli gains the features of the ECA editor clients it was missing (eca-emacs as reference), and fixes the places where it didn't match the server.
 
+First-impression pass: eca-cli opens on a welcome screen with ECA's logo, Ctrl+C behaves as in Claude Code, and the README shows a demo.
+
 ### Added
 
+- A welcome screen opens each new chat, in the spirit of Claude Code's: ECA's logo drawn in braille, eca-cli's and the server's versions, the model, agent and workspace, tips to get started (`/init` while the project has no AGENTS.md) and the latest chats to resume with `/chats` ("Welcome back!"). It fits itself to the terminal's width, and replaces the server's default welcome text; a `welcomeMessage` of your own still shows below it.
+- Ctrl+C works as in Claude Code instead of quitting at once: it clears what's typed, or stops the agent while it works (like Esc); otherwise the first press shows `Press Ctrl+C again to exit` in the status line's place, and a second one within 2 seconds quits. Ctrl+D on an empty input does the same. `/quit` still quits right away.
+- `demo.gif` in the README, recorded by `bb demo`: eca-cli in tmux against a scripted ECA server, in a demo project under a temporary HOME, so it needs no account and shows no one's data.
 - Shell calls waiting for approval show the command and, when it helps, each chained command coloured by what `Y` would do with it: already remembered, would be remembered, or always asks. `Y` names the commands it remembers and is hidden when there's nothing to remember.
 - `/trust` toggles trust mode for the current chat, right away (`chat/update`); the indicator follows the server's `selectTrust` (e.g. `chat.defaultTrust`, a resumed chat's trust).
 - The server's commands work (Phase 10, partial): `/compact`, `/init`, `/context` (the context breakdown with its per-category legend, completing Phase 20), `/costs`, `/quota`, `/fork`, `/btw`, `/resume`, `/export`, `/doctor`, … plus MCP prompts, custom prompts and skills. The `/` picker lists them (`chat/queryCommands`) next to eca-cli's own, tagged by kind, best name matches first; picking one that takes arguments puts it in the input, with its signature shown above. Typed with arguments, a command both have (`/model x/y`) goes to the server.
@@ -43,6 +48,7 @@ Catch-up pass: eca-cli gains the features of the ECA editor clients it was missi
 
 ### Fixed
 
+- A `HOME` set for one run was ignored (the JVM takes the home directory from the user's account), so eca-cli kept reading and writing the real home's chats, cache and `~/` paths. `$HOME` now comes first.
 - Sub-agents: their content landed in the main chat (and their `finished` ended the main turn) because eca-cli looked for a `subagentDetails` field and an `eca__spawn_agent` name the server never sends. Spawn calls are now recognised by their `subagent` details.
 - A sub-agent tool call that needed approval hung the chat with nothing to approve; it now asks, answered with the sub-agent's chat id.
 - Tool calls asking for approval in parallel replaced each other, leaving all but the last waiting forever; they now queue and are asked in turn, and calls answered or stopped elsewhere drop out.
@@ -72,6 +78,7 @@ Catch-up pass: eca-cli gains the features of the ECA editor clients it was missi
 
 ### Changed
 
+- A chat starts at the top of the screen and grows down, like Claude Code's and eca-emacs's, instead of growing up from the prompt.
 - ECA server management matches the editor plugins: no pinned version. On startup eca-cli resolves `--eca` → `eca` on PATH → a managed binary in `~/.cache/eca/eca-cli/`, which it installs on first run and updates to the latest GitHub release (checked at most hourly). Downloads are sha256-verified, checked to run, and swapped in atomically, with an `eca-version` marker. Offline, the installed binary is used with a notice. No `curl`/`unzip` needed anymore. Dropped the scavenging of nvim/emacs plugin binaries.
 - `bb upgrade-eca` checks for and installs the latest release now; `--force` reinstalls.
 - Connecting is asynchronous with no 10s `initialize` timeout (a config fetching a provider token can take longer): a "Connecting to ECA server…" spinner shows elapsed time, and points at the server log when it drags on.

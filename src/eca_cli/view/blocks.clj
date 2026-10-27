@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [eca-cli.markdown :as markdown]
             [eca-cli.theme :as theme]
+            [eca-cli.view.welcome :as welcome]
             [eca-cli.wrap :as wrap]))
 
 (defn- paint [role s] (theme/paint role s))
@@ -296,6 +297,7 @@
           :question  (question-item-lines item width)
           :flag      (flag-lines item width)
           :image     (image-lines item width)
+          :welcome   (welcome/render item width)
 
           :url
           (let [inner-w (max 1 (- width 2))]

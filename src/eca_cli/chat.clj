@@ -9,9 +9,11 @@
             [charm.message :as msg]
             [eca-cli.protocol :as protocol]
             [eca-cli.chats :as chats]
+            [eca-cli.paths :as paths]
             [eca-cli.picker :as picker]
             [eca-cli.view :as view]
-            [eca-cli.view.blocks :as blocks]))
+            [eca-cli.view.blocks :as blocks]
+            [eca-cli.welcome :as welcome]))
 
 ;; --- State helpers ---
 
@@ -372,7 +374,7 @@
   (when (re-find #"[/.]" token)
     (let [f (cond
               (str/starts-with? token "/")  (io/file token)
-              (str/starts-with? token "~/") (io/file (System/getProperty "user.home") (subs token 2))
+              (str/starts-with? token "~/") (io/file (paths/home) (subs token 2))
               workspace                     (io/file workspace token))]
       (when (and f (.exists ^java.io.File f))
         (.getCanonicalPath ^java.io.File f)))))
@@ -706,11 +708,13 @@
 
 (defn handle-config-updated
   "ECA `config/updated` notification: populate available models / agents /
-  variants and surface the welcome message as assistant text."
+  variants, shown on the welcome too. The server's welcome message is the
+  welcome box's job, unless the user wrote their own: then it follows."
   [state notification]
   (let [{:keys [chat chatId]} (:params notification)
         ;; Per-chat fields scoped to another chat don't concern this one.
         mine? (or (nil? chatId) (nil? (:chat-id state)) (= chatId (:chat-id state)))
+        own-welcome (when (welcome/custom-message? (:welcomeMessage chat)) (:welcomeMessage chat))
         s'    (cond-> state
                 (:models chat)                  (assoc :available-models (:models chat))
                 (:agents chat)                  (assoc :available-agents (:agents chat))
@@ -721,9 +725,8 @@
                                                                 (assoc-in [:opts :variant] (:selectVariant chat)))
                 (and mine? (contains? chat :selectTrust))   (-> (assoc :trust (true? (:selectTrust chat)))
                                                                 (assoc-in [:opts :trust] (true? (:selectTrust chat))))
-                (:welcomeMessage chat)          (update :items conj {:type :assistant-text
-                                                                     :text (:welcomeMessage chat)}))]
-    [(if (:welcomeMessage chat) (view/rebuild-lines s') s') nil]))
+                own-welcome                     (update :items conj {:type :assistant-text :text own-welcome}))]
+    [(cond-> (welcome/refresh s') own-welcome view/rebuild-lines) nil]))
 
 (defn- this-chat?
   "Whether a message about `chat-id` concerns the chat on screen (any chat
@@ -934,13 +937,13 @@
       (submit-prompt state text)
       [state nil])))
 
-(defn- escape-cancel-chatting
-  "Stop the running prompt; unsent steer and queued text go back to the
-  input rather than being sent."
+(defn cancel-turn
+  "Stop the running prompt (Esc, Ctrl+C); unsent steer and queued text go
+  back to the input rather than being sent."
   [state]
   (when (:chat-id state)
     (protocol/stop-prompt! (:server state) (:chat-id state)))
-  [(-> state take-back-pending (assoc :mode :ready) (update :input ti/focus)) nil])
+  (-> state take-back-pending (assoc :mode :ready) (update :input ti/focus)))
 
 (defn- history-prev [state]
   (let [history (:input-history state)
@@ -1101,7 +1104,7 @@
 
     ;; --- Escape during :chatting cancels the in-flight prompt ---
     (and (msg/key-press? msg) (msg/key-match? msg :escape) (= :chatting (:mode state)))
-    (escape-cancel-chatting state)
+    [(cancel-turn state) nil]
 
     ;; --- Input history (only :ready, no focus path) ---
     (and (msg/key-press? msg) (msg/key-match? msg :up) (= :ready (:mode state)))

@@ -17,6 +17,7 @@ bb upgrade-eca [--force]      # check for / install the latest ECA server now (a
 bb test                       # unit tests
 bb dist [--platforms linux-amd64,macos-aarch64]  # release artifacts into dist/, exactly like CI
 bb release-version            # the version a release of HEAD gets: 0.1.<commit count>
+bb demo [out.gif]             # re-record the README's demo.gif (needs tmux, google-chrome/chromium, ffmpeg)
 ```
 
 In-app commands (type in input, press Enter):
@@ -24,7 +25,7 @@ In-app commands (type in input, press Enter):
 ```
 /model      open model picker (Ctrl+L also works)
 /agent      open agent picker
-/new        start fresh chat (deletes current chat, clears UI)
+/new        start fresh chat (deletes current chat, opens on the welcome)
 /chats      browse and resume previous chats
 ```
 
@@ -62,7 +63,7 @@ Requests *from* the server (an `:id` and a `:method`, e.g. `chat/askQuestion`) a
 `eca-cli.program/run` (a copy of charm's `run` with a different loop) drives the TUI with three fns. charm's loop handles one message per 10 ms tick and renders after each: typing/pasting capped at ~100 keys/s, and a big paste overflowed core.async's 1024 pending puts, killing charm's input thread. Ours wakes on the first message, drains the queue (up to 1000), renders once. It also turns on bracketed paste: pasted text comes between `:paste-start`/`:paste-end` keys, and `state.clj` keeps its newlines/tabs/leading `/` `@` as text. charm's text input doesn't scroll or wrap, so `view/prompt-input` lays the input out itself (rows at the width, newlines, a window around the cursor).
 
 The three fns:
-- `state/make-init` — returns a fn that spawns ECA, starts the reader thread, returns `[initial-state (batch init-cmd drain-queue-cmd)]`. Must never throw: charm calls it outside its try/finally, so a spawn failure becomes a `:disconnected` state instead.
+- `state/make-init` — returns a fn that spawns ECA, starts the reader thread, returns `[initial-state (batch init-cmd drain-queue-cmd)]` (the state opening on the welcome; plus `eca --version` when the version isn't known). Must never throw: charm calls it outside its try/finally, so a spawn failure becomes a `:disconnected` state instead.
 - `state/update-state` — pure dispatch: returns `[new-state cmd-or-nil]`
 - `view/view` — pure render: returns a string from state
 
@@ -93,13 +94,27 @@ Approvals: the server decides who asks. Trust mode and remembered approvals are 
 
 ### View rendering
 
-No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a flat vec of rendered strings kept in state, rebuilt via `view/rebuild-lines` after content changes. `render-chat` slices the last N visible lines adjusted by `:scroll-offset`.
+No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a flat vec of rendered strings kept in state, rebuilt via `view/rebuild-lines` after content changes. `render-chat` slices the last N visible lines adjusted by `:scroll-offset`. A chat shorter than the screen starts at the top, blank lines below (`pad-to-height`), as in Claude Code and eca-emacs.
 
 - Items render in `view/blocks.clj`. Message text (assistant, streaming, user) goes through `markdown/render`: babashka's built-in nextjournal.markdown parses it, eca-cli lays the AST out for the width (`markdown/highlight.clj` colours fenced code). Finished items are memoized by value and width, so only the reply still streaming re-renders.
 - A server tick applies its whole batch of messages with `view/*rebuild-deferred*` bound: the handlers' `rebuild-lines` calls collapse into one rebuild per batch.
 - Colours come from `theme.clj` roles via `theme/paint`, mostly on the ANSI 16 palette so the terminal's theme picks the actual colours (dark or light); `NO_COLOR` drops them, keeping bold/italic.
 - The status line (`view/status.clj`) is a list of segments with priorities; on a narrow terminal the least important are dropped (or shortened) until it fits.
 - JLine constraints every renderer must respect: each line is parsed on its own, so styles never carry over to the next line (every line opens its styles and ends with a reset); a line wider than the terminal is cut *and loses all its colours*, so wrap or fit to the width; trailing spaces are dropped even when styled, so no full-width background bars and no badge ending a line with a space.
+
+### Welcome screen
+
+A new chat opens on a `:welcome` item, the first of `:items`: `welcome.clj` builds it from the state, `view/welcome.clj` draws it (a box titled with the versions; logo | greeting, model, agent, workspace | tips and recent chats, folding into fewer columns as the width shrinks). `make-init` and `/new` put it in (`welcome/fresh`); `welcome/refresh` rebuilds it in place as the facts arrive after startup:
+
+- the server's version: the managed install's `eca-version` marker (`:eca-version` in opts), else `eca --version` run in a cmd (`:server-version`)
+- the model, variant and agent: `config/updated` (`chat/handle-config-updated`); later picks don't update it, as in Claude Code
+- the recent chats: `chat/list` after `initialize` (`:recent-chats-loaded`)
+
+Resuming a chat (`/chats`, `chat/cleared`) and `/clear` drop it. The server's default `welcomeMessage` (it starts `# Welcome to ECA!` and is written for editors) is dropped; one the user configured follows the box (`welcome/custom-message?`). The logo is braille traced from eca's `images/logo.png`, 18×8 cells: the cubes in the accent colour, the `>` in bold.
+
+### Quitting
+
+Ctrl+C and Ctrl+D go through `commands/press-quit-key`, as in Claude Code. Ctrl+C clears a typed input, or stops a running turn (`chat/cancel-turn`, Esc's path); neither counts as a first press. Otherwise the first press sets `:quit-armed {:key :at}`, which the view shows in the status line's place, and a timer cmd sends `:quit-hint-expired` after `quit-window-ms` (ignored if a newer press re-armed). A second press of the same key within the window runs `cmd-quit`. Ctrl+D counts only on an empty input, where it isn't delete-forward. `msg/quit?` and `/quit` quit at once.
 
 ### Key files
 
@@ -117,15 +132,18 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 - `src/eca_cli/view.clj` — pure rendering: chat lines (cached, batched), gutter (connecting / working), approval prompt, pickers, login, layout
 - `src/eca_cli/view/blocks.clj` — one renderer per chat item type: messages, tool calls (diffs, argument/output boxes), thinking, hooks, links, system notes
 - `src/eca_cli/view/status.clj` — the status line: segments, priorities, context-window bar, usage/cost/quota
+- `src/eca_cli/welcome.clj` / `src/eca_cli/view/welcome.clj` — the welcome screen: the `:welcome` item and what refreshes it / the logo and the box's layouts
 - `src/eca_cli/markdown.clj` — markdown → styled, width-wrapped lines (lists, quotes, code, tables); falls back to plain text on failure
 - `src/eca_cli/markdown/highlight.clj` — table-driven syntax highlighting for fenced code
 - `src/eca_cli/theme.clj` — colour/attribute roles, SGR helpers, `NO_COLOR`
 - `src/eca_cli/wrap.clj` — ANSI/width-aware word wrap for plain text
 - `src/eca_cli/chats.clj` — EDN persistence of workspace → chat-id map
+- `src/eca_cli/paths.clj` — XDG locations and the home directory. Use `paths/home`, never `(System/getProperty "user.home")`: that comes from the user's account and misses a `HOME` set for one run (the demo's)
 - `src/eca_cli/upgrade.clj` — ECA binary resolution and the managed install: latest GitHub release (1h check cache), sha256-verified download, staged + atomic install, `eca-version` marker, offline fallback
 - `src/eca_cli/terminal.clj` — sends terminfo `enacs`: JLine draws `─│┌…` via the alternate charset, which under screen/tmux terminfo (SO/SI) shows as `qqqq`/`xxxx` unless G1 was designated as DEC graphics first
 - `src/eca_cli/version.clj` — eca-cli's version from the `ECA_CLI_VERSION` jar resource (`dev` in a checkout); sent as `clientInfo.version`
 - `build/eca_cli/dist.clj` — `bb dist` / `bb release-version` (not shipped)
+- `build/eca_cli/demo.clj`, `build/demo/fake_eca.clj` — `bb demo` and the scripted server it records against (not shipped, see below)
 - `install` — the curl-able install/update script
 - `.github/workflows/ci.yml` — tests, build, per-OS smoke tests, release
 
@@ -138,6 +156,10 @@ Every push to `main` is a release, no tag needed (`.github/workflows/ci.yml`): u
 - Version: `eca-cli.dist/version-line` (`0.1`, bump by hand for milestones) + `git rev-list --count HEAD`, so a commit always gets the same version (needs full history: `fetch-depth: 0`). `bb dist` stamps it into the jar as the `ECA_CLI_VERSION` resource.
 - charm.clj's JVM-only deps (JLine, core.async) are excluded in `bb.edn`: bb embeds its own, and they'd bloat the jar ~10x.
 - Assets: `eca-cli-<linux|macos>-<amd64|aarch64>.tar.gz` (holding `eca-cli`, owned by root:root), `eca-cli.jar` (`bb eca-cli.jar` anywhere), each with a `sha256sum -c` compatible `.sha256`. The `install` script relies on these names: it downloads the platform tarball from the latest (or `--version`) release, checks its sha256, runs `--version` on it next to the destination, then renames it over the old binary.
+
+### Demo GIF
+
+`demo.gif` (the README's, at the repo root like the other ECA clients') is recorded by `bb demo [out.gif]` (`build/eca_cli/demo.clj`). It runs eca-cli from source in a private tmux server against `build/demo/fake_eca.clj`, a scripted ECA server (made-up models, chats and MCP servers, one conversation written in advance: read a file, propose an edit, sum up), in a demo project at `~/dev/my-app` under a temporary HOME. HOME and the `XDG_*` dirs point there, so the user's chats file and config are neither shown nor written. `play!` is the storyboard (keystrokes, waits on screen text); frames are captured with `tmux capture-pane -e` whenever the screen changes, turned into HTML, screenshotted by headless Chrome and assembled by ffmpeg. The version shown is `bb release-version`'s. Look through the frames before committing a new GIF: the repo is public.
 
 ### ECA binary discovery order
 

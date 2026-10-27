@@ -344,8 +344,9 @@
     1. an explicit path (`--eca`)
     2. `eca` on PATH (installed by the user, e.g. a package manager)
     3. the managed binary, auto-installed and auto-updated
-  Returns {:path :source :notices}. Throws ex-info with a user-facing message
-  when nothing usable can be found or installed."
+  Returns {:path :source :notices}, and the `:version` of the managed binary.
+  Throws ex-info with a user-facing message when nothing usable can be found
+  or installed."
   [{:keys [eca]} reporter]
   (cond
     eca

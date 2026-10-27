@@ -38,11 +38,13 @@
                                 (require '[eca-cli.panels-test])
                                 (require '[eca-cli.protocol-test])
                                 (require '[eca-cli.question-test])
+                                (require '[eca-cli.quit-test])
                                 (require '[eca-cli.steer-test])
                                 (require '[eca-cli.tasks-test])
                                 (require '[eca-cli.view-test])
                                 (require '[eca-cli.view.blocks-test])
                                 (require '[eca-cli.view.status-test])
+                                (require '[eca-cli.welcome-test])
                                 (require '[eca-cli.state-test])
                                 (require '[eca-cli.chats-test])
                                 (require '[eca-cli.paths-test])
@@ -67,11 +69,13 @@
                                                               'eca-cli.panels-test
                                                               'eca-cli.protocol-test
                                                               'eca-cli.question-test
+                                                              'eca-cli.quit-test
                                                               'eca-cli.steer-test
                                                               'eca-cli.tasks-test
                                                               'eca-cli.view-test
                                                               'eca-cli.view.blocks-test
                                                               'eca-cli.view.status-test
+                                                              'eca-cli.welcome-test
                                                               'eca-cli.state-test
                                                               'eca-cli.chats-test
                                                               'eca-cli.paths-test
@@ -92,6 +96,10 @@
                           :extra-paths ["build"]
                           :requires ([eca-cli.dist :as dist])
                           :task (println (dist/release-version))}
+         demo        {:doc "Record demo.gif, the README's demo, against a scripted server (needs tmux, Chrome, ffmpeg)"
+                      :extra-paths ["build"]
+                      :requires ([eca-cli.demo :as demo])
+                      :task (demo/record! *command-line-args*)}
          dist        {:doc "Build release artifacts into dist/: self-contained executables and eca-cli.jar"
                       :extra-paths ["build"]
                       :requires ([eca-cli.dist :as dist])

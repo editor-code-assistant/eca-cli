@@ -3,6 +3,8 @@
 [![Release](https://img.shields.io/github/v/release/editor-code-assistant/eca-cli)](https://github.com/editor-code-assistant/eca-cli/releases)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
+![demo](./demo.gif)
+
 ECA (Editor Code Assistant) CLI is an AI-powered pair-programming client for your terminal, no editor required.
 It connects to an external `eca` server process to provide interactive chat, tool calls with live diffs, context management and more, all keyboard-driven.
 
@@ -33,6 +35,7 @@ eca-cli
 
 ## Features
 
+- Opens on a welcome screen: ECA's logo, the versions, your model and agent, tips to get started and your recent chats to resume
 - Chat with any model and agent configured in ECA, with streaming responses rendered as markdown: syntax-highlighted code, tables, lists and links
 - Approve tool calls inline, with coloured diffs for file edits and a breakdown of shell commands; remember approvals for the chat
 - Answer the agent's questions by picking an option or typing your own answer
@@ -95,7 +98,7 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `Ctrl+T` | Show / hide the agent's task list |
 | `↑` / `↓` | Input history (or move focus) |
 | `PgUp` / `PgDn`, mouse wheel | Scroll |
-| `Ctrl+C` | Quit |
+| `Ctrl+C` | Clear the input, or stop the agent; press twice to quit (`Ctrl+D` on an empty input too) |
 
 ## Troubleshooting
 
@@ -110,6 +113,7 @@ bb run     # run from source, takes the same options as eca-cli
 bb test    # unit tests
 bb nrepl   # nREPL on port 7888
 bb dist    # build the release binaries into dist/
+bb demo    # re-record demo.gif against a scripted server (needs tmux, Chrome and ffmpeg)
 ```
 
 Every push to `main` is released automatically. See [CLAUDE.md](./CLAUDE.md) for the architecture.

@@ -8,11 +8,18 @@
   [k]
   (System/getenv k))
 
+(defn home
+  "The home directory: `$HOME`, as shells and the XDG spec have it, else the
+  JVM's `user.home` (which comes from the user's account, so it misses a
+  HOME set for one run)."
+  []
+  (or (not-empty (getenv "HOME")) (System/getProperty "user.home")))
+
 (defn- expand-or [env-var fallback-relative]
   (let [v (getenv env-var)]
     (if (and v (seq v))
       (io/file v)
-      (io/file (System/getProperty "user.home") fallback-relative))))
+      (io/file (home) fallback-relative))))
 
 (defn cache-home  [] (expand-or "XDG_CACHE_HOME"  ".cache"))
 (defn state-home  [] (expand-or "XDG_STATE_HOME"  ".local/state"))
@@ -25,9 +32,9 @@
   "`path` with the home directory abbreviated to `~`, for display."
   [path]
   (let [path (str path)
-        home (System/getProperty "user.home")]
-    (if (and (seq home) (str/starts-with? path (str home "/")))
-      (str "~" (subs path (count home)))
+        h    (home)]
+    (if (and (seq h) (str/starts-with? path (str h "/")))
+      (str "~" (subs path (count h)))
       path)))
 
 (defn chats-file     [] (io/file (eca-state-dir) "eca-cli-chats.edn"))
@@ -43,7 +50,7 @@
 ;; Legacy read-only fallbacks for transparent migration: the pre-XDG cache
 ;; location (both the renamed "chats" file and the original "sessions" file).
 (defn legacy-chats-file []
-  (io/file (System/getProperty "user.home") ".cache" "eca" "eca-cli-chats.edn"))
+  (io/file (home) ".cache" "eca" "eca-cli-chats.edn"))
 
 (defn legacy-sessions-file []
-  (io/file (System/getProperty "user.home") ".cache" "eca" "eca-cli-sessions.edn"))
+  (io/file (home) ".cache" "eca" "eca-cli-sessions.edn"))

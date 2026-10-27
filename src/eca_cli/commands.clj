@@ -15,6 +15,7 @@
             [eca-cli.login :as login]
             [eca-cli.jobs :as jobs]
             [eca-cli.mcp :as mcp]
+            [eca-cli.welcome :as welcome]
             [eca-cli.theme :as theme]
             [eca-cli.view :as view]))
 
@@ -58,15 +59,18 @@
       :else (do (protocol/update-chat! (:server state) (:chat-id state) {:title title})
                 [state nil]))))
 
-(defn cmd-new-chat [state]
-  (if-let [old-chat-id (:chat-id state)]
-    (do
-      (chats/save-chat-id! (get-in state [:opts :workspace]) nil)
-      [(-> state
-           (assoc :items [] :chat-lines [] :chat-id nil :chat-title nil :scroll-offset 0)
-           (update :input #(-> % ti/reset ti/focus)))
-       (chats/delete-chat-cmd (:server state) old-chat-id)])
-    [(update state :input #(-> % ti/reset ti/focus)) nil]))
+(defn cmd-new-chat
+  "A fresh chat, opening on the welcome. The current one is deleted."
+  [state]
+  (let [old-chat-id (:chat-id state)
+        state'      (-> state
+                        (assoc :chat-id nil :chat-title nil :scroll-offset 0)
+                        (update :recent-chats (fn [chats] (some->> chats (filterv #(not= old-chat-id (:id %))))))
+                        welcome/fresh
+                        (update :input #(-> % ti/reset ti/focus)))]
+    (when old-chat-id
+      (chats/save-chat-id! (get-in state [:opts :workspace]) nil))
+    [state' (when old-chat-id (chats/delete-chat-cmd (:server state) old-chat-id))]))
 
 (defn cmd-list-chats [state]
   [(update state :input ti/reset) (chats/list-chats-cmd (:server state))])
@@ -97,6 +101,55 @@
                (program/cmd (fn [] (try (protocol/shutdown! srv) (catch Exception _)) nil)))
              (program/cmd (fn [] (server/shutdown! srv) nil))
              program/quit-cmd)]))
+
+;; --- Ctrl+C / Ctrl+D: press twice to quit ---
+
+(def quit-window-ms
+  "How long the first Ctrl+C (or Ctrl+D) waits for the second, which quits."
+  2000)
+
+(defn- arm-quit
+  "Say `Press Ctrl+C again to exit` (see `view/view`), until it expires."
+  [state key now]
+  [(assoc state :quit-armed {:key key :at now})
+   (program/cmd (fn []
+                  (Thread/sleep quit-window-ms)
+                  {:type :quit-hint-expired :at now}))])
+
+(defn quit-armed?
+  "A first `key` press waiting for the second, within `quit-window-ms`."
+  [state key now]
+  (let [{armed-key :key at :at} (:quit-armed state)]
+    (and (= key armed-key) (< (- now at) quit-window-ms))))
+
+(defn press-quit-key
+  "Ctrl+C or Ctrl+D (`key`), as in Claude Code. Ctrl+C clears what's typed,
+  or stops the agent while it works. Otherwise the first press only says
+  to press it again, and the second, within `quit-window-ms`, quits:
+  quitting by accident would lose the session's place (chats are resumed
+  with /chats, not on start)."
+  [state key now]
+  (let [typed? (and (#{:ready :chatting} (:mode state))
+                    (not (str/blank? (ti/value (:input state)))))]
+    (cond
+      (and typed? (= "ctrl+c" key))
+      [(-> state (dissoc :quit-armed) (update :input #(-> % ti/reset ti/focus))) nil]
+
+      (and (= :chatting (:mode state)) (= "ctrl+c" key))
+      [(-> state (dissoc :quit-armed) chat/cancel-turn) nil]
+
+      (quit-armed? state key now)
+      (cmd-quit state)
+
+      :else
+      (arm-quit state key now))))
+
+(defn quit-hint-expired
+  "The first press's time is up, unless a newer press re-armed it."
+  [state {:keys [at]}]
+  (if (= at (get-in state [:quit-armed :at]))
+    (dissoc state :quit-armed)
+    state))
 
 (defn cmd-login [state]
   [state (login/start-login-cmd (:server state) nil)])

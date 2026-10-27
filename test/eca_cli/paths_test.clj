@@ -62,6 +62,16 @@
         "only a whole path segment counts as home")
     (is (= "/tmp/f" (paths/home-relative (java.io.File. "/tmp/f"))) "accepts files")))
 
+(deftest home-test
+  (testing "$HOME wins: the JVM's user.home comes from the account, so it misses a HOME set for a run"
+    (with-redefs [paths/getenv (stub-env {"HOME" "/tmp/demo-home"})]
+      (is (= "/tmp/demo-home" (paths/home)))
+      (is (= "/tmp/demo-home/.local/state" (str (paths/state-home))))
+      (is (= "~/dev/my-app" (paths/home-relative "/tmp/demo-home/dev/my-app")))))
+  (testing "no HOME (or an empty one): user.home"
+    (with-redefs [paths/getenv (stub-env {"HOME" ""})]
+      (is (= (System/getProperty "user.home") (paths/home))))))
+
 (deftest eca-binary-under-cache-test
   (with-redefs [paths/getenv (stub-env {"XDG_CACHE_HOME" "/tmp/c"})]
     (is (= "/tmp/c/eca/eca-cli/eca" (str (paths/eca-binary))))))

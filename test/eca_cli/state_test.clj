@@ -424,8 +424,9 @@
     (testing "scrolling still works, to read the report"
       (let [[s _] (state/update-state s0 (msg/key-press :page-up))]
         (is (pos? (:scroll-offset s)))))
-    (testing "Ctrl+C quits"
-      (let [[_ cmd] (state/update-state s0 (msg/key-press "c" :ctrl true))]
+    (testing "Ctrl+C quits, pressed twice like anywhere else"
+      (let [[s1 _]  (state/update-state s0 (msg/key-press "c" :ctrl true))
+            [_ cmd] (state/update-state s1 (msg/key-press "c" :ctrl true))]
         (is (= :sequence (:type cmd)))))))
 
 (deftest make-init-test
@@ -436,18 +437,24 @@
         (is (= :disconnected (:mode s)))
         (is (nil? (:server s)))
         (is (nil? cmd))
-        (is (= "offline notice" (:text (first (:items s)))))
+        (is (= [:welcome :system :system] (mapv :type (:items s))))
+        (is (= "offline notice" (:text (second (:items s)))))
         (is (str/includes? (:text (last (:items s))) "Permission denied")))))
 
   (testing "spawn success: connects asynchronously and drains the queue from the start"
     (let [queue (java.util.concurrent.LinkedBlockingQueue.)]
       (with-redefs [server/spawn!        (fn [_] {:queue queue :writer nil})
                     server/start-reader! (fn [_] nil)]
-        (let [[s cmd] ((state/make-init {:workspace "/tmp" :eca "/x/eca"}))]
+        (let [[s cmd] ((state/make-init {:workspace "/tmp" :eca "/x/eca" :eca-version "0.130.1"}))]
           (is (= :connecting (:mode s)))
           (is (number? (:connecting-since s)))
+          (is (= :welcome (:type (first (:items s)))) "the chat opens on the welcome")
+          (is (= "0.130.1" (:server-version (first (:items s)))))
           (is (= :batch (:type cmd)))
-          (is (= 2 (count (:cmds cmd))) "init + drain"))))))
+          (is (= 2 (count (:cmds cmd))) "init + drain"))
+        (testing "a binary of unknown version is asked for it"
+          (let [[_ cmd] ((state/make-init {:workspace "/tmp" :eca "/x/eca"}))]
+            (is (= 3 (count (:cmds cmd))) "init + drain + eca --version")))))))
 
 ;; --- Login state machine ---
 
@@ -774,7 +781,7 @@
         (is (= :ready (:mode s)))
         (is (nil? (:chat-id s)))
         (is (nil? (:chat-title s)))
-        (is (empty? (:items s)))
+        (is (= [:welcome] (mapv :type (:items s))) "a fresh chat opens on the welcome")
         (is (some? cmd))))))
 
 (deftest slash-chats-fires-list-cmd-test
@@ -1345,9 +1352,10 @@
       (is (nil? cmd)))))
 
 (deftest ctrl-c-fires-shutdown-cmd-test
-  (testing "Ctrl+C returns a non-nil shutdown cmd without changing state"
-    (let [s0 (assoc (base-state) :mode :ready)
-          [s cmd] (state/update-state s0 (msg/key-press "c" :ctrl true))]
-      (is (= s0 s) "state should be unchanged")
+  (testing "Ctrl+C pressed twice returns the shutdown cmd (see quit-test for the first press)"
+    (let [s0       (assoc (base-state) :mode :ready)
+          [s1 _]   (state/update-state s0 (msg/key-press "c" :ctrl true))
+          [s cmd]  (state/update-state s1 (msg/key-press "c" :ctrl true))]
+      (is (= s1 s) "state should be unchanged by the second press")
       (is (some? cmd) "shutdown cmd should be returned")
       (is (= :sequence (:type cmd)) "shutdown cmd should be a charm batch sequence"))))

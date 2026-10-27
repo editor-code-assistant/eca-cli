@@ -15,6 +15,7 @@
             [eca-cli.question :as question]
             [eca-cli.history :as history]
             [eca-cli.providers :as providers]
+            [eca-cli.welcome :as welcome]
             [eca-cli.commands :as commands]))
 
 ;; Expose last-known state for nREPL inspection
@@ -180,10 +181,12 @@
 
                           (= :eca-initialize-response (:type m))
                           (let [s' (handle-initialize-response s (:response m))]
-                            ;; Ready: fetch the server's commands for the `/` picker.
+                            ;; Ready: fetch the server's commands for the `/`
+                            ;; picker, the recent chats for the welcome.
                             [s' (cond-> cmd
                                   (and (= :connecting (:mode s)) (= :ready (:mode s')))
-                                  (program/batch (commands/query-commands-cmd (:server s') nil)))])
+                                  (program/batch (commands/query-commands-cmd (:server s') nil)
+                                                 (welcome/recent-chats-cmd (:server s'))))])
 
                           (= :eca-prompt-response (:type m))
                           ;; The chat id is ours (submit-prompt); the response
@@ -211,6 +214,7 @@
    :connecting-since      (System/currentTimeMillis)
    :server                srv
    :opts                  opts
+   :server-version        (:eca-version opts)   ; nil: asked of the binary
    :trust                 (boolean (:trust opts))
    :chat-id               nil
    :chat-title            nil
@@ -275,16 +279,21 @@
   that dies while starting up is reported right away."
   [opts]
   (fn []
-    (let [srv (spawn-server (or (:eca opts) (server/find-eca-binary)))]
+    (let [binary (or (:eca opts) (server/find-eca-binary))
+          srv    (spawn-server binary)]
       (if (instance? Exception srv)
         [(-> (initial-state nil opts)
+             welcome/fresh
              (add-notices (:startup-notices opts))
              (disconnect (str "Could not start the ECA server: "
                               (or (ex-message srv) (str srv)))))
          nil]
-        [(add-notices (initial-state srv opts) (:startup-notices opts))
+        [(-> (initial-state srv opts) welcome/fresh (add-notices (:startup-notices opts)))
          (program/batch (init-cmd srv (:workspace opts))
-                        (drain-queue-cmd (:queue srv)))]))))
+                        (drain-queue-cmd (:queue srv))
+                        ;; Not a managed install: the binary tells its version.
+                        (when-not (:eca-version opts)
+                          (welcome/server-version-cmd binary)))]))))
 
 ;; --- Update ---
 ;;
@@ -387,6 +396,9 @@
       (= :eca-login-action (:type msg))    (login/handle-eca-login-action state msg)
       (= :eca-login-complete (:type msg))  (login/handle-eca-login-complete state msg)
       (= :eca-jobs-output (:type msg))     (jobs/handle-jobs-output state msg)
+      (= :quit-hint-expired (:type msg))   [(commands/quit-hint-expired state msg) nil]
+      (= :recent-chats-loaded (:type msg)) [(welcome/handle-recent-chats state (:chats msg)) nil]
+      (= :server-version (:type msg))      [(welcome/handle-server-version state (:version msg)) nil]
 
       ;; Plain file paths for the picker (tests use it); the server's
       ;; answers come as :at-contexts-loaded.
@@ -440,8 +452,16 @@
         [(assoc state :input input) cmd])
 
       ;; --- Global key bindings (mode-aware but handled at dispatcher level) ---
-      (or (msg/quit? msg) (and (msg/key-press? msg) (msg/key-match? msg "ctrl+c")))
+      (msg/quit? msg)
       (commands/cmd-quit state)
+
+      ;; Twice to quit (Claude Code's way); Ctrl+D only on an empty input,
+      ;; where it isn't deleting a character.
+      (and (msg/key-press? msg)
+           (or (msg/key-match? msg "ctrl+c")
+               (and (msg/key-match? msg "ctrl+d") (str/blank? (ti/value (:input state))))))
+      (commands/press-quit-key state (if (msg/key-match? msg "ctrl+c") "ctrl+c" "ctrl+d")
+                               (System/currentTimeMillis))
 
       (and (msg/key-press? msg) (msg/key-match? msg "ctrl+l") (= :ready (:mode state)))
       (commands/cmd-open-model-picker state)

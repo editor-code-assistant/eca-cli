@@ -84,11 +84,15 @@
     (let [{:keys [lines spans]} (rebuild-chat-lines (:items state) (:current-text state) (:width state))]
       (assoc state :chat-lines lines :chat-line-spans spans))))
 
-(defn- pad-to-height [lines height]
+(defn- pad-to-height
+  "`lines` filled up to `height` with blank lines below: a chat starts at the
+  top of the screen, like Claude Code's and eca-emacs's, and once it fills
+  the screen its newest lines are kept in view (`render-chat`)."
+  [lines height]
   (let [n (count lines)]
     (if (>= n height)
       lines
-      (into (vec (repeat (- height n) "")) lines))))
+      (into (vec lines) (repeat (- height n) "")))))
 
 (defn render-chat
   "The chat lines on screen: `visible-height` of them (the screen minus the
@@ -237,7 +241,7 @@
     (str (some->> (:steered state) (line "Steering: " :warning))
          (some->> (:queued state) (line "Queued: " :accent)))))
 
-(def disconnected-hint "ECA server is not running. Press Ctrl+C to exit.")
+(def disconnected-hint "ECA server is not running. Press Ctrl+C twice to exit.")
 
 (defn- clip
   "Plain `s` cut to `w` columns with an ellipsis."
@@ -458,6 +462,15 @@
 (defn render-status-bar [state]
   (status/render state))
 
+(defn- quit-hint
+  "While a first Ctrl+C (or Ctrl+D) waits for the second: in the status
+  line's place, below the prompt, as Claude Code shows it."
+  [state]
+  (when-let [k (get-in state [:quit-armed :key])]
+    (str (theme/paint :muted "Press ")
+         (theme/paint :bold (if (= "ctrl+d" k) "Ctrl+D" "Ctrl+C"))
+         (theme/paint :muted " again to exit"))))
+
 (defn render-login [state]
   (let [{:keys [provider action field-idx pending-message]} (:login state)
         action-type (:action action)
@@ -553,4 +566,4 @@
          "\n" (divider (:width state) rule-role)
          "\n" input-area
          "\n" (divider (:width state))
-         "\n" (render-status-bar state))))
+         "\n" (or (quit-hint state) (render-status-bar state)))))

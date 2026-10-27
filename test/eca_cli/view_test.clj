@@ -75,7 +75,7 @@
                                      :connecting-since (System/currentTimeMillis))))))
     (testing ":disconnected replaces the input with a hint"
       (let [out (view/view (assoc base :mode :disconnected))]
-        (is (re-find #"ECA server is not running\. Press Ctrl\+C to exit\." out))))))
+        (is (re-find #"ECA server is not running\. Press Ctrl\+C twice to exit\." out))))))
 
 (deftest rebuild-chat-lines-test
   (testing "empty"
@@ -136,10 +136,10 @@
       (is (= ["◆ hi" ""] (mapv theme/strip-ansi (:chat-lines (view/rebuild-lines state))))))))
 
 (deftest pad-to-height-test
-  (testing "shorter than height — pads at top with empty strings"
+  (testing "shorter than height — the chat starts at the top, blank lines below"
     (let [result (pad-to-height ["a" "b"] 5)]
       (is (= 5 (count result)))
-      (is (= ["" "" "" "a" "b"] result))))
+      (is (= ["a" "b" "" "" ""] result))))
 
   (testing "exact height — no change"
     (is (= ["a" "b" "c"] (pad-to-height ["a" "b" "c"] 3))))
@@ -161,7 +161,7 @@
 
     (testing "mid-scroll — offset shifts window up"
       (let [rendered (view/render-chat (assoc base-state :scroll-offset 2))
-            visible  (clojure.string/split-lines rendered)]
+            visible  (str/split rendered #"\n" -1)]
         (is (= 4 (count visible)))
         (is (clojure.string/includes? rendered "line3"))
         (is (not (clojure.string/includes? rendered "line5")))))

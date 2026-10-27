@@ -2,8 +2,8 @@
   "Tests for the shutdown lifecycle: ECA `shutdown` request → `exit`
   notification → server process kill. Verifies both the protocol-level
   sequence and the higher-level wiring through `commands/cmd-quit` and
-  `state/update-state`'s Ctrl+C path produce identical observable
-  behaviour."
+  `state/update-state`'s Ctrl+C path (pressed twice) produce identical
+  observable behaviour."
   (:require [clojure.test :refer [deftest is testing]]
             [charm.message :as msg]
             [eca-cli.commands :as commands]
@@ -90,16 +90,19 @@
 ;; --- Ctrl+C and /quit equivalence ---
 
 (deftest ctrl-c-and-cmd-quit-equivalent-test
-  (testing "Ctrl+C in :ready and commands/cmd-quit produce equivalent shutdown side effects"
+  (testing "Ctrl+C twice in :ready and commands/cmd-quit produce equivalent shutdown side effects"
     (let [ctrl-c-calls (atom [])
           quit-calls   (atom [])
           fake-srv     {:queue nil}
           base-state   {:mode  :ready
                         :server fake-srv}]
-      ;; Ctrl+C path — drives state/update-state and runs the resulting cmd
+      ;; Ctrl+C path — drives state/update-state and runs the resulting cmd.
+      ;; The first press only asks for a second one.
       (with-redefs [protocol/shutdown! (fn [_srv] (swap! ctrl-c-calls conj :protocol-shutdown))
                     server/shutdown!   (fn [_srv] (swap! ctrl-c-calls conj :server-shutdown))]
-        (let [[_state cmd] (state/update-state base-state (msg/key-press "c" :ctrl true))]
+        (let [[armed _]    (state/update-state base-state (msg/key-press "c" :ctrl true))
+              _            (is (empty? @ctrl-c-calls) "the first press doesn't quit")
+              [_state cmd] (state/update-state armed (msg/key-press "c" :ctrl true))]
           (run-sequence-cmd! cmd)))
 
       ;; /quit path — drives commands/cmd-quit directly
