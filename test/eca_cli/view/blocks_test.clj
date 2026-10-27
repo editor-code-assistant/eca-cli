@@ -154,6 +154,21 @@
     (is (= ["⚠ Last lines:" "  │ boom"]
            (plain (blocks/render-item-lines {:type :system :text "Last lines:\n│ boom"} 80))))))
 
+(deftest server-note-test
+  (testing "the server's message keeps its lines (the /context grid), marked with • not ◆"
+    (is (= ["• Context Usage"
+            "  "
+            "  🟦⬜  Instructions:"
+            "  ⬜⬜    🟦 System prompt  648 tokens (0.1%)"]
+           (plain (blocks/render-item-lines
+                    {:type :server-note
+                     :text "Context Usage\n\n🟦⬜  Instructions:\n⬜⬜    🟦 System prompt  648 tokens (0.1%)"}
+                    80)))))
+  (testing "markdown still applies, in the system colour"
+    (let [[line] (blocks/render-item-lines {:type :server-note :text "**Skills**"} 80)]
+      (is (= "• Skills" (theme/strip-ansi line)))
+      (is (clojure.string/includes? line (theme/sgr :server-note))))))
+
 (deftest focus-test
   (testing "the focused block's first line is highlighted as one plain run"
     (let [[line] (blocks/render-item-lines

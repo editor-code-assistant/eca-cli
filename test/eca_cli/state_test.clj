@@ -66,6 +66,27 @@
     (let [s (base-state)]
       (is (= s (flush-current-text s))))))
 
+(deftest server-note-test
+  (testing "role system text (e.g. /context output) is a note of its own, after the reply so far"
+    (let [s (handle-content (assoc (base-state) :current-text "partial reply")
+                            {:chatId "chat1" :role "system"
+                             :content {:type "text" :text "\n\nContext Usage\n\n🟦⬜  Free\n"}})]
+      (is (= "" (:current-text s)))
+      (is (= [{:type :assistant-text :text "partial reply"}
+              {:type :server-note :text "Context Usage\n\n🟦⬜  Free"}]
+             (:items s)))))
+
+  (testing "a blank system text adds nothing"
+    (let [s (handle-content (base-state) {:chatId "chat1" :role "system"
+                                          :content {:type "text" :text "\n  \n"}})]
+      (is (= [] (:items s)))))
+
+  (testing "assistant text still streams into :current-text"
+    (let [s (handle-content (base-state) {:chatId "chat1" :role "assistant"
+                                          :content {:type "text" :text "hi"}})]
+      (is (= "hi" (:current-text s)))
+      (is (= [] (:items s))))))
+
 (deftest upsert-tool-call-test
   (testing "new tool call inserted"
     (let [s (upsert-tool-call (base-state) {:id "tc1" :name "read_file" :state :preparing})]

@@ -600,13 +600,28 @@
     (-> (assoc :last-turn-ms (- (System/currentTimeMillis) (:turn-started-at state)))
         (dissoc :turn-started-at))))
 
+(defn- add-server-note
+  "A `role: system` text from the server (the output of its commands:
+  `/context`, `/costs`, `/skills`…, notices, errors): a note of its own, not
+  part of the assistant's reply, as eca-emacs shows it in its system face.
+  Each arrives whole; blank ones are dropped."
+  [state text]
+  (let [text (-> (str text) (str/replace #"^(?:[ \t]*\r?\n)+" "") str/trimr)]
+    (if (str/blank? text)
+      state
+      (-> state
+          flush-current-text
+          (update :items conj {:type :server-note :text text})))))
+
 (defn handle-content [state params]
   (let [content (:content params)]
     (case (:type content)
       "text"
-      (-> state
-          (update :current-text str (:text content))
-          view/rebuild-lines)
+      (if (= "system" (:role params))
+        (-> state (add-server-note (:text content)) view/rebuild-lines)
+        (-> state
+            (update :current-text str (:text content))
+            view/rebuild-lines))
 
       "progress"
       (case (:state content)

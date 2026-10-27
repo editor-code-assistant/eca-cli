@@ -291,6 +291,14 @@
           (prefixed (markdown/render (:text item) (max 1 (- width 2)))
                     (str (paint :assistant "◆") " ") "  ")
 
+          :server-note
+          ;; The server's own messages (command output such as /context,
+          ;; notices): markdown in the system colour, marked apart from the
+          ;; assistant's reply. Its line breaks are kept, so grids and
+          ;; aligned columns stay as laid out.
+          (prefixed (markdown/render (:text item) (max 1 (- width 2)) {:base :server-note})
+                    (str (paint :server-note "•") " ") "  ")
+
           :tool-call (tool-call-lines item width)
           :thinking  (thinking-lines item width)
           :hook      (hook-lines item width)

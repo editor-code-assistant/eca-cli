@@ -50,6 +50,7 @@ First-impression pass: eca-cli opens on a welcome screen with ECA's logo, Ctrl+C
 
 ### Fixed
 
+- The server's own messages (the output of `/context`, `/costs`, `/skills`…, notices and errors) are shown as server notes, as in eca-emacs: in their own colour and marked `•`, instead of passing for (and merging into) the assistant's reply. `/context`'s grid and legend keep their layout.
 - Replayed unfinished tools, thoughts, hooks and unanswered questions stay live until final; confirmed turn completion releases orphan activity without dismissing questions. Removing chat items no longer skips or duplicates later terminal output.
 - Resizing and switching to/from the transcript preserve terminal history and live-row alignment; rapid resizes are debounced, and clearing or switching chats appends a new section instead of repainting old history.
 - Short terminals keep the input cursor, selected question option and picker selection visible.

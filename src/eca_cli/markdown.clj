@@ -385,11 +385,14 @@
 
 (defn render
   "Display lines for markdown `text` laid out in `width` columns.
-  `opts`: `:at-refs?` highlights `@path` tokens (prompts)."
+  `opts`: `:at-refs?` highlights `@path` tokens (prompts); `:base`, a style
+  (map or role) the text takes unless its markup says otherwise."
   ([text width] (render text width {}))
   ([text width opts]
    (let [text (str/replace (str text) "\r\n" "\n")]
      (try
-       (render-blocks (:content (md/parse text)) (max 1 width) {:opts opts :depth 0})
+       (render-blocks (:content (md/parse text)) (max 1 width)
+                      (cond-> {:opts opts :depth 0}
+                        (:base opts) (assoc :base (theme/style-of (:base opts)))))
        (catch Exception _
          (wrap/wrap-text text (max 1 width)))))))

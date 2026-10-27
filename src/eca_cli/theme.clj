@@ -36,6 +36,7 @@
    :prompt       {:fg 2 :bold true}            ; `> `, as eca-emacs
    :assistant    {:fg 6}                       ; ◆ marker
    :user-bar     {:fg 4}                       ; bar left of user messages
+   :server-note  {:fg 5}                       ; server system messages, as eca-emacs' system face
    :at-ref       {:fg 6 :bold true}            ; @path tokens
    :thinking     {:fg 245 :italic true}
    :focus        {:fg 245 :reverse true}       ; focused block (fg becomes the bar)
