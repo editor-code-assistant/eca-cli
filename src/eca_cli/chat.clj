@@ -570,6 +570,13 @@
           (update :items conj {:type :url :title (:title content) :url (:url content)})
           view/rebuild-lines)
 
+      ;; A checkpoint the user set (/flag); see eca-cli.history.
+      "flag"
+      (-> state
+          flush-current-text
+          (update :items conj {:type :flag :text (str (:text content)) :content-id (:contentId content)})
+          view/rebuild-lines)
+
       "hookActionStarted"
       (-> state
           (update :items conj {:type :hook :id (:id content) :name (:name content)
@@ -716,8 +723,19 @@
                  view/rebuild-lines)
              nil]
 
+            ;; Our own message, already shown: just learn its id (rollback).
             (:echo-pending state)
-            [(assoc state :echo-pending false) nil]
+            [(-> state
+                 (assoc :echo-pending false)
+                 (update :items (fn [items]
+                                  (if-let [i (last (keep-indexed #(when (and (= :user (:type %2))
+                                                                             (nil? (:content-id %2)))
+                                                                    %1)
+                                                                 items))]
+                                    (cond-> items
+                                      (:contentId content) (assoc-in [i :content-id] (:contentId content)))
+                                    items))))
+             nil]
 
             ;; A replayed message, or the steer the server just injected
             ;; into the running turn (all of it: steers add up).
@@ -725,7 +743,8 @@
             [(-> state
                  flush-current-text
                  (dissoc :steered)
-                 (update :items conj {:type :user :text (or (:text content) "")})
+                 (update :items conj (cond-> {:type :user :text (or (:text content) "")}
+                                       (:contentId content) (assoc :content-id (:contentId content))))
                  view/rebuild-lines)
              nil])
           [state nil])

@@ -13,6 +13,7 @@
             [eca-cli.jobs :as jobs]
             [eca-cli.mcp :as mcp]
             [eca-cli.question :as question]
+            [eca-cli.history :as history]
             [eca-cli.commands :as commands]))
 
 ;; Expose last-known state for nREPL inspection
@@ -395,6 +396,12 @@
             (-> state (dissoc :picker) (assoc :mode :ready))
             item)
           [state nil]))
+
+      ;; Rollback / flags / timeline pickers (history.clj).
+      (and (msg/key-press? msg) (msg/key-match? msg :enter)
+           (= :picking (:mode state))
+           (contains? history/picker-kinds (get-in state [:picker :kind])))
+      (history/handle-select state)
 
       ;; --- At-file picker: re-query server on filter typing ---
       ;;

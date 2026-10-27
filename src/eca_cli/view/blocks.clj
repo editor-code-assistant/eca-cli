@@ -245,6 +245,15 @@
                                             (str "  " (paint :success "→") " ") "    ")
            :else                  [(str "  " (paint :muted "waiting for your answer…"))]))))
 
+(defn- flag-lines
+  "A flag (checkpoint) as a rule across the chat: `── ⚑ text ─────`."
+  [item width]
+  (let [w     (max 8 width)
+        label (str " ⚑ " (:text item) " ")
+        label (if (> (theme/width label) (- w 4)) (str (subs label 0 (max 1 (- w 6))) "… ") label)
+        fill  (max 0 (- w 2 (theme/width label)))]
+    [(str (paint :accent "──") (paint :accent-bold label) (paint :accent (apply str (repeat fill "─"))))]))
+
 (defn- focus-line
   "A focused block's first line highlighted, readable on dark and light
   terminals alike (reverse video of a mid grey). Not padded to the width:
@@ -273,6 +282,7 @@
           :thinking  (thinking-lines item width)
           :hook      (hook-lines item width)
           :question  (question-item-lines item width)
+          :flag      (flag-lines item width)
 
           :url
           (let [inner-w (max 1 (- width 2))]

@@ -21,7 +21,7 @@
 
 (defn item-display [kind item]
   (case kind
-    :chat (first item)
+    (:chat :rollback :rollback-type :flags :flag-action :timeline) (first item)
     :command (str (first item) "  —  " (second item))
     :at-file (str item)
     :mcp (:name item)

@@ -389,8 +389,19 @@
                                          (mcp/render-mcp-panel-lines state)))))
 
       :else
-      (let [label (case kind :model "model" :agent "agent" :chat "chat" :command "command" :at-file "file" "item")]
-        (str (picker-header (str "Select " label) query list) "\n"
+      (let [title (case kind
+                    :model         "Select model"
+                    :agent         "Select agent"
+                    :chat          "Select chat"
+                    :command       "Select command"
+                    :at-file       "Select file"
+                    :rollback      "Roll back to before"
+                    :rollback-type "Roll back what"
+                    :flags         "Select flag"
+                    :flag-action   "Flag"
+                    :timeline      "Jump to"
+                    "Select item")]
+        (str (picker-header title query list) "\n"
              (divider width) "\n"
              (render-list kind list width))))))
 

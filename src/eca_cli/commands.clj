@@ -9,6 +9,7 @@
             [eca-cli.server :as server]
             [eca-cli.chat :as chat]
             [eca-cli.chats :as chats]
+            [eca-cli.history :as history]
             [eca-cli.picker :as picker]
             [eca-cli.login :as login]
             [eca-cli.jobs :as jobs]
@@ -108,6 +109,10 @@
    "/clear"    {:doc "Clear chat display (local only)"    :handler cmd-clear-chat}
    "/jobs"     {:doc "Show background shell jobs"         :handler cmd-open-jobs-panel}
    "/trust"    {:doc "Toggle trust mode (run tool calls without asking)" :handler cmd-toggle-trust}
+   "/rollback" {:doc "Roll the chat back to before one of your messages" :handler history/cmd-rollback}
+   "/flag"     {:doc "Flag your latest message or tool call: /flag <text>" :handler history/cmd-flag :args? true}
+   "/flags"    {:doc "Jump to, fork from or remove a flag"            :handler history/cmd-flags}
+   "/timeline" {:doc "Jump to one of your messages or a flag"         :handler history/cmd-timeline}
    "/help"     {:doc "Show available commands"            :handler cmd-show-help}
    "/quit"     {:doc "Exit eca-cli"                        :handler cmd-quit}
    "/login"    {:doc "Manually trigger provider login"    :handler cmd-login}})
@@ -219,8 +224,10 @@
       (nil? name)
       (chat/submit-prompt state (str/trim text))
 
-      (and local (or (nil? args) (nil? remote)))
-      (let [[new-state cmd] ((:handler local) state)]
+      (and local (or (nil? args) (nil? remote) (:args? local)))
+      (let [[new-state cmd] (if (:args? local)
+                              ((:handler local) state args)
+                              ((:handler local) state))]
         (finalize-handler-result new-state cmd))
 
       ;; Not listed yet (still loading): let the server decide.
@@ -242,6 +249,10 @@
   command taking arguments goes to the input for them, the others run."
   [state [name _doc cmd]]
   (cond
+    ;; It needs text after it (/flag <text>): to the input.
+    (:args? (get command-registry name))
+    [(update state :input #(-> % (ti/set-value (str name " ")) ti/focus)) nil]
+
     (get command-registry name)
     (let [[new-state c] ((:handler (get command-registry name)) state)]
       (finalize-handler-result new-state c))

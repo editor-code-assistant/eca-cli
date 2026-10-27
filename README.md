@@ -41,7 +41,7 @@ eca-cli
 - The server's commands, skills and prompts from the `/` picker
 - A status line showing agent, model, context window use, cost and MCP health at a glance
 - Add files as context with `@`
-- Resume previous chats
+- Resume, fork and roll back chats; flag checkpoints and jump between them
 - Collapsible tool calls, thinking and sub-agent blocks
 - Takes on your terminal's colour theme, dark or light (`NO_COLOR` turns colours off)
 
@@ -66,6 +66,10 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `/mcp` | MCP servers status |
 | `/jobs` | Background shell jobs |
 | `/trust` | Toggle trust mode (run tool calls without asking) |
+| `/rollback` | Roll the chat back to before one of your messages |
+| `/flag <text>` | Flag your latest message as a checkpoint |
+| `/flags` | Jump to, fork a new chat from, or remove a flag |
+| `/timeline` | Jump to one of your messages or a flag |
 | `/clear` | Clear the chat display |
 | `/login` | Log in to a provider |
 | `/help` | Show available commands |

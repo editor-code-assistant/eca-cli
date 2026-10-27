@@ -193,6 +193,30 @@
                    chat-id (assoc :chatId chat-id))
                  callback))
 
+;; --- Chat history surgery (rollback, flags, fork) ---
+
+(defn rollback-chat!
+  "chat/rollback to before the user message `content-id`; `include` is
+  [\"messages\"], [\"tools\"] (undo the tools' file changes) or both. The
+  server then clears the chat and replays what's kept."
+  [srv chat-id content-id include]
+  (send-request! srv "chat/rollback" {:chatId chat-id :contentId content-id :include include} (fn [_])))
+
+(defn add-flag!
+  "chat/addFlag: a named checkpoint after message/content `content-id`. The
+  server then clears the chat and replays it, flag included."
+  [srv chat-id content-id text]
+  (send-request! srv "chat/addFlag" {:chatId chat-id :contentId content-id :text text} (fn [_])))
+
+(defn remove-flag! [srv chat-id content-id]
+  (send-request! srv "chat/removeFlag" {:chatId chat-id :contentId content-id} (fn [_])))
+
+(defn fork-chat!
+  "chat/fork: a new chat with the messages up to `content-id` (e.g. a
+  flag); announced by chat/opened, which eca-cli switches to."
+  [srv chat-id content-id]
+  (send-request! srv "chat/fork" {:chatId chat-id :contentId content-id} (fn [_])))
+
 (defn chat-query-commands!
   "The server's commands (native ones, MCP prompts, custom prompts, skills).
   Response: {:commands [{:name :description :type :arguments}]}, names

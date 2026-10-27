@@ -107,6 +107,7 @@ No viewport component — `view.clj` uses manual line-slice: `:chat-lines` is a 
 - `src/eca_cli/chat.clj` — chat content handlers, tool-call lifecycle, approvals queue, chat routing/switching, prompt submission
 - `src/eca_cli/commands.clj` — slash commands: local registry, server commands (`chat/queryCommands`), dispatch, `/` picker items
 - `src/eca_cli/question.clj` — `chat/askQuestion`: question queue, `:asking` keys, answers
+- `src/eca_cli/history.clj` — `/rollback`, `/flag`, `/flags` (jump / fork / remove), `/timeline`: two-step pickers over the chat's `:user` items (`:content-id` from the server's echo) and `:flag` items. Rollback and add-flag make the server clear the chat and replay it.
 - `src/eca_cli/view.clj` — pure rendering: chat lines (cached, batched), gutter (connecting / working), approval prompt, pickers, login, layout
 - `src/eca_cli/view/blocks.clj` — one renderer per chat item type: messages, tool calls (diffs, argument/output boxes), thinking, hooks, links, system notes
 - `src/eca_cli/view/status.clj` — the status line: segments, priorities, context-window bar, usage/cost/quota
