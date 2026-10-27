@@ -153,6 +153,63 @@
            (theme/paint :muted (str " " (or (blocks/format-duration elapsed) (str (quot elapsed 1000) "s")))))
          (when (> room 8) (theme/paint :subtle (str "  " (clip hint room)))))))
 
+(def ^:private max-task-rows 10)
+
+(defn task-panel-lines
+  "The agent's plan (its task tool), above the prompt as in eca-emacs: a line
+  with what it's on and the progress, and the checklist under it when
+  unfolded (Ctrl+T). `Creating tasks…` while the first plan is on its way."
+  [state]
+  (let [{:keys [tasks active-summary]} (:tasks state)
+        width (:width state 80)]
+    (cond
+      (seq tasks)
+      (let [done     (count (filter #(= "done" (:status %)) tasks))
+            doing    (first (filter #(= "in-progress" (:status %)) tasks))
+            label    (or active-summary (:subject doing) "")
+            prefix   (cond active-summary "Task: " (seq label) "Tasks " :else "Tasks")
+            progress (str " (" done "/" (count tasks) ")")
+            open?    (:tasks-expanded? state)
+            fixed    (+ 2 (count prefix) (count progress))
+            ;; The key hint goes first when the label would be squeezed.
+            key-hint (let [h (if open? "  ctrl+t to fold" "  ctrl+t for all")]
+                       (if (>= (- width fixed (count h)) 12) h ""))
+            room     (- width fixed (count key-hint))
+            head     (str (theme/paint :accent "≡ ")
+                          (theme/paint :bold prefix)
+                          (when (pos? room) (theme/paint (when doing :accent) (clip label room)))
+                          (theme/paint :muted progress)
+                          (theme/paint :subtle key-hint))
+            ids?     (some #(seq (:blocked-by %)) tasks)
+            row      (fn [{:keys [id subject status priority blocked? blocked-by]}]
+                       (let [[icon role] (case status
+                                           "done"        ["✓" :task-done]
+                                           "in-progress" ["◐" :accent-bold]
+                                           [(if blocked? "◌" "○") (when blocked? :muted)])
+                             num   (when ids? (str "#" id " "))
+                             note  (str (when (= "high" priority) " !")
+                                        (when (and blocked? (seq blocked-by))
+                                          (str "  waits for " (str/join ", " (map #(str "#" %) blocked-by)))))
+                             room  (- width 4 (count num) (count note))]
+                         (str "  " (theme/paint role icon) " "
+                              (some->> num (theme/paint :subtle))
+                              (theme/paint role (clip (str subject) (max 1 room)))
+                              (theme/paint (if (= "high" priority) :warning :muted) note))))
+            rows     (when open? (map row tasks))]
+        (into [head]
+              (if (> (count rows) max-task-rows)
+                (concat (take max-task-rows rows)
+                        [(theme/paint :muted (str "  … " (- (count rows) max-task-rows) " more"))])
+                rows)))
+
+      (:task-loading? state)
+      [(str (theme/paint :accent "≡ ") (theme/paint :muted "Creating tasks…"))]
+
+      :else [])))
+
+(defn- task-block [state]
+  (apply str (map #(str % "\n") (task-panel-lines state))))
+
 (defn- pending-lines
   "`Steering: …` and `Queued: …` lines, above the prompt while the agent works."
   [state]
@@ -398,7 +455,7 @@
                      (render-picker state)
 
                      (= :chatting mode)
-                     (str (pending-lines state) (prompt-input (:input state)))
+                     (str (task-block state) (pending-lines state) (prompt-input (:input state)))
 
                      (= :disconnected mode)
                      (str (theme/paint :error "✗ ") (theme/paint :muted disconnected-hint))
@@ -413,7 +470,7 @@
                          (render-login state)))
 
                      :else
-                     (prompt-input (:input state)))
+                     (str (task-block state) (prompt-input (:input state))))
         gutter     (case mode
                      :connecting (render-connecting state now)
                      :chatting   (render-working state now)

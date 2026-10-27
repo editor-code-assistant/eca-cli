@@ -25,7 +25,7 @@ Read [assessment.md](assessment.md) for the philosophical grounding behind this 
 | [12](#phase-12-context-expansion) | Context Expansion | Full `chat/queryContext` picker (dirs/URLs/cursor/repoMap/MCP-resources); image-attach | 🆕 Planned | — |
 | [13](#phase-13-chat-management) | Chat Management | Rename + per-chat trust, server-side clear, `chat/statusChanged`, history pagination | 🆕 Planned | — |
 | [14](#phase-14-chat-navigation) | Chat Navigation | Flags/bookmarks, timeline jump, export transcript | 🆕 Planned | — |
-| [15](#phase-15-task-panel) | Task Panel | `TaskDetails` — checklist, N/M progress, priority, `blockedBy` graph | 🆕 Planned | — |
+| [15](#phase-15-task-panel) | Task Panel | `TaskDetails` — checklist, N/M progress, priority, `blockedBy` graph | ✅ Complete | — |
 | [16](#phase-16-granular-approval) | Granular Approval | Per-shell-command approve & remember (`save:'session'`, `approvalKey`) | ✅ Complete | — |
 | [17](#phase-17-mcp-write-management) | MCP Write Management | MCP CRUD + start/stop/enable/disable/logout, OAuth (L) | 🆕 Planned | — |
 | [18](#phase-18-providers--config) | Providers & Config | Providers panel (auth, logout, cost badges); in-app global-config editor | 🆕 Planned | — |
@@ -431,6 +431,8 @@ Numbered identities frozen in [#24](https://github.com/editor-code-assistant/eca
 ## Phase 15: Task Panel
 
 **Goal:** `TaskDetails` — checklist, N/M progress, priority, `blockedBy` dependency graph.
+
+**Status: ✅ Complete.** A panel above the prompt, like eca-emacs's task widget: `Task: <activeSummary> (done/total)` (or the task in progress), `Creating tasks…` while the first plan arrives; Ctrl+T unfolds the checklist (✓ done struck through, ◐ in progress, ◌ blocked with `waits for #n`, `!` high priority). Task tool calls are kept out of the chat flow but remain approvable.
 
 ## Phase 16: Granular Approval
 

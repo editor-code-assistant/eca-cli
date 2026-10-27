@@ -85,6 +85,8 @@ The drain loop starts at init and is self-sustaining: the `:eca-tick` handler re
 
 All five events go through one path (`chat/tool-fields` → `upsert-tool-call`). Payloads are detected by `details.type`, never by tool name: `fileChange` → `:edit` (diff), `shellCommand` → `:shell` (per-command breakdown with approval keys), `subagent` → `:subagent-chat-id` (the call gets `:sub-items`, and that chat's content is routed into them via `:subagent-chats`). Note that the server sends the short tool name (`spawn_agent`, `task`) plus `server: "eca"`, not `eca__…`.
 
+The task tool (`server "eca"`, `name "task"`, `chat/task-call?`) is not a chat item: its `task` details feed `:tasks` (`chat/content->tasks`), drawn as the task panel above the prompt (`view/task-panel-lines`, Ctrl+T toggles `:tasks-expanded?`); its calls still go through `:tool-calls` so they can be approved. The server clears a finished plan on the next prompt by sending empty details.
+
 Approvals: the server decides who asks. Trust mode and remembered approvals are applied server-side, so eca-cli only asks when `toolCallRun` says `manualApproval: true` (a hook can force that even in trust mode, so never auto-approve on the client). Calls waiting in parallel, from the main chat or a sub-agent, queue up: one in `:pending-approval`, the rest in `:approval-queue`; each is answered with the chat id it came from. `Y` approves with `save: "session"`, which makes the server remember the tool (or, for shell/git, the commands) for the chat and its sub-agents. Trust is sent with every prompt once known (`[:opts :trust]`: `--trust`, `/trust`, or the server's `selectTrust`, e.g. from `chat.defaultTrust`); an explicit `false` keeps a new chat from falling back to the default.
 
 ### View rendering

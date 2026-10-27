@@ -39,6 +39,7 @@
    :at-ref       {:fg 6 :bold true}            ; @path tokens
    :thinking     {:fg 245 :italic true}
    :focus        {:fg 245 :reverse true}       ; focused block (fg becomes the bar)
+   :task-done    {:fg 245 :strike true}        ; task panel: finished tasks
    :key          {:bold true}                  ; key hints: the key
    :key-desc     {:fg 245}                     ; key hints: what it does
    ;; --- diffs ---

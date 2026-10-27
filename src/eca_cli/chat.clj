@@ -123,6 +123,24 @@
     (when (= "subagent" (:type d))
       (:subagentChatId d))))
 
+(defn task-call?
+  "The agent's task tool (its plan): shown as the task panel, not in the chat."
+  [content]
+  (and (= "eca" (:server content)) (= "task" (:name content))))
+
+(defn content->tasks
+  "Normalize the task tool's `task` details: `{:tasks [{:id :subject :status
+  :priority :blocked? :blocked-by}] :active-summary}`, or nil (a failed or
+  rejected call carries none)."
+  [content]
+  (let [d (:details content)]
+    (when (= "task" (:type d))
+      (cond-> {:tasks (mapv (fn [{:keys [id subject status priority isBlocked blockedBy]}]
+                              {:id id :subject subject :status status :priority priority
+                               :blocked? (boolean isBlocked) :blocked-by (vec blockedBy)})
+                            (:tasks d))}
+        (:activeSummary d) (assoc :active-summary (:activeSummary d))))))
+
 (defn- args-text [arguments]
   (when arguments
     (try (json/generate-string arguments)
@@ -501,14 +519,24 @@
       ;; One path for the whole lifecycle. The server already applied trust
       ;; and remembered approvals: only `manualApproval` calls ask the user.
       ("toolCallPrepare" "toolCallRun" "toolCallRunning" "toolCalled" "toolCallRejected")
-      (let [tool (tool-fields content)
-            sub  (:subagent-chat-id tool)]
-        (-> state
-            flush-current-text
-            (upsert-tool-call tool)
-            (cond-> sub (register-subagent (:id tool) sub))
-            (track-approval (or (:chatId params) (:chat-id state)) content)
-            view/rebuild-lines))
+      (let [tool    (tool-fields content)
+            sub     (:subagent-chat-id tool)
+            chat-id (or (:chatId params) (:chat-id state))]
+        (if (task-call? content)
+          ;; The plan goes to the task panel (still approvable when asked).
+          (let [tasks (content->tasks content)]
+            (-> state
+                (update-in [:tool-calls (:id tool)] merge tool)
+                (assoc :task-loading? (contains? #{"toolCallPrepare" "toolCallRun" "toolCallRunning"}
+                                                 (:type content)))
+                (cond-> tasks (assoc :tasks tasks))
+                (track-approval chat-id content)))
+          (-> state
+              flush-current-text
+              (upsert-tool-call tool)
+              (cond-> sub (register-subagent (:id tool) sub))
+              (track-approval chat-id content)
+              view/rebuild-lines)))
 
       "reasonStarted"
       (-> state
@@ -594,6 +622,7 @@
   (-> state
       (assoc :items [] :current-text "" :chat-lines [] :scroll-offset 0
              :subagent-chats {} :tool-calls {} :focus-path nil)
+      (dissoc :tasks :task-loading?)
       clear-approvals))
 
 (defn switch-to-chat
@@ -899,6 +928,10 @@
 
     (and (msg/key-press? msg) (msg/key-match? msg "alt+c"))
     (toggle-all-expanded state false)
+
+    ;; The task panel's checklist.
+    (and (msg/key-press? msg) (msg/key-match? msg "ctrl+t"))
+    [(update state :tasks-expanded? not) nil]
 
     (and (msg/key-press? msg) (msg/key-match? msg "alt+o"))
     (toggle-all-expanded state true)

@@ -37,6 +37,7 @@ eca-cli
 - Approve tool calls inline, with coloured diffs for file edits and a breakdown of shell commands; remember approvals for the chat
 - Answer the agent's questions by picking an option or typing your own answer
 - Steer the agent while it works, or queue your next message
+- Follow the agent's plan in a task panel above the prompt
 - The server's commands, skills and prompts from the `/` picker
 - A status line showing agent, model, context window use, cost and MCP health at a glance
 - Add files as context with `@`
@@ -82,6 +83,7 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `Tab` / `Shift+Tab` | Cycle focus through chat blocks |
 | `Alt+↑` / `Alt+↓` | Jump between top-level blocks |
 | `Alt+c` / `Alt+o` | Collapse / expand all blocks |
+| `Ctrl+T` | Show / hide the agent's task list |
 | `↑` / `↓` | Input history (or move focus) |
 | `PgUp` / `PgDn`, mouse wheel | Scroll |
 | `Ctrl+C` | Quit |
