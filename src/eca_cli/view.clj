@@ -544,6 +544,7 @@
                     :agent         "Select agent"
                     :variant       "Select variant"
                     :chat          "Select chat"
+                    :history       "Prompt history"
                     :command       "Select command"
                     :at-file       (if (get-in state [:picker :hash?]) "Insert path" "Add context")
                     :providers     "Providers"
@@ -566,10 +567,14 @@
   "While a first Ctrl+C (or Ctrl+D) waits for the second: in the status
   line's place, below the prompt, as Claude Code shows it."
   [state]
-  (when-let [k (get-in state [:quit-armed :key])]
+  (if-let [k (get-in state [:quit-armed :key])]
     (str (theme/paint :muted "Press ")
          (theme/paint :bold (if (= "ctrl+d" k) "Ctrl+D" "Ctrl+C"))
-         (theme/paint :muted " again to exit"))))
+         (theme/paint :muted " again to exit"))
+    ;; A first Esc on an empty prompt (`commands/press-escape`).
+    (when (:esc-armed state)
+      (str (theme/paint :muted "Press ") (theme/paint :bold "Esc")
+           (theme/paint :muted " again to roll back")))))
 
 (defn render-login [state]
   (let [{:keys [provider action field-idx pending-message]} (:login state)
@@ -653,6 +658,8 @@
                      :chatting   (render-working state now)
                      :approving  (approval-gutter state now)
                      :asking     (theme/paint :accent "◆ Waiting for your answer")
+                     ;; A picker opened while the agent works (Alt+P…).
+                     :picking    (if (:turn-started-at state) (render-working state now) "")
                      :ready      (or (command-hint state)
                                      (when (:stopping? state) (theme/paint :muted "◌ Stopping…"))
                                      (when-not (fullscreen? state)

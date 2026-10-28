@@ -38,6 +38,7 @@
       path)))
 
 (defn chats-file     [] (io/file (eca-state-dir) "eca-cli-chats.edn"))
+(defn recent-models-file [] (io/file (eca-state-dir) "eca-cli-recent-models.edn"))
 (defn log-file       [] (io/file (eca-state-dir) "eca-cli.log"))
 (defn nrepl-log-file [] (io/file (eca-state-dir) "eca-cli-nrepl.log"))
 

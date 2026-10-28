@@ -67,7 +67,7 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 
 | Command | Action |
 |---|---|
-| `/model` | Pick a model (also `Ctrl+L`) |
+| `/model` | Pick a model (also `Alt+P` / `Ctrl+L`) |
 | `/agent` | Pick an agent |
 | `/variant` | Pick the model's variant (e.g. reasoning effort) |
 | `/rename <title>` | Rename the chat |
@@ -84,6 +84,7 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `/clear` | Clear the chat display |
 | `/login` | Log in to a provider |
 | `/help` | Show available commands |
+| `/keys` | Show keyboard shortcuts (also `?` on an empty prompt) |
 | `/quit` | Exit |
 
 `/new`, `/clear` and resuming a chat each start a new current transcript; previously printed terminal history stays. `/clear` only clears the local display, not the chat on the server.
@@ -96,8 +97,17 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `@` / `#` | Add a context / insert a path (at the start of a word) |
 | `Alt+Enter` | While the agent works, queue a message for when it's done |
 | `↑` on an empty input | While the agent works, take back what you steered or queued |
+| `Shift+Tab` | Next agent (e.g. `code` ↔ `plan`) |
+| `Alt+T` | Next variant (reasoning effort), none included |
+| `Alt+P` / `Ctrl+L` | Pick a model |
+| `Ctrl+P` / `F2` | Next recently picked model (`Shift+F2`: previous) |
+| `Ctrl+Y` | Toggle trust mode |
+| `Ctrl+N` | New chat (like `/new`) |
+| `Ctrl+R` | Search the prompt history |
+| `Ctrl+G` | Edit the prompt in `$VISUAL` / `$EDITOR` (else `vi`, or `nano`) |
+| `?` on an empty input | List the keyboard shortcuts |
 | `y` / `n` / `Y` | Approve / reject / approve and remember a tool call for the chat |
-| `Esc` | Stop the running prompt, close a picker, clear focus |
+| `Esc` | Stop the running prompt, close a picker, clear focus; twice on an empty input: `/rollback` |
 | `Ctrl+O` | Toggle the full-screen transcript (when started inline) |
 | `Tab` | Focus the next block; `↑` / `↓` move focus once selected |
 | `Alt+↑` / `Alt+↓` | Jump between top-level blocks |
@@ -109,6 +119,8 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `PgDn` | Scroll down in full screen (no action inline) |
 | Mouse wheel | Native terminal scrollback inline; chat scrolling in full screen |
 | `Ctrl+C` | Clear the input, or stop the agent; press twice to quit (`Ctrl+D` on an empty input too) |
+
+The model, agent, variant and trust keys work while the agent works too, and apply from the next prompt. On macOS, `Alt` keys need the terminal to send Option as Meta.
 
 Inline, only live blocks can be focused; use the transcript to inspect completed ones. Selecting or expanding a live block opens the transcript if it would not fit on screen. In the transcript, `Enter` toggles a focused block without submitting your draft or answering a pending interaction; `Esc` clears focus, and `Ctrl+O` returns inline.
 

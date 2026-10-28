@@ -160,6 +160,6 @@
         state   (atom {:n 0})
         update  (fn [s _] [(update s :n inc) nil])]
     (testing "a message updates the state; quitting stops"
-      (is (true? (handle! (msg/key-press "a") state nil nil update)))
+      (is (true? (handle! (msg/key-press "a") state nil nil update nil)))
       (is (= 1 (:n @state)))
-      (is (false? (handle! (msg/quit) state nil nil update))))))
+      (is (false? (handle! (msg/quit) state nil nil update nil))))))

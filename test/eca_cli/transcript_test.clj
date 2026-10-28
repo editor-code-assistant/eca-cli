@@ -739,7 +739,7 @@
           picked (press moved (msg/key-press :enter))]
       (is (= 1 (cl/selected-index (get-in moved [:picker :list]))))
       (is (nil? (:focus-path moved)))
-      (is (= :ready (:mode picked)))
+      (is (= :approving (:mode picked)) "the approval waiting since the picker opened comes next")
       (is (nil? (:picker picked)))))
   (testing "unfocused Escape still cancels login"
     (let [s (press (pending-interaction-state :login) toggle-transcript)

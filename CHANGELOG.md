@@ -14,6 +14,7 @@ First-impression pass: eca-cli opens on a welcome screen with ECA's logo, Ctrl+C
 
 ### Added
 
+- Keyboard shortcuts, after the other ECA clients, Claude Code, OpenCode and pi. **Shift+Tab** cycles agents (code ↔ plan). **Alt+T** cycles the variant (reasoning effort). **Alt+P** (or Ctrl+L) picks a model. **Ctrl+P / F2** (Shift+F2 back) cycles recent models, remembered across sessions. **Ctrl+Y** toggles trust. **Ctrl+N** starts a new chat. **Ctrl+R** searches the prompt history. **Ctrl+G** edits the prompt in `$VISUAL`/`$EDITOR`. **Esc Esc** on an empty prompt opens `/rollback`. **?** on an empty prompt (or `/keys`) lists all the keys. The model, agent, variant and trust keys, `/model`, `/agent` and `/variant` work while the agent works too, keeping the draft. An approval or question arriving while a picker is open waits for it, so letters typed to filter don't answer it.
 - `Ctrl+O` toggles a full-screen transcript for inspecting, expanding and scrolling through the current chat; `PgUp` opens it too, without losing a draft or pending approval/question.
 - `--fullscreen` preserves the previous full-screen experience.
 - A welcome screen opens each new chat, in the spirit of Claude Code's: ECA's logo drawn in braille, eca-cli's and the server's versions, the model, agent and workspace, tips to get started (`/init` while the project has no AGENTS.md) and the latest chats to resume with `/chats` ("Welcome back!"). It fits itself to the terminal's width, and replaces the server's default welcome text; a `welcomeMessage` of your own still shows below it.

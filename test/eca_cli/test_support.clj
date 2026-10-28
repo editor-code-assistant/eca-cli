@@ -4,12 +4,17 @@
             [eca-cli.paths :as paths]))
 
 (defn isolated-chats-file
-  "`:each` fixture: remembered chat ids go to a temp file, never to the
-  user's real chats file (opening, forking or deleting a chat writes it)."
+  "`:each` fixture: remembered chat ids and recent models go to temp files,
+  never to the user's real ones (opening, forking or deleting a chat, or
+  picking a model, writes them)."
   [t]
-  (let [f    (doto (java.io.File/createTempFile "eca-cli-chats" ".edn") (.deleteOnExit))
-        none (io/file (str f ".absent"))]
-    (with-redefs [paths/chats-file           (constantly f)
-                  paths/legacy-chats-file    (constantly none)
-                  paths/legacy-sessions-file (constantly none)]
-      (t))))
+  (let [f      (doto (java.io.File/createTempFile "eca-cli-chats" ".edn") (.deleteOnExit))
+        models (io/file (str f ".models"))
+        none   (io/file (str f ".absent"))]
+    (try
+      (with-redefs [paths/chats-file           (constantly f)
+                    paths/recent-models-file   (constantly models)
+                    paths/legacy-chats-file    (constantly none)
+                    paths/legacy-sessions-file (constantly none)]
+        (t))
+      (finally (.delete models)))))

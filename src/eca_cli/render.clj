@@ -239,6 +239,33 @@
   [r frame now]
   (frame! r (assoc frame :final? true) now))
 
+(defn suspend!
+  "Hand the terminal to another program (Ctrl+G's editor): the full screen
+  is left, or inline the live region erased; the cursor shows. What's
+  printed in the terminal's history stays."
+  [r]
+  (let [{:keys [terminal alt? ^Display inline]} @r]
+    (if alt?
+      ;; The main screen keeps the live region, and the inline Display what
+      ;; it drew there: the program uses (and leaves) its own alternate screen.
+      (do (write! terminal mouse-off)
+          (term/exit-alt-screen terminal)
+          (swap! r #(-> % (assoc :alt? false :suspended :fullscreen) (assoc-in [:shown :screen] :suspended))))
+      (do (.update inline (ArrayList.) 0)
+          (swap! r assoc :inline-lines [] :suspended :inline)))
+    (term/show-cursor terminal)))
+
+(defn resume!
+  "The terminal is back (see `suspend!`): the next frame draws afresh,
+  re-entering the full screen if it was in it."
+  [r]
+  (let [{:keys [terminal ^Display inline suspended]} @r]
+    (term/hide-cursor terminal)
+    (when (= :inline suspended)
+      (.reset inline)
+      (swap! r assoc :inline-lines []))
+    (swap! r dissoc :suspended)))
+
 (defn stop! [r]
   (let [{:keys [terminal alt?]} @r]
     (doseq [restore [(fn [] (write! terminal (str sync-end mouse-off)))

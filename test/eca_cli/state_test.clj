@@ -424,7 +424,7 @@
                                         {:type :eca-tick :msgs []})]
         (is (some? cmd))))
     (testing "stops once disconnected: nothing will ever arrive again"
-      (let [[s cmd] (state/update-state (assoc (base-state) :mode :ready :server {:queue queue})
+      (let [[s cmd] (state/update-state (assoc (base-state) :mode :ready :turn-started-at nil :server {:queue queue})
                                         {:type :eca-tick
                                          :msgs [{:type :reader-error :error "gone"}]})]
         (is (= :disconnected (:mode s)))
@@ -541,7 +541,7 @@
 
   (testing "done action with no pending (a login asked for by hand) → :ready, said so"
     (let [[new-state _] (state/update-state
-                          (assoc (base-state) :mode :ready)
+                          (assoc (base-state) :mode :ready :turn-started-at nil)
                           {:type :eca-login-action :provider "anthropic"
                            :action {:action "done"} :pending-message nil})]
       (is (= :ready (:mode new-state)))
@@ -563,7 +563,7 @@
 
   (testing "an error answer (e.g. unknown provider) → :ready with the reason"
     (let [[new-state _] (state/update-state
-                          (assoc (base-state) :mode :ready)
+                          (assoc (base-state) :mode :ready :turn-started-at nil)
                           {:type :eca-login-action :provider "nope"
                            :action {:code -32603 :message "Unknown provider: nope"}})]
       (is (= :ready (:mode new-state)))
@@ -689,7 +689,7 @@
       (is (nil? (:picker s)))))
 
   (testing "Ctrl+L with empty available-models shows error"
-    (let [s0    (assoc (base-state) :mode :ready :available-models [])
+    (let [s0    (assoc (base-state) :mode :ready :turn-started-at nil :available-models [])
           [s _] (state/update-state s0 (msg/key-press "l" :ctrl true))]
       (is (= :ready (:mode s)))
       (is (some #(and (= :system (:type %))
@@ -699,7 +699,7 @@
 (deftest slash-model-opens-picker-test
   (testing "/model as input + Enter opens model picker"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready
+                 (assoc :mode :ready :turn-started-at nil
                         :available-models ["anthropic/claude-opus-4-7"])
                  (assoc :input (ti/set-value (ti/text-input) "/model")))
           [s _] (state/update-state s0 (msg/key-press :enter))]
@@ -708,7 +708,7 @@
 
   (testing "/agent as input + Enter opens agent picker"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready
+                 (assoc :mode :ready :turn-started-at nil
                         :available-agents ["code" "plan"])
                  (assoc :input (ti/set-value (ti/text-input) "/agent")))
           [s _] (state/update-state s0 (msg/key-press :enter))]
@@ -745,7 +745,7 @@
   (testing "Enter in :picking :model updates selected-model, clears variant, returns :ready"
     (with-redefs [protocol/selected-model-changed! (fn [& _] nil)]
       (let [s0 (assoc (base-state)
-                      :mode :ready
+                      :mode :ready :turn-started-at nil
                       :selected-variant "medium"
                       :available-models ["anthropic/claude-opus-4-7"
                                          "anthropic/claude-sonnet-4-6"])
@@ -760,7 +760,7 @@
   (testing "Enter in :picking :agent updates selected-agent, returns :ready"
     (with-redefs [protocol/selected-agent-changed! (fn [& _] nil)]
       (let [s0 (-> (base-state)
-                   (assoc :mode :ready :available-agents ["code" "plan"])
+                   (assoc :mode :ready :turn-started-at nil :available-agents ["code" "plan"])
                    (assoc :input (ti/set-value (ti/text-input) "/agent")))
             [s-pick _] (state/update-state s0 (msg/key-press :enter))
             [s _]      (state/update-state s-pick (msg/key-press :enter))]
@@ -770,7 +770,7 @@
 (deftest picker-escape-cancels-test
   (testing "Escape in :picking returns to :ready, selection unchanged"
     (let [s0 (assoc (base-state)
-                    :mode :ready
+                    :mode :ready :turn-started-at nil
                     :selected-model "anthropic/claude-sonnet-4-6"
                     :available-models ["anthropic/claude-opus-4-7"
                                        "anthropic/claude-sonnet-4-6"])
@@ -785,7 +785,7 @@
 (deftest slash-new-clears-state-test
   (testing "/new with no chat-id is a no-op (already fresh)"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready :chat-id nil)
+                 (assoc :mode :ready :turn-started-at nil :chat-id nil)
                  (assoc :input (ti/set-value (ti/text-input) "/new")))
           [s cmd] (state/update-state s0 (msg/key-press :enter))]
       (is (= :ready (:mode s)))
@@ -794,7 +794,7 @@
   (testing "/new with chat-id clears state and returns delete cmd"
     (with-redefs [chats/save-chat-id! (fn [& _] nil)]
       (let [s0 (-> (base-state)
-                   (assoc :mode :ready
+                   (assoc :mode :ready :turn-started-at nil
                           :chat-id "old-chat"
                           :items [{:type :user :text "hello"}])
                    (assoc :input (ti/set-value (ti/text-input) "/new")))
@@ -808,7 +808,7 @@
 (deftest slash-chats-fires-list-cmd-test
   (testing "/chats in :ready fires chat/list cmd"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready)
+                 (assoc :mode :ready :turn-started-at nil)
                  (assoc :input (ti/set-value (ti/text-input) "/chats")))
           [s cmd] (state/update-state s0 (msg/key-press :enter))]
       (is (= :ready (:mode s)))
@@ -816,7 +816,7 @@
 
 (deftest chat-list-loaded-enters-picking-test
   (testing ":chat-list-loaded with results enters :picking :chat"
-    (let [s0    (assoc (base-state) :mode :ready)
+    (let [s0    (assoc (base-state) :mode :ready :turn-started-at nil)
           chats [{:id "chat-abc" :title "Project A" :messageCount 10}
                  {:id "chat-def" :title "Project B" :messageCount 5}]
           [s _] (state/update-state s0 {:type :chat-list-loaded :chats chats})]
@@ -825,7 +825,7 @@
       (is (= 2 (count (get-in s [:picker :all]))))))
 
   (testing ":chat-list-loaded with empty list still enters :picking"
-    (let [s0    (assoc (base-state) :mode :ready)
+    (let [s0    (assoc (base-state) :mode :ready :turn-started-at nil)
           [s _] (state/update-state s0 {:type :chat-list-loaded :chats []})]
       (is (= :picking (:mode s)))
       (is (= :chat (get-in s [:picker :kind])))
@@ -834,7 +834,7 @@
 (deftest chat-picker-enter-fires-open-cmd-test
   (testing "Enter in chat picker returns :ready and fires open-chat cmd"
     (with-redefs [chats/save-chat-id! (fn [& _] nil)]
-      (let [s0    (assoc (base-state) :mode :ready)
+      (let [s0    (assoc (base-state) :mode :ready :turn-started-at nil)
             chats [{:id "chat-abc" :title "My Chat" :messageCount 3}]
             [s-pick _] (state/update-state s0 {:type :chat-list-loaded :chats chats})
             [s cmd]    (state/update-state s-pick (msg/key-press :enter))]
@@ -844,7 +844,7 @@
 
 (deftest chat-picker-escape-test
   (testing "Esc in chat picker returns to :ready, no change"
-    (let [s0    (assoc (base-state) :mode :ready)
+    (let [s0    (assoc (base-state) :mode :ready :turn-started-at nil)
           chats [{:id "chat-abc" :title "My Chat" :messageCount 3}]
           [s-pick _] (state/update-state s0 {:type :chat-list-loaded :chats chats})
           [s _]      (state/update-state s-pick (msg/key-press :escape))]
@@ -857,7 +857,7 @@
 
 (deftest slash-opens-command-picker-test
   (testing "typing '/' in empty :ready input enters :picking :command"
-    (let [s0 (assoc (base-state) :mode :ready)
+    (let [s0 (assoc (base-state) :mode :ready :turn-started-at nil)
           [s _] (state/update-state s0 (msg/key-press "/"))]
       (is (= :picking (:mode s)))
       (is (= :command (get-in s [:picker :kind])))
@@ -865,14 +865,14 @@
       (is (= (count commands/command-registry) (cl/item-count (get-in s [:picker :list]))))))
 
   (testing "typing non-'/' in :ready does not open picker"
-    (let [s0 (assoc (base-state) :mode :ready)
+    (let [s0 (assoc (base-state) :mode :ready :turn-started-at nil)
           [s _] (state/update-state s0 (msg/key-press "h"))]
       (is (= :ready (:mode s)))
       (is (nil? (:picker s)))))
 
   (testing "typing '/' in non-empty input does not open picker"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready)
+                 (assoc :mode :ready :turn-started-at nil)
                  (update :input #(ti/set-value % "hello")))
           [s _] (state/update-state s0 (msg/key-press "/"))]
       (is (= :ready (:mode s)))
@@ -880,7 +880,7 @@
 
 (deftest command-picker-filter-test
   (testing "typing narrows list; backspace on non-empty query removes char"
-    (let [s0 (assoc (base-state) :mode :ready)
+    (let [s0 (assoc (base-state) :mode :ready :turn-started-at nil)
           [s-pick _] (state/update-state s0 (msg/key-press "/"))
           total      (cl/item-count (get-in s-pick [:picker :list]))
           [s1 _]     (state/update-state s-pick (msg/key-press "m"))]
@@ -892,7 +892,7 @@
         (is (= :picking (:mode s2))))))
 
   (testing "backspace on empty query returns to :ready"
-    (let [s0 (assoc (base-state) :mode :ready)
+    (let [s0 (assoc (base-state) :mode :ready :turn-started-at nil)
           [s-pick _] (state/update-state s0 (msg/key-press "/"))
           [s1 _]     (state/update-state s-pick (msg/key-press :backspace))]
       (is (= :ready (:mode s1)))
@@ -900,7 +900,7 @@
 
 (deftest command-picker-escape-test
   (testing "Escape returns to :ready with cleared picker"
-    (let [s0 (assoc (base-state) :mode :ready)
+    (let [s0 (assoc (base-state) :mode :ready :turn-started-at nil)
           [s-pick _] (state/update-state s0 (msg/key-press "/"))
           [s _]      (state/update-state s-pick (msg/key-press :escape))]
       (is (= :ready (:mode s)))
@@ -909,7 +909,7 @@
 (deftest slash-clear-test
   (testing "/clear entered directly clears items and scroll"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready
+                 (assoc :mode :ready :turn-started-at nil
                         :items [{:type :user :text "hi"}]
                         :scroll-offset 5)
                  (update :input #(ti/set-value % "/clear")))
@@ -919,7 +919,7 @@
 
   (testing "/clear via command picker clears items"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready
+                 (assoc :mode :ready :turn-started-at nil
                         :items [{:type :user :text "hi"}]))
           [s-pick _] (state/update-state s0 (msg/key-press "/"))
           [s1 _]     (state/update-state s-pick (msg/key-press "c"))
@@ -933,7 +933,7 @@
 (deftest slash-help-test
   (testing "/help appends system item containing all command names"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready)
+                 (assoc :mode :ready :turn-started-at nil)
                  (update :input #(ti/set-value % "/help")))
           [s _] (state/update-state s0 (msg/key-press :enter))
           sys   (last (filter #(= :system (:type %)) (:items s)))]
@@ -946,7 +946,7 @@
 (deftest slash-quit-test
   (testing "/quit returns non-nil shutdown cmd"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready)
+                 (assoc :mode :ready :turn-started-at nil)
                  (update :input #(ti/set-value % "/quit")))
           [_ cmd] (state/update-state s0 (msg/key-press :enter))]
       (is (some? cmd)))))
@@ -954,7 +954,7 @@
 (deftest unknown-command-test
   (testing "a /cmd neither eca-cli nor the server has: a warning, and the server's list is re-fetched"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready :server-commands [{:name "compact" :type "native"}])
+                 (assoc :mode :ready :turn-started-at nil :server-commands [{:name "compact" :type "native"}])
                  (update :input #(ti/set-value % "/foobarxyzzy")))
           [s cmd] (state/update-state s0 (msg/key-press :enter))]
       (is (some #(and (= :system (:type %))
@@ -1011,7 +1011,7 @@
         (is (= "forked" (:chat-id s)))))))
 
 (deftest command-picker-server-commands-test
-  (let [s0 (-> (base-state) (assoc :mode :ready))
+  (let [s0 (-> (base-state) (assoc :mode :ready :turn-started-at nil))
         [s _] (state/update-state s0 (msg/key-press "/"))
         [s _] (state/update-state s {:type :commands-loaded
                                      :commands [{:name "compact" :type "native" :description "Summarize"
@@ -1035,7 +1035,7 @@
 (deftest slash-model-via-registry-test
   (testing "/model via direct Enter still opens model picker"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready
+                 (assoc :mode :ready :turn-started-at nil
                         :available-models ["anthropic/claude-sonnet-4-6"])
                  (update :input #(ti/set-value % "/model")))
           [s _] (state/update-state s0 (msg/key-press :enter))]
@@ -1044,7 +1044,7 @@
 
   (testing "/model via command picker opens model picker"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready
+                 (assoc :mode :ready :turn-started-at nil
                         :available-models ["anthropic/claude-sonnet-4-6"]))
           [s-pick _] (state/update-state s0 (msg/key-press "/"))
           ;; filter to 'mo' to isolate /model
@@ -1056,7 +1056,7 @@
 
   (testing "/model with no available-models shows error (direct Enter)"
     (let [s0 (-> (base-state)
-                 (assoc :mode :ready :available-models [])
+                 (assoc :mode :ready :turn-started-at nil :available-models [])
                  (update :input #(ti/set-value % "/model")))
           [s _] (state/update-state s0 (msg/key-press :enter))]
       (is (= :ready (:mode s)))
@@ -1347,7 +1347,7 @@
       (with-redefs [protocol/chat-prompt! (fn [_srv params _cb]
                                             (swap! prompts conj params))]
         (let [s0 (-> (base-state)
-                     (assoc :mode :ready
+                     (assoc :mode :ready :turn-started-at nil
                             :input (ti/set-value (ti/text-input) "hello world")))
               [s _] (state/update-state s0 (msg/key-press :enter))]
           (is (= :chatting (:mode s)))
@@ -1361,7 +1361,7 @@
   (testing "Enter in :ready with empty input is a no-op (no prompt sent, mode unchanged)"
     (let [prompts (atom [])]
       (with-redefs [protocol/chat-prompt! (fn [& _] (swap! prompts conj :sent))]
-        (let [s0 (assoc (base-state) :mode :ready)
+        (let [s0 (assoc (base-state) :mode :ready :turn-started-at nil)
               [s _] (state/update-state s0 (msg/key-press :enter))]
           (is (= :ready (:mode s)))
           (is (empty? @prompts)))))))
@@ -1380,7 +1380,7 @@
 
 (deftest ctrl-c-fires-shutdown-cmd-test
   (testing "Ctrl+C pressed twice returns the shutdown cmd (see quit-test for the first press)"
-    (let [s0       (assoc (base-state) :mode :ready)
+    (let [s0       (assoc (base-state) :mode :ready :turn-started-at nil)
           [s1 _]   (state/update-state s0 (msg/key-press "c" :ctrl true))
           [s cmd]  (state/update-state s1 (msg/key-press "c" :ctrl true))]
       (is (= s1 s) "state should be unchanged by the second press")

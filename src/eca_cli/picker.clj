@@ -5,8 +5,8 @@
             [charm.components.list :as cl]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
-            [eca-cli.protocol :as protocol]
             [eca-cli.chats :as chats]
+            [eca-cli.selection :as selection]
             [eca-cli.transcript :as transcript]))
 
 (defn printable-char?
@@ -53,6 +53,8 @@
     ;; A path, or a server context labelled when it arrived: [label context].
     :at-file (if (vector? item) (first item) (at-label item))
     :mcp (:name item)
+    ;; A prompt, on one line.
+    :history (str/trim (str/replace (str item) #"\s+" " "))
     item))
 
 (defn filter-items
@@ -74,21 +76,23 @@
   "The variant picker's entry for none (the model's defaults), as in eca-emacs."
   "-")
 
-(defn open-picker [state kind]
+(defn open-picker
+  "The model, agent or variant picker. What's typed stays in the input for
+  afterwards: it opens mid-sentence too (Alt+P), even while the agent works."
+  [state kind]
   (let [items (case kind
                 :model   (:available-models state)
                 :agent   (:available-agents state)
                 :variant (into [no-variant] (sort (:available-variants state))))]
     (if (empty? items)
       state
-      (-> state
-          (assoc :mode :picking
-                 :picker {:kind     kind
-                          :list     (cl/item-list items :height 8)
-                          :all      items
-                          :filtered items
-                          :query    ""})
-          (update :input ti/reset)))))
+      (assoc state
+             :mode :picking
+             :picker {:kind     kind
+                      :list     (cl/item-list items :height 8)
+                      :all      items
+                      :filtered items
+                      :query    ""}))))
 
 (defn open-chat-picker [state chat-pairs]
   (let [labels (mapv first chat-pairs)]
@@ -165,31 +169,49 @@
 ;; The :command kind is dispatched by state.clj's update-state directly,
 ;; because picker cannot depend on commands without creating a cycle.
 
-(defn- select-model-or-agent [state kind]
+(defn- select-model-or-agent
+  "Enter in the model, agent or variant picker. `:mode :ready` hands over
+  to `eca-cli.chat/after-picker` (the turn may still run)."
+  [state kind]
   (let [list-comp (get-in state [:picker :list])
-        selected  (cl/selected-item list-comp)]
+        selected  (cl/selected-item list-comp)
+        value     (when-not (and (= :variant kind) (= no-variant selected)) selected)]
     (if selected
-      (do
-        (case kind
-          :model   (protocol/selected-model-changed! (:server state) selected)
-          :agent   (protocol/selected-agent-changed! (:server state) selected)
-          ;; A variant is just sent with each prompt.
-          :variant nil)
-        (let [variant (when-not (= no-variant selected) selected)]
-          [(-> state
-               (assoc :mode :ready)
-               (dissoc :picker)
-               (update :input ti/focus)
-               (cond->
-                 (= :model kind)   (-> (assoc :selected-model selected :selected-variant nil)
-                                       (assoc-in [:opts :model] selected)
-                                       (update :opts dissoc :variant))
-                 (= :agent kind)   (-> (assoc :selected-agent selected)
-                                       (assoc-in [:opts :agent] selected))
-                 (= :variant kind) (-> (assoc :selected-variant variant)
-                                       (assoc-in [:opts :variant] variant))))
-           nil]))
+      [(-> state
+           (selection/choose kind value)
+           (cond-> (= :model kind) (selection/remember-model value (selection/current-model state)))
+           (assoc :mode :ready)
+           (dissoc :picker)
+           (update :input ti/focus))
+       nil]
       [state nil])))
+
+(defn open-history-picker
+  "Ctrl+R: the prompts sent before, newest first, to search by typing."
+  [state]
+  (let [items (vec (distinct (rseq (vec (:input-history state)))))]
+    (if (empty? items)
+      state
+      (assoc state
+             :mode :picking
+             :picker {:kind     :history
+                      :list     (cl/item-list (mapv #(item-display :history %) items) :height 8)
+                      :all      items
+                      :filtered items
+                      :query    ""}))))
+
+(defn- select-history
+  "Enter in the history picker: the prompt back in the input, to edit or send."
+  [state]
+  (let [{:keys [list filtered]} (:picker state)
+        idx                     (cl/selected-index list)
+        text                    (when (and (some? idx) (< idx (count filtered))) (nth filtered idx))]
+    [(-> state
+         (cond-> text (update :input #(-> % (ti/set-value text) (assoc :pos (count text)))))
+         (assoc :mode :ready)
+         (dissoc :picker)
+         (update :input ti/focus))
+     nil]))
 
 (defn- select-chat [state]
   (let [{:keys [list filtered]} (:picker state)
@@ -262,6 +284,7 @@
       (and (msg/key-press? msg) (msg/key-match? msg :enter))
       (case kind
         (:model :agent :variant) (select-model-or-agent state kind)
+        :history        (select-history state)
         :chat           (select-chat state)
         :at-file        (select-at-file state)
         :command        [state nil] ; caller handles

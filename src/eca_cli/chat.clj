@@ -316,9 +316,23 @@
         ;; Live while the agent works too, for steering.
         :always                        (update :input ti/focus)))))
 
+(defn after-picker
+  "A picker just closed into :ready: what waited while it was open comes
+  first (an approval, a question), else the turn still running."
+  [state]
+  (if (= :ready (:mode state))
+    (cond
+      (:pending-approval state) (assoc state :mode :approving)
+      (seq (:questions state))  (enter-asking state)
+      (:turn-started-at state)  (assoc state :mode :chatting)
+      :else                     state)
+    state))
+
 (defn request-approval
   "Ask the user to approve tool call `id` of chat `chat-id`, now or after
-  what's already waiting. A question being answered isn't interrupted."
+  what's already waiting. A question being answered, or a picker (one can
+  open while the agent works: Alt+P…), isn't interrupted: keys typed to
+  filter it mustn't answer the approval."
   [state chat-id id]
   (let [req {:chat-id chat-id :tool-call-id id}]
     (cond
@@ -326,7 +340,7 @@
       (some #(= id (:tool-call-id %)) (:approval-queue state)) state
       (:pending-approval state) (update state :approval-queue (fnil conj []) req)
       :else (cond-> (assoc state :pending-approval req)
-              (not= :asking (:mode state)) (assoc :mode :approving)))))
+              (not (#{:asking :picking} (:mode state))) (assoc :mode :approving)))))
 
 (defn next-approval
   "The shown approval was answered: show the next waiting one, else whatever
@@ -484,8 +498,10 @@
         flush-current-text
         (assoc :chat-id chat-id)
         (update :items conj {:type :user :text text})
-        (assoc :mode :chatting :pending-message message :echo-pending true
+        (assoc :pending-message message :echo-pending true
                :turn-started-at (System/currentTimeMillis))
+        ;; A queued message sent while a picker is open: it stays open.
+        (cond-> (not= :picking (:mode state)) (assoc :mode :chatting))
         (assoc :pending-contexts [])
         (assoc :opts opts')
         view/rebuild-lines)))
@@ -633,9 +649,11 @@
             (assoc :echo-pending false)
             ;; A question can outlive the turn (the server's /login asks
             ;; in the background): still ask it.
-            (as-> s (if (seq (:questions s))
-                      (enter-asking s)
-                      (-> s (assoc :mode :ready) (update :input ti/focus))))
+            (as-> s (cond
+                      ;; An open picker stays (`after-picker` follows it).
+                      (= :picking (:mode s)) s
+                      (seq (:questions s))   (enter-asking s)
+                      :else                  (-> s (assoc :mode :ready) (update :input ti/focus))))
             send-pending
             view/rebuild-lines)
 
@@ -939,7 +957,7 @@
          (or (msg/key-match? msg "alt+up")
              (msg/key-match? msg "alt+down")
              (contains? #{"g" "G" "o" "c"} (:key msg)))
-         (or (msg/key-match? msg :tab)
+         (or (and (msg/key-match? msg :tab) (not (:shift msg)))
              (and (:focus-path state)
                   (some #(msg/key-match? msg %) [:up :down :enter :escape]))))))
 
@@ -1125,7 +1143,7 @@
     (toggle-all-expanded state true)
 
     ;; --- Focus navigation ---
-    (and (msg/key-press? msg) (msg/key-match? msg :tab) (not (:alt msg)))
+    (and (msg/key-press? msg) (msg/key-match? msg :tab) (not (:alt msg)) (not (:shift msg)))
     (focus-paths-cycle state :forward)
 
     (and (msg/key-press? msg) (msg/key-match? msg :up) (some? (:focus-path state)))

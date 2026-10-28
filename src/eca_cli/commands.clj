@@ -86,7 +86,8 @@
                      (str (theme/paint :accent (theme/pad-right name w)) "  " doc))
                    cmds)
         text  (str/join "\n" (concat ["Available commands:"] lines
-                                     ["" "The server's commands, skills and prompts too: type / to browse them all."]))]
+                                     ["" "The server's commands, skills and prompts too: type / to browse them all."
+                                      "Keyboard shortcuts: ? on an empty prompt (or /keys)."]))]
     [(update state :items conj {:type :system :level :info :text text}) nil]))
 
 (defn cmd-quit
@@ -152,6 +153,70 @@
     (dissoc state :quit-armed)
     state))
 
+;; --- Esc Esc on an empty prompt: roll back ---
+
+(defn- arm-escape [state now]
+  [(assoc state :esc-armed now)
+   (program/cmd (fn []
+                  (Thread/sleep quit-window-ms)
+                  {:type :esc-hint-expired :at now}))])
+
+(defn press-escape
+  "Esc on an empty prompt with nothing running, as Claude Code's double Esc:
+  the first says to press it again, the second (within `quit-window-ms`)
+  opens /rollback."
+  [state now]
+  (let [at (:esc-armed state)]
+    (if (and at (< (- now at) quit-window-ms))
+      (let [[s cmd] (history/cmd-rollback (dissoc state :esc-armed))]
+        [(view/rebuild-lines s) cmd])
+      (arm-escape state now))))
+
+(defn esc-hint-expired [state {:keys [at]}]
+  (if (= at (:esc-armed state)) (dissoc state :esc-armed) state))
+
+;; --- Keyboard shortcuts ---
+
+(def keybindings
+  "[keys what] rows for `?` and /keys, by group."
+  [["Prompt"
+    [["Enter" "send; while the agent works, steer it"]
+     ["Alt+Enter" "while the agent works, queue a message for when it's done"]
+     ["↑ / ↓" "prompt history (↑ on an empty input mid-turn: take back the steer)"]
+     ["Ctrl+R" "search the prompt history"]
+     ["Ctrl+G" "edit the prompt in $VISUAL / $EDITOR"]
+     ["@ / #" "add a context / insert a path"]
+     ["Esc" "stop the agent; on an empty prompt, twice: roll back"]]]
+   ["Model, agent, effort"
+    [["Shift+Tab" "next agent (e.g. code ↔ plan)"]
+     ["Alt+T" "next variant (reasoning effort), none included"]
+     ["Alt+P / Ctrl+L" "pick a model"]
+     ["Ctrl+P / F2" "next recent model (Shift+F2: previous)"]
+     ["Ctrl+Y" "toggle trust (run tool calls without asking)"]]]
+   ["Chat"
+    [["Ctrl+N" "new chat"]
+     ["y / n / Y" "approve / reject / approve and remember a tool call"]
+     ["Ctrl+T" "show / hide the task list"]
+     ["Ctrl+O" "full-screen transcript"]
+     ["Tab, ↑ / ↓, Enter" "focus a block, move, expand it"]
+     ["Alt+↑ / Alt+↓" "jump between top-level blocks"]
+     ["Alt+g / Alt+G" "first / last block"]
+     ["Alt+c / Alt+o" "collapse / expand blocks"]
+     ["PgUp / PgDn" "scroll"]
+     ["Ctrl+C" "clear the input or stop; twice: quit"]]]])
+
+(defn cmd-show-keys [state]
+  (let [w     (reduce max 0 (for [[_ rows] keybindings [k] rows] (count k)))
+        text  (str/join "\n"
+                        (concat ["Keyboard shortcuts:"]
+                                (mapcat (fn [[group rows]]
+                                          (cons (theme/paint :bold group)
+                                                (map (fn [[k doc]]
+                                                       (str "  " (theme/paint :accent (theme/pad-right k w)) "  " doc))
+                                                     rows)))
+                                        keybindings)))]
+    [(-> state (update :items conj {:type :system :level :info :text text}) view/rebuild-lines) nil]))
+
 (defn cmd-login [state]
   [state (login/start-login-cmd (:server state) nil)])
 
@@ -192,6 +257,7 @@
    "/flags"    {:doc "Jump to, fork from or remove a flag"            :handler history/cmd-flags}
    "/timeline" {:doc "Jump to one of your messages or a flag"         :handler history/cmd-timeline}
    "/help"     {:doc "Show available commands"            :handler cmd-show-help}
+   "/keys"     {:doc "Show keyboard shortcuts (also ? on an empty prompt)" :handler cmd-show-keys}
    "/quit"     {:doc "Exit eca-cli"                        :handler cmd-quit}
    "/login"    {:doc "Manually trigger provider login"    :handler cmd-login}})
 
@@ -273,7 +339,7 @@
   "eca-cli commands that make sense while the agent works; any other text
   typed then steers the running prompt (the server has its own rules for its
   commands)."
-  #{"/trust" "/help" "/clear" "/quit"})
+  #{"/trust" "/help" "/keys" "/clear" "/quit" "/model" "/agent" "/variant"})
 
 (defn runs-during-turn? [text]
   (contains? during-turn (str/trim text)))
@@ -303,7 +369,8 @@
       (chat/submit-prompt state (str/trim text))
 
       (and local (or (nil? args) (nil? remote) (:args? local)))
-      (let [[new-state cmd] (if (:args? local)
+      (let [state           (update state :input ti/reset) ; the command's text is used up
+            [new-state cmd] (if (:args? local)
                               ((:handler local) state args)
                               ((:handler local) state))]
         (finalize-handler-result new-state cmd))

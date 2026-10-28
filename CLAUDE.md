@@ -24,10 +24,12 @@ bb demo [out.gif]             # re-record the README's demo.gif (needs tmux, goo
 In-app commands (type in input, press Enter):
 
 ```
-/model      open model picker (Ctrl+L also works)
-/agent      open agent picker
-/new        start fresh chat (deletes current chat, opens on the welcome)
+/model      open model picker (Alt+P / Ctrl+L also work)
+/agent      open agent picker (Shift+Tab cycles agents)
+/variant    open variant picker (Alt+T cycles variants)
+/new        start fresh chat (deletes current chat, opens on the welcome; Ctrl+N)
 /chats      browse and resume previous chats
+/keys       keyboard shortcuts (? on an empty prompt)
 ```
 
 Requires Babashka 1.12.215+. No separate build step — `bb run` compiles and runs directly. `bb.edn` `:paths` is only `src` (what ships); tasks add `test/` and `build/` through `:extra-paths` as needed.
@@ -62,7 +64,7 @@ Requests *from* the server (an `:id` and a `:method`, e.g. `chat/askQuestion`) a
 
 ### Event loop (adapted from charm.clj)
 
-`eca-cli.program/run` adapts charm's input loop, command execution and resize checks, but owns event batching and terminal rendering. Its options are `:init`, `:update` and `:frame` (replacing the previous `:view` contract). charm's loop handles one message per 10 ms tick and renders after each: typing/pasting capped at ~100 keys/s, and a big paste overflowed core.async's 1024 pending puts, killing charm's input thread. Ours wakes on the first message, drains the queue (up to 1000), renders once. It also turns on bracketed paste: pasted text comes between `:paste-start`/`:paste-end` keys, and `state.clj` keeps its newlines/tabs/leading `/` `@` as text. charm's text input doesn't scroll or wrap, so `view/prompt-input` lays the input out itself (rows at the width, newlines, a window around the cursor).
+`eca-cli.program/run` adapts charm's command execution and resize checks, but owns the input loop, event batching and terminal rendering. Its input loop is charm's plus Shift+Tab (`ESC [ Z`, which charm reads as `:unknown`, bound in `program/keymap` to `:tab` with `:shift`) and a pause: a cmd returning `program/external` (Ctrl+G's editor, `editor.clj`) gets the terminal to itself — input not read, cooked mode, no bracketed paste, the full screen left or the inline live region erased (`render/suspend!` / `resume!`) — and its result comes back as a message. Its options are `:init`, `:update` and `:frame` (replacing the previous `:view` contract). charm's loop handles one message per 10 ms tick and renders after each: typing/pasting capped at ~100 keys/s, and a big paste overflowed core.async's 1024 pending puts, killing charm's input thread. Ours wakes on the first message, drains the queue (up to 1000), renders once. It also turns on bracketed paste: pasted text comes between `:paste-start`/`:paste-end` keys, and `state.clj` keeps its newlines/tabs/leading `/` `@` as text. charm's text input doesn't scroll or wrap, so `view/prompt-input` lays the input out itself (rows at the width, newlines, a window around the cursor).
 
 The three fns:
 - `state/make-init` — returns a fn that spawns ECA, starts the reader thread, returns `[initial-state (batch init-cmd drain-queue-cmd)]` (the state opening on the welcome; plus `eca --version` when the version isn't known). Must never throw: `program/run` calls it outside its try/finally, so a spawn failure becomes a `:disconnected` state instead.
@@ -82,6 +84,7 @@ The drain loop starts at init and is self-sustaining: the `:eca-tick` handler re
 - `:chatting` — LLM active, streaming. The input stays live: Enter steers (`chat/promptSteer`, text in `:steered` until the server echoes it as a user message), Alt+Enter queues (`:queued`); both are sent as the next prompt when the turn ends (`chat/send-pending`), or given back to the input by Esc / ↑ (`take-back-pending`). Only `commands/runs-during-turn?` commands run mid-turn; other `/…` text steers. Alt+Enter arrives as an Alt'ed `"\r"` (ESC CR), see `chat/alt-enter?`.
 - `:approving` — a tool call (main chat or sub-agent) waiting on `y`/`n`/`Y`; more may wait in `:approval-queue`
 - `:asking` — the server asked a question (`chat/askQuestion`, `question.clj`), answered from the input area; more may wait in `:questions`. Approvals and questions don't interrupt each other: `chat/settle-mode` picks what comes next once one is answered (then `:chatting` while `:turn-started-at` says a turn runs, else `:ready`). A server `progress: running` marks a turn as running even when the server started it.
+- `:picking` — a picker or panel (`:picker`). The model/agent/variant pickers (Alt+P…), `/model`, `/agent`, `/variant` and the history picker open mid-turn too, keeping the draft: approvals and questions arriving meanwhile wait (`request-approval`, `handle-ask-question`), a turn finishing (or a queued message starting one) leaves the picker open, and when a picker closes into `:ready`, `chat/after-picker` (from `update-state`) brings up what waited, else `:chatting` while the turn runs.
 - `:disconnected` — server exited (or failed to spawn / refused `initialize`). The reader thread queues a `:reader-error` whose `:error` is a ready-to-show report (exit code + tail of the server log, `server/exit-report`). Only scrolling and quitting work; quitting skips the protocol `shutdown` (also skipped in `:connecting`).
 
 ### Tool call lifecycle
@@ -150,11 +153,13 @@ On exit, `render/finish!` bypasses the resize debounce, leaves the alternate scr
 - `src/eca_cli/transcript.clj` — item finality, committed boundary, epochs and removal/rebasing ledger
 - `src/eca_cli/server.clj` — process spawn, Content-Length JSON-RPC framing (synchronized writes that return false instead of throwing once the server is gone), reader thread, exit report, queue drain
 - `src/eca_cli/protocol.clj` — message constructors, request ID tracking, response correlation
-- `src/eca_cli/state.clj` — Elm state machine, ECA content handlers, all key bindings
+- `src/eca_cli/state.clj` — Elm state machine, ECA content handlers, all key bindings (the list `?` / `/keys` shows is `commands/keybindings`: keep it in step)
 - `src/eca_cli/chat.clj` — chat content handlers, tool-call lifecycle, approvals queue, chat routing/switching, prompt submission
 - `src/eca_cli/commands.clj` — slash commands: local registry, server commands (`chat/queryCommands`), dispatch, `/` picker items
 - `src/eca_cli/question.clj` — `chat/askQuestion`: question queue, `:asking` keys, answers
-- `src/eca_cli/picker.clj` — the pickers (model, agent, variant, chat, `@`/`#`): filtering, selection, `at-label`
+- `src/eca_cli/picker.clj` — the pickers (model, agent, variant, chat, prompt history, `@`/`#`): filtering, selection, `at-label`
+- `src/eca_cli/selection.clj` — model / agent / variant: `choose` (pickers and keys alike), Shift+Tab / Alt+T / Ctrl+P·F2 cycling, recent models (picked ones, in the XDG state file `eca-cli-recent-models.edn`)
+- `src/eca_cli/editor.clj` — Ctrl+G: the prompt in `$VISUAL` / `$EDITOR` through `program/external`
 - `src/eca_cli/mcp.clj` — `:mcps` (`tool/serverUpdated` / `tool/serverRemoved`), the `/mcp` panel and its per-state actions (`actions-for` → `protocol/mcp-server-action!`), the status-line slot
 - `src/eca_cli/providers.clj` — `/providers`: the `providers/list` panel (login state, source, expiry, models, quota), log in through `login.clj`'s flow, `providers/logout`
 - `src/eca_cli/history.clj` — `/rollback`, `/flag`, `/flags` (jump / fork / remove), `/timeline`: two-step pickers over the chat's `:user` items (`:content-id` from the server's echo) and `:flag` items. Rollback and add-flag make the server clear the chat and replay it.

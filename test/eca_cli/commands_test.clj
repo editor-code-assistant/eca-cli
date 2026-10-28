@@ -18,7 +18,9 @@
     (testing "descriptions aligned in one column"
       (is (= 1 (count (set (map #(count (re-find #"^\S+\s+" %)) (filter #(str/starts-with? % "/") lines)))))))
     (testing "points at the server's commands"
-      (is (str/includes? (last lines) "type / to browse")))))
+      (is (some #(str/includes? % "type / to browse") lines)))
+    (testing "and at the keyboard shortcuts"
+      (is (str/includes? (last lines) "/keys")))))
 
 (deftest picker-ranking-test
   (let [items [["/compact" "Summarize to reduce context."] ["/context" "Context window usage"]

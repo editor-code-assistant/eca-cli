@@ -17,7 +17,9 @@
             [eca-cli.providers :as providers]
             [eca-cli.welcome :as welcome]
             [eca-cli.transcript :as transcript]
-            [eca-cli.commands :as commands]))
+            [eca-cli.commands :as commands]
+            [eca-cli.editor :as editor]
+            [eca-cli.selection :as selection]))
 
 ;; Expose last-known state for nREPL inspection
 (def debug-state (atom nil))
@@ -250,6 +252,7 @@
    :selected-model        nil
    :selected-agent        nil
    :selected-variant      nil
+   :recent-models         (or (selection/load-recent-models) []) ; Ctrl+P
    :input                 (ti/text-input)
    :input-history         []
    :history-idx           nil
@@ -377,6 +380,25 @@
 (defn- typing-mode? [state]
   (contains? #{:ready :chatting :asking} (:mode state)))
 
+(defn- key? [msg k]
+  (and (msg/key-press? msg) (msg/key-match? msg k)))
+
+(defn- shift-tab? [msg]
+  (and (msg/key-press? msg) (= :tab (:key msg)) (:shift msg) (not (:alt msg)) (not (:ctrl msg))))
+
+(defn- f2?
+  "F2, or Shift+F2 when `shift?`."
+  [msg shift?]
+  (and (msg/key-press? msg) (= :f2 (:key msg))
+       (= (boolean shift?) (boolean (:shift msg)))
+       (not (:alt msg)) (not (:ctrl msg))))
+
+(defn- prompt-mode?
+  "Typing a message, the agent working or not: where the model, agent and
+  variant keys work (they apply from the next prompt)."
+  [state]
+  (contains? #{:ready :chatting} (:mode state)))
+
 (defn- scroll-msg? [msg]
   (or (and (msg/key-press? msg)
            (or (msg/key-match? msg :page-up) (msg/key-match? msg :page-down)))
@@ -413,6 +435,8 @@
       (= :eca-login-complete (:type msg))  (login/handle-eca-login-complete state msg)
       (= :eca-jobs-output (:type msg))     (jobs/handle-jobs-output state msg)
       (= :quit-hint-expired (:type msg))   [(commands/quit-hint-expired state msg) nil]
+      (= :esc-hint-expired (:type msg))    [(commands/esc-hint-expired state msg) nil]
+      (= :editor-done (:type msg))         [(editor/handle-done state msg) nil]
       (= :recent-chats-loaded (:type msg)) [(welcome/handle-recent-chats state (:chats msg)) nil]
       (= :server-version (:type msg))      [(welcome/handle-server-version state (:version msg)) nil]
 
@@ -494,8 +518,44 @@
         (chat/handle-key state msg)
         [state nil])
 
-      (and (msg/key-press? msg) (msg/key-match? msg "ctrl+l") (= :ready (:mode state)))
+      ;; --- Model, agent, variant, trust: also while the agent works ---
+      (and (prompt-mode? state) (shift-tab? msg))
+      [(selection/cycle-agent state) nil]
+
+      (and (prompt-mode? state) (key? msg "alt+t"))
+      [(selection/cycle-variant state) nil]
+
+      (and (prompt-mode? state) (or (key? msg "alt+p") (key? msg "ctrl+l")))
       (commands/cmd-open-model-picker state)
+
+      (and (prompt-mode? state) (or (key? msg "ctrl+p") (f2? msg false)))
+      [(selection/cycle-model state :forward) nil]
+
+      (and (prompt-mode? state) (f2? msg true))
+      [(selection/cycle-model state :backward) nil]
+
+      (and (prompt-mode? state) (key? msg "ctrl+y"))
+      (let [[s cmd] (commands/cmd-toggle-trust state)]
+        [(view/rebuild-lines s) cmd])
+
+      (and (prompt-mode? state) (key? msg "ctrl+r"))
+      [(picker/open-history-picker state) nil]
+
+      (and (prompt-mode? state) (key? msg "ctrl+g"))
+      [state (editor/edit-cmd (ti/value (:input state)))]
+
+      (and (= :ready (:mode state)) (key? msg "ctrl+n"))
+      (let [[s cmd] (commands/cmd-new-chat state)]
+        [(view/rebuild-lines s) cmd])
+
+      ;; Esc Esc on an empty prompt: roll back (Claude Code's rewind).
+      (and (= :ready (:mode state)) (key? msg :escape) (nil? (:focus-path state))
+           (str/blank? (ti/value (:input state))))
+      (commands/press-escape state (System/currentTimeMillis))
+
+      (and (= :ready (:mode state)) (picker/printable-char? msg) (= "?" (:key msg))
+           (= "" (ti/value (:input state))))
+      (commands/cmd-show-keys state)
 
       (enter-slash-command? state msg)
       (commands/dispatch-command state (str/trim (ti/value (:input state))))
@@ -583,7 +643,13 @@
   items that became final go to the terminal's history after it (see
   `eca-cli.transcript`)."
   [state msg]
-  (let [[s cmd] (dispatch state msg)
+  (let [state   (cond-> state
+                  ;; Esc Esc means two Escs in a row.
+                  (and (:esc-armed state) (msg/key-press? msg) (not (msg/key-match? msg :escape)))
+                  (dissoc :esc-armed))
+        [s cmd] (dispatch state msg)
+        s       (cond-> s
+                  (and (= :picking (:mode state)) (not= :picking (:mode s))) chat/after-picker)
         s       (transcript/advance s)
         [i]     (:focus-path s)]
     [(if (and i (not (view/fullscreen? s)) (< i (or (:committed s) 0)))
