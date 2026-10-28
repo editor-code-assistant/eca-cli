@@ -254,4 +254,30 @@
                      :summary "foo.clj" :edit edit :expanded? false :focused? false} 80)]
         (is (= 1 (count lines)))
         (is (clojure.string/includes? (first lines) "+1"))
-        (is (clojure.string/includes? (first lines) "−1"))))))
+        (is (clojure.string/includes? (first lines) "−1"))))
+
+    (testing "collapsed one-liner names the file, as eca-emacs: summary, file, +N −M"
+      (let [line (theme/strip-ansi
+                   (first (blocks/render-item-lines
+                            {:type :tool-call :state :called :name "edit_file"
+                             :summary "Editing" :edit edit :expanded? false :focused? false} 80)))]
+        (is (= "✓ Editing foo.clj +1 −1" line))))
+
+    (testing "a new file shows +N −0 with its name"
+      (let [line (theme/strip-ansi
+                   (first (blocks/render-item-lines
+                            {:type :tool-call :state :called :name "write_file" :summary "Creating"
+                             :edit {:path "/tmp/a/new.md" :diff "+x" :lines-added 1 :lines-removed 0}} 80)))]
+        (is (= "✓ Creating new.md +1 −0" line))))
+
+    (testing "expanded: the header names the file and the path tops the diff"
+      (let [lines (plain (blocks/render-item-lines
+                           {:type :tool-call :state :called :name "edit_file"
+                            :summary "Editing" :edit edit :expanded? true} 80))]
+        (is (clojure.string/includes? (first lines) "edit_file  Editing foo.clj +1 −1"))
+        (is (= "  /tmp/foo.clj" (second lines)))))))
+
+(deftest display-path-test
+  (let [cwd (System/getProperty "user.dir")]
+    (is (= "src/a.clj" (blocks/display-path (str cwd "/src/a.clj"))))
+    (is (= "/elsewhere/a.clj" (blocks/display-path "/elsewhere/a.clj")))))

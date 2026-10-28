@@ -6,6 +6,7 @@
   markdown renderer; colours come from `eca-cli.theme` roles."
   (:require [clojure.string :as str]
             [eca-cli.markdown :as markdown]
+            [eca-cli.paths :as paths]
             [eca-cli.theme :as theme]
             [eca-cli.view.welcome :as welcome]
             [eca-cli.wrap :as wrap]))
@@ -163,6 +164,28 @@
   (when (seq (:sub-items item))
     (paint :muted (str "  ▸ " (count (:sub-items item)) " steps"))))
 
+(defn display-path
+  "`path` as shown above a diff: relative to the working directory when inside
+  it, else with the home directory abbreviated to `~`."
+  [path]
+  (let [path (str path)
+        cwd  (System/getProperty "user.dir")]
+    (if (and (seq cwd) (str/starts-with? path (str cwd "/")))
+      (subs path (inc (count cwd)))
+      (paths/home-relative path))))
+
+(defn- file-name [path]
+  (some-> path str not-empty (str/replace #"/+$" "") (str/split #"/") last not-empty))
+
+(defn edit-label
+  "What a file change shows next to its summary, as eca-emacs does: the file
+  name, then `+added −removed`. Nil without an edit."
+  [edit]
+  (when edit
+    (str (some->> (file-name (:path edit)) (paint :accent) (str " "))
+         " " (paint :diff-add (str "+" (or (:lines-added edit) 0)))
+         " " (paint :diff-del (str "−" (or (:lines-removed edit) 0))))))
+
 (defn- tool-call-lines [item width]
   (let [icon     (render-tool-icon item)
         name     (:name item)
@@ -170,11 +193,15 @@
         edit     (:edit item)
         duration (some->> (format-duration (:total-ms item)) (str "  ") (paint :muted))]
     (if (:expanded? item)
-      (let [header (str icon " " (paint :bold name) "  " (paint :muted summary)
+      (let [header (str icon " " (paint :bold name) "  " (paint :muted summary) (or (edit-label edit) "")
                         (steps-badge item) (or duration "") "  " (paint :muted "▾"))
             body   (cond
                      edit
-                     (render-diff edit width)
+                     (concat
+                       (when (seq (str (:path edit)))
+                         (map #(str "  " (paint :accent %))
+                              (wrap/wrap-text (display-path (:path edit)) (max 1 (- width 2)))))
+                       (render-diff edit width))
 
                      (and (:shell item) (get-in item [:arguments :command]))
                      (concat (shell-lines item width)
@@ -192,9 +219,7 @@
                                (map #(str "  " %) (render-item-lines sub (- width 2))))
                              (:sub-items item)))]
         (vec (concat [header] body subs)))
-      (let [badge  (when edit
-                     (str "  " (paint :diff-add (str "+" (:lines-added edit)))
-                          " " (paint :diff-del (str "−" (:lines-removed edit)))))
+      (let [badge  (edit-label edit)
             ;; A question it asked the user (ask_user), answered.
             answer (cond
                      (:cancelled? item)   (paint :muted "  ✗ cancelled")
