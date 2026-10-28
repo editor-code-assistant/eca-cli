@@ -683,7 +683,10 @@
   (let [state   (cond-> state
                   ;; Esc Esc means two Escs in a row.
                   (and (:esc-armed state) (msg/key-press? msg) (not (msg/key-match? msg :escape)))
-                  (dissoc :esc-armed))
+                  (dissoc :esc-armed)
+                  ;; "Copied 3 lines" lasts until the next key.
+                  (and (:flash state) (msg/key-press? msg))
+                  (dissoc :flash))
         [s cmd] (dispatch state msg)
         s       (cond-> s
                   (and (= :picking (:mode state)) (not= :picking (:mode s))) chat/after-picker)

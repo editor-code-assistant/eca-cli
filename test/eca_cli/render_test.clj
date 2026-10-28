@@ -267,6 +267,18 @@
             (is (= 1 (occurrences output marker)) (str marker " is printed once")))
           (is (not (str/includes? output "\u001b[3J"))))))))
 
+(deftest clipboard-is-written-once-test
+  (with-terminal 80 24
+    (fn [terminal out]
+      (let [renderer (render/create terminal)
+            frame    (assoc (inline-frame 1 0) :clipboard {:id 1 :osc "<osc-one>"})]
+        (render/frame! renderer frame 0)
+        (render/frame! renderer frame 1)
+        (render/frame! renderer (assoc frame :content "changed") 2)
+        (is (= 1 (occurrences (output-text out) "<osc-one>")) "a copy is sent once, not every frame")
+        (render/frame! renderer (assoc frame :clipboard {:id 2 :osc "<osc-two>"}) 3)
+        (is (= 1 (occurrences (output-text out) "<osc-two>")) "the next copy is sent too")))))
+
 (deftest final-output-prints-only-uncommitted-test
   (with-terminal 80 24
     (fn [terminal out]

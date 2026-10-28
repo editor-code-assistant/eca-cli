@@ -9,6 +9,7 @@
             [clojure.test :refer [deftest is testing use-fixtures]]
             [eca-cli.test-support :as support]
             [eca-cli.chat :as chat]
+            [eca-cli.clipboard :as clipboard]
             [eca-cli.history :as history]
             [eca-cli.protocol :as protocol]
             [eca-cli.state :as state]
@@ -472,6 +473,94 @@
         (is (= (select-keys s preserved) (select-keys opened preserved) (select-keys closed preserved)))
         (is (nil? open-cmd))
         (is (nil? close-cmd))))))
+
+;; --- Transcript reader keys ---
+
+(declare pending-interaction-state)
+
+(defn- k [key & mods] (apply msg/key-press key mods))
+
+(deftest transcript-opens-on-newest-block-test
+  (testing "with nothing waiting, it opens on the newest block, focused"
+    (let [opened (press (navigation-state) toggle-transcript)]
+      (is (= [4 0] (:focus-path opened)))
+      (is (= [[4 0]] (marked-paths opened)))))
+  (testing "an approval or question waiting: no focus, its keys stay its own"
+    (doseq [mode [:approving :asking :picking :login]]
+      (is (nil? (:focus-path (press (pending-interaction-state mode) toggle-transcript))) (str mode)))))
+
+(deftest transcript-reader-keys-test
+  (let [opened (press (navigation-state) toggle-transcript)]
+    (testing "j / k move like ↓ / ↑"
+      (is (= [4] (:focus-path (press opened (k "k")))))
+      (is (= [3] (:focus-path (press opened (k "k") (k "k")))))
+      (is (= [4 0] (:focus-path (press opened (k "k") (k "j"))))))
+    (testing "g / G: first and last block"
+      (is (= [0] (:focus-path (press opened (k "g")))))
+      (is (= [4 0] (:focus-path (press opened (k "g") (k "G"))))))
+    (testing "Space toggles like Enter"
+      (let [on-thought (press opened (k "g") (k "j") (k "j"))]
+        (is (= [1] (:focus-path on-thought)))
+        (is (true? (get-in (press on-thought (k :space)) [:items 1 :expanded?])))
+        (is (true? (get-in (press on-thought (k " ")) [:items 1 :expanded?])))))
+    (testing "h / ←, l / →: a tree — up to the parent, fold, unfold, into the first sub-item"
+      (doseq [[left right] [[(k "h") (k "l")] [(k :left) (k :right)]]]
+        (let [parent   (press opened left)
+              folded   (press parent left)
+              unfolded (press folded right)
+              child    (press unfolded right)]
+          (is (= [4] (:focus-path parent)))
+          (is (true? (get-in parent [:items 4 :expanded?])))
+          (is (false? (get-in folded [:items 4 :expanded?])))
+          (is (= [4] (:focus-path folded)))
+          (is (true? (get-in unfolded [:items 4 :expanded?])))
+          (is (= [4 0] (:focus-path child))))))
+    (testing "e / E: unfold, fold everything; a folded-away sub-item hands focus to its parent"
+      (let [folded (press opened (k "E"))]
+        (is (not-any? :expanded? (item-tree (:items folded))))
+        (is (= [4] (:focus-path folded)))
+        (is (every? :expanded? (filter #(#{:tool-call :thinking :hook} (:type %))
+                                       (item-tree (:items (press folded (k "e")))))))))
+    (testing "q closes the transcript"
+      (let [closed (press opened (k "q"))]
+        (is (not (:transcript? closed)))
+        (is (nil? (:focus-path closed)))))
+    (testing "Esc clears focus: letters type in the prompt again"
+      (let [typing (press opened (k :escape) (k "j") (k "q"))]
+        (is (nil? (:focus-path typing)))
+        (is (true? (:transcript? typing)))
+        (is (= "jq" (ti/value (:input typing))))))))
+
+(deftest transcript-copy-test
+  (let [s           (-> (navigation-state)
+                        (update :items conj {:type :assistant-text :text "the answer\nin two lines"})
+                        view/rebuild-lines)
+        opened      (press s toggle-transcript)
+        [copied cmd] (state/update-state opened (k "y"))]
+    (is (= [5] (:focus-path opened)) "messages are focusable in the transcript")
+    (is (some? cmd) "the platform's clipboard tool runs off the UI thread")
+    (is (= (clipboard/osc52 "the answer\nin two lines") (get-in copied [:clipboard :osc])))
+    (is (= (get-in copied [:clipboard :osc]) (get-in (view/frame copied) [:clipboard :osc])))
+    (is (= "Copied 2 lines" (:flash copied)))
+    (is (str/includes? (theme/strip-ansi (view/view copied)) "Copied 2 lines"))
+    (testing "the next key clears the message; the next copy gets a new id"
+      (let [moved (press copied (k "k") (k "j"))
+            again (press moved (k "y"))]
+        (is (nil? (:flash moved)))
+        (is (= (inc (get-in copied [:clipboard :id])) (get-in again [:clipboard :id])))))
+    (testing "nothing to copy says so"
+      (let [empty (-> (navigation-state) (assoc-in [:items 3 :out-text] nil) view/rebuild-lines
+                      (press toggle-transcript (k "k") (k "k") (k "y")))]
+        (is (= [3] (:focus-path empty)))
+        (is (= "Nothing to copy" (:flash empty)))
+        (is (nil? (:clipboard empty)))))))
+
+(deftest transcript-footer-test
+  (let [opened (-> (navigation-state) (assoc :width 120) view/rebuild-lines (press toggle-transcript))
+        footer #(last (str/split-lines (theme/strip-ansi (view/view %))))]
+    (is (str/includes? (footer opened) "y copy"))
+    (is (str/includes? (footer opened) "q close"))
+    (is (str/includes? (footer (press opened (k :escape))) "Ctrl+O to return"))))
 
 (deftest leaving-transcript-clears-focus-test
   (let [s (-> (navigation-state)

@@ -293,7 +293,7 @@
 (deftest tab-scrolls-focused-item-into-view-test
   (testing "Tab past end of visible window pulls scroll-offset toward target"
     (let [items (vec (concat
-                       (repeat 30 {:type :assistant-text :text "old"})
+                       (repeat 30 {:type :system :text "old"})
                        [{:type :tool-call :name "read_file" :state :called
                          :expanded? false :focused? false}]))
           s0 (-> (base-state)

@@ -7,6 +7,8 @@
             [cheshire.core :as json]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
+            [charm.program :as program]
+            [eca-cli.clipboard :as clipboard]
             [eca-cli.protocol :as protocol]
             [eca-cli.chats :as chats]
             [eca-cli.paths :as paths]
@@ -227,19 +229,24 @@
           (conj subs item))
         subs))))
 
-(defn focusable-paths [items]
-  (into []
-    (mapcat
-      (fn [[i item]]
-        (when (#{:tool-call :thinking :hook} (:type item))
-          (cons [i]
-            (when (:expanded? item)
-              (keep-indexed
-                (fn [j sub]
-                  (when (#{:tool-call :thinking :hook} (:type sub))
-                    [i j]))
-                (or (:sub-items item) []))))))
-      (map-indexed vector items))))
+(defn focusable-paths
+  "Paths (`[i]`, `[i j]` for a sub-item) of the blocks focus can move over:
+  tool calls, thoughts and hooks, and with `messages?` (full screen, where
+  they can be copied) the user's and the assistant's messages too."
+  ([items] (focusable-paths items false))
+  ([items messages?]
+   (let [focusable? #(or (#{:tool-call :thinking :hook} (:type %))
+                         (and messages? (#{:user :assistant-text} (:type %))))]
+     (into []
+       (mapcat
+         (fn [[i item]]
+           (when (focusable? item)
+             (cons [i]
+               (when (:expanded? item)
+                 (keep-indexed
+                   (fn [j sub] (when (focusable? sub) [i j]))
+                   (or (:sub-items item) []))))))
+         (map-indexed vector items))))))
 
 (defn sync-focus [state]
   (let [path   (:focus-path state)
@@ -256,26 +263,32 @@
                  items)]
     (assoc state :items items')))
 
+(defn- live-focusable-paths
+  "Inline, only items still on screen can be selected. The transcript and
+  --fullscreen keep navigation over the whole chat, messages included."
+  [state]
+  (if (view/fullscreen? state)
+    (focusable-paths (:items state) true)
+    (filterv #(>= (first %) (or (:committed state) 0)) (focusable-paths (:items state)))))
+
+(declare ensure-focus-visible)
+
 (defn toggle-transcript
   "Ctrl+O: inspect the whole chat in the alternate screen, or return to the
-  inline prompt. The draft and any approval/question stay as they were."
+  inline prompt. The draft and any approval/question stay as they were.
+  With nothing waiting for an answer, it opens on the newest block, focused,
+  so the reader keys work at once."
   [state]
   (if (get-in state [:opts :fullscreen])
     state
-    (-> state
-        (update :transcript? not)
-        (assoc :focus-path nil :scroll-offset 0)
-        sync-focus
-        view/rebuild-lines)))
-
-(defn- live-focusable-paths
-  "Inline, only items still on screen can be selected. The transcript and
-  --fullscreen keep navigation over the whole chat."
-  [state]
-  (let [paths (focusable-paths (:items state))]
-    (if (view/fullscreen? state)
-      paths
-      (filterv #(>= (first %) (or (:committed state) 0)) paths))))
+    (let [opening? (not (:transcript? state))
+          state    (-> state
+                       (update :transcript? not)
+                       (assoc :focus-path nil :scroll-offset 0))
+          newest   (when (and opening? (#{:ready :chatting} (:mode state)))
+                     (peek (live-focusable-paths state)))]
+      (cond-> (-> state (assoc :focus-path newest) sync-focus view/rebuild-lines)
+        newest ensure-focus-visible))))
 
 (defn register-subagent [state tool-id subagent-chat-id]
   (if-let [idx (first (keep-indexed #(when (= tool-id (:id %2)) %1) (:items state)))]
@@ -950,6 +963,21 @@
 ;; State.clj's dispatcher catches Ctrl+L, Ctrl+C, Enter+slash, "/" autocomplete
 ;; BEFORE delegating here, so handle-key never needs to know about commands.
 
+(def ^:private reader-keys
+  "The transcript's single-key bindings, like a pager's: j/k move, Space
+  toggles, h/l fold, e/E (un)fold all, g/G first/last, y copies, q closes."
+  #{"j" "k" " " :space "h" "l" "e" "E" "g" "G" "y" "q"})
+
+(defn- reader-key
+  "The reader key `msg` is, when the transcript is being read: a block is
+  focused and nothing waits for an answer (an approval keeps its y/n, a
+  question its typing). Esc clears focus to type in the prompt again."
+  [state msg]
+  (when (and (:transcript? state) (:focus-path state)
+             (#{:ready :chatting} (:mode state))
+             (msg/key-press? msg) (not (:ctrl msg)) (not (:alt msg)))
+    (reader-keys (:key msg))))
+
 (defn block-navigation-key?
   "Keys owned by block navigation in a transcript. Plain arrows, Enter and
   Escape belong to the pending interaction unless a block is focused."
@@ -962,7 +990,8 @@
              (contains? #{"g" "G" "o" "c"} (:key msg)))
          (or (and (msg/key-match? msg :tab) (not (:shift msg)))
              (and (:focus-path state)
-                  (some #(msg/key-match? msg %) [:up :down :enter :escape]))))))
+                  (some #(msg/key-match? msg %) [:up :down :left :right :enter :escape]))
+             (some? (reader-key state msg))))))
 
 (defn- ensure-focus-visible
   "Open transcript if inline tail clipping could hide the selected block,
@@ -1132,8 +1161,75 @@
                  (expandable? item)   (assoc :expanded? expanded?)
                  (:sub-items item)    (update :sub-items #(mapv walk %))))
         from   (if (view/fullscreen? state) 0 (or (:committed state) 0))
-        items' (mapv (fn [i item] (if (< i from) item (walk item))) (range) (:items state))]
-    [(-> state (assoc :items items') view/rebuild-lines ensure-focus-visible) nil]))
+        items' (mapv (fn [i item] (if (< i from) item (walk item))) (range) (:items state))
+        [i j]  (:focus-path state)
+        ;; A sub-item folded away hands focus to its parent.
+        up?    (and j (not expanded?) (>= i from))]
+    [(-> state
+         (assoc :items items')
+         (cond-> up? (-> (assoc :focus-path [i]) sync-focus))
+         view/rebuild-lines ensure-focus-visible)
+     nil]))
+
+(defn- focused-item-path [[i j]]
+  (if j [:items i :sub-items j] [:items i]))
+
+(defn- focus-at [state path]
+  [(-> state (assoc :focus-path path) sync-focus view/rebuild-lines ensure-focus-visible) nil])
+
+(defn- set-focused-expanded [state expanded?]
+  [(-> state
+       (assoc-in (conj (focused-item-path (:focus-path state)) :expanded?) expanded?)
+       view/rebuild-lines
+       ensure-focus-visible)
+   nil])
+
+(defn- toggle-focused
+  "Enter / Space: fold or unfold the focused block. Messages don't fold."
+  [state]
+  (let [item (get-in state (focused-item-path (:focus-path state)))]
+    (if (expandable? item)
+      (set-focused-expanded state (not (:expanded? item)))
+      [state nil])))
+
+(defn- unfold-focused
+  "→ / l, as in a tree: unfold the focused block; unfolded already, step
+  into its first sub-item."
+  [state]
+  (let [[i j :as path] (:focus-path state)
+        item           (get-in state (focused-item-path path))]
+    (cond
+      (not (expandable? item)) [state nil]
+      (not (:expanded? item))  (set-focused-expanded state true)
+      :else
+      (if-let [child (when-not j
+                       (first (filter #(and (= 2 (count %)) (= i (first %)))
+                                      (live-focusable-paths state))))]
+        (focus-at state child)
+        [state nil]))))
+
+(defn- fold-focused
+  "← / h, as in a tree: fold the focused block; folded already, a sub-item
+  goes back to its parent."
+  [state]
+  (let [[i j :as path] (:focus-path state)
+        item           (get-in state (focused-item-path path))]
+    (cond
+      (and (expandable? item) (:expanded? item)) (set-focused-expanded state false)
+      j                                          (focus-at state [i])
+      :else                                      [state nil])))
+
+(defn- copy-focused
+  "y: the focused block to the clipboard (see `eca-cli.clipboard`), saying
+  so in the transcript's footer."
+  [state]
+  (if-let [text (blocks/copy-text (get-in state (focused-item-path (:focus-path state))))]
+    (let [n (count (str/split-lines text))]
+      [(assoc state
+              :clipboard {:id (inc (or (get-in state [:clipboard :id]) 0)) :osc (clipboard/osc52 text)}
+              :flash (str "Copied " n (if (= 1 n) " line" " lines")))
+       (program/cmd (fn [] (clipboard/copy-with-tool! text) nil))])
+    [(assoc state :flash "Nothing to copy") nil]))
 
 (defn handle-key
   "Dispatch chat input, scrolling and block navigation. Other modes delegate
@@ -1165,7 +1261,30 @@
     (and (msg/key-press? msg) (msg/key-match? msg "alt+o"))
     (toggle-all-expanded state true)
 
+    ;; --- Transcript reader keys (a block focused, nothing waiting) ---
+    (reader-key state msg)
+    (case (reader-key state msg)
+      "j"          (focus-paths-cycle state :forward)
+      "k"          (focus-paths-cycle state :backward)
+      (" " :space) (toggle-focused state)
+      "l"          (unfold-focused state)
+      "h"          (fold-focused state)
+      "e"          (toggle-all-expanded state true)
+      "E"          (toggle-all-expanded state false)
+      "g"          (focus-edge state :first)
+      "G"          (focus-edge state :last)
+      "y"          (copy-focused state)
+      "q"          [(toggle-transcript state) nil])
+
     ;; --- Focus navigation ---
+    (and (msg/key-press? msg) (msg/key-match? msg :right) (some? (:focus-path state))
+         (not (:alt msg)) (not (:ctrl msg)))
+    (unfold-focused state)
+
+    (and (msg/key-press? msg) (msg/key-match? msg :left) (some? (:focus-path state))
+         (not (:alt msg)) (not (:ctrl msg)))
+    (fold-focused state)
+
     (and (msg/key-press? msg) (msg/key-match? msg :tab) (not (:alt msg)) (not (:shift msg)))
     (focus-paths-cycle state :forward)
 
@@ -1179,9 +1298,7 @@
     [(-> state (assoc :focus-path nil) sync-focus view/rebuild-lines) nil]
 
     (and (msg/key-press? msg) (msg/key-match? msg :enter) (some? (:focus-path state)))
-    (let [[i j] (:focus-path state)
-          item-path (if j [:items i :sub-items j] [:items i])]
-      [(-> state (update-in item-path update :expanded? not) view/rebuild-lines ensure-focus-visible) nil])
+    (toggle-focused state)
 
     ;; --- `\` then Enter: a newline instead of sending or steering ---
     (and (msg/key-press? msg) (msg/key-match? msg :enter) (not (alt-enter? msg))

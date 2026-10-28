@@ -295,7 +295,7 @@
             "  ⎿ one"
             "    two"
             "    three"
-            "    … +2 lines (alt+o to expand)"]
+            "    … +2 lines (ctrl+o to view)"]
            (plain (blocks/render-item-lines
                     (shell-item {:arguments {:command "git status && git log --oneline -5"}
                                  :out-text "Exit code: 0\nStdout:\none\ntwo\nthree\nfour\nfive"
@@ -343,6 +343,31 @@
       (is (some #(clojure.string/includes? % "Output · exit 1") lines))
       (is (some #(clojure.string/includes? % "boom") lines))
       (is (not-any? #(clojure.string/includes? % "Stderr:") lines)))))
+
+(deftest copy-text-test
+  (testing "messages and thoughts: their text"
+    (is (= "hi there" (blocks/copy-text {:type :assistant-text :text "hi there\n"})))
+    (is (= "fix it" (blocks/copy-text {:type :user :text "fix it"})))
+    (is (= "hmm" (blocks/copy-text {:type :thinking :text "hmm"}))))
+  (testing "an edit: its diff"
+    (is (= "-a\n+b" (blocks/copy-text {:type :tool-call :edit {:path "/x" :diff "-a\n+b"}}))))
+  (testing "a shell call: the command, then its output without the server's headers"
+    (is (= "$ ls\nboom\na.txt"
+           (blocks/copy-text (shell-item {:arguments {:command "ls"}
+                                          :out-text "Exit code: 1\nStderr:\nboom\nStdout:\na.txt"}))))
+    (is (= "$ ls" (blocks/copy-text (shell-item {:state :running :arguments {:command "ls"}})))))
+  (testing "another tool call: its output, else its arguments"
+    (is (= "content" (blocks/copy-text {:type :tool-call :out-text "content" :args-text "{}"})))
+    (is (= "{\"path\":\"a\"}" (blocks/copy-text {:type :tool-call :args-text "{\"path\":\"a\"}"}))))
+  (testing "nothing to copy"
+    (is (nil? (blocks/copy-text {:type :thinking :text "  "})))
+    (is (nil? (blocks/copy-text {:type :url :url "x"})))))
+
+(deftest focused-message-highlight-test
+  (testing "a focused user message highlights its text, not the blank line it opens with"
+    (let [lines (blocks/render-item-lines {:type :user :text "hi" :focused? true} 40)]
+      (is (= "" (first lines)))
+      (is (= (theme/paint :focus "┃ hi") (second lines))))))
 
 (deftest display-path-test
   (let [cwd (System/getProperty "user.dir")]

@@ -142,7 +142,7 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `y` / `n` / `Y` | Approve / reject / approve and remember a tool call for the chat |
 | `Esc` | Stop the running prompt, close a picker, clear focus; twice on an empty input: `/rollback` |
 | `Ctrl+O` | Toggle the full-screen transcript (when started inline) |
-| `Tab` | Focus the next block; `↑` / `↓` move focus once selected |
+| `Tab` | Focus the next block; `↑` / `↓` move focus once selected, `←` / `→` fold / unfold it |
 | `Alt+↑` / `Alt+↓` | Jump between top-level blocks |
 | `Alt+g` / `Alt+G` | Focus the first / last block |
 | `Alt+c` / `Alt+o` | Collapse / expand blocks (live blocks inline; all in full screen) |
@@ -155,7 +155,22 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 
 The model, agent, variant and trust keys work while the agent works too, and apply from the next prompt. On macOS, `Alt` keys need the terminal to send Option as Meta.
 
-Inline, only live blocks can be focused; use the transcript to inspect completed ones. Selecting or expanding a live block opens the transcript if it would not fit on screen. In the transcript, `Enter` toggles a focused block without submitting your draft or answering a pending interaction; `Esc` clears focus, and `Ctrl+O` returns inline.
+Inline, only live blocks can be focused; use the transcript to inspect completed ones. Selecting or expanding a live block opens the transcript if it would not fit on screen.
+
+The transcript opens on the newest block, focused, and reads like a pager. With a block focused:
+
+| Key | Action |
+|---|---|
+| `↑` / `↓`, `k` / `j` | Previous / next block (messages included) |
+| `Enter` / `Space` | Fold or unfold the block |
+| `←` / `→`, `h` / `l` | As in a tree: fold, or go up to the parent; unfold, or go into the first sub-item |
+| `e` / `E` | Unfold / fold everything |
+| `g` / `G` | First / last block |
+| `y` | Copy the block: a message, a thought, a diff, a command and its output |
+| `Esc` | Clear focus, to type in the prompt (your draft is kept) |
+| `q` / `Ctrl+O` | Return inline |
+
+While a tool call waits for approval or a question for its answer, letters keep answering them (`y` approves); arrows, `Enter` and `Esc` still move around a focused block. Copying uses the terminal (OSC 52, which also works over SSH, and in tmux with `set-clipboard on`) and, when there is one, `pbcopy`, `wl-copy`, `xclip` or `xsel`.
 
 ## Troubleshooting
 

@@ -1212,11 +1212,18 @@
                       :mode :ready
                       :transcript? true
                       :focus-path nil
-                      :items [{:type :user :text "hi"}
+                      :items [{:type :system :text "hi"}
                               {:type :tool-call :name "read_file" :state :called
                                :expanded? false :focused? false}])
           [s _] (state/update-state base (msg/key-press :tab))]
       (is (= [1] (:focus-path s)))))
+
+  (testing "in the transcript, messages are focusable too (to copy them); inline they aren't"
+    (let [items [{:type :user :text "hi"}
+                 {:type :tool-call :name "read_file" :state :running :expanded? false :focused? false}]
+          base  (assoc (base-state) :mode :chatting :focus-path nil :items items)]
+      (is (= [0] (:focus-path (first (state/update-state (assoc base :transcript? true) (msg/key-press :tab))))))
+      (is (= [1] (:focus-path (first (state/update-state base (msg/key-press :tab))))))))
 
   (testing "Enter on focused tool-call toggles :expanded?"
     (let [base (assoc (base-state)

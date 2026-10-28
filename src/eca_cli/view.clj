@@ -623,6 +623,22 @@
                     (= "secret" (:type field)) (assoc :echo-mode :password :echo-char \•))
                   (:width state 80) (input-row-budget state))))
 
+(defn- transcript-footer
+  "The transcript's bottom line: what was just done (`Copied 3 lines`), then
+  the keys. Reading (a block focused, nothing waiting for an answer), the
+  reader keys; otherwise how to get there."
+  [state]
+  (let [reading? (and (:focus-path state) (#{:ready :chatting} (:mode state)))
+        k        (fn [key desc] (str (theme/paint :key key) " " (theme/paint :key-desc desc)))
+        hints    (if reading?
+                   (str/join (theme/paint :key-desc " · ")
+                             [(k "↑↓" "move") (k "enter" "toggle") (k "←→" "fold")
+                              (k "e/E" "all") (k "y" "copy") (k "esc" "type") (k "q" "close")])
+                   (theme/paint :muted "Transcript · Ctrl+O to return · PgUp/PgDn to scroll · Tab to focus"))]
+    (clip (str (some->> (:flash state) (theme/paint :success) (#(str % (theme/paint :key-desc " · "))))
+               hints)
+          (:width state))))
+
 (defn view [state]
   (let [mode       (:mode state)
         now        (System/currentTimeMillis)
@@ -682,8 +698,7 @@
          "\n" (divider (:width state))
          "\n" (or (quit-hint state)
                    (when (:transcript? state)
-                     (theme/paint :muted
-                                  (clip "Transcript · Ctrl+O to return · PgUp/PgDn to scroll · Tab to focus" (:width state))))
+                     (transcript-footer state))
                    (render-status-bar state)))))
 
 (defn frame
@@ -697,6 +712,7 @@
         width (:width state)]
     {:fullscreen? (fullscreen? state)
      :content     (view state)
+     :clipboard   (:clipboard state)
      :history     (when-not (get-in state [:opts :fullscreen])
                     {:epoch     (or (:epoch state) 0)
                      :removals  (or (:history-removals state) [])

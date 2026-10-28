@@ -200,11 +200,18 @@
      ["Ctrl+T" "show / hide the task list"]
      ["Ctrl+O" "full-screen transcript"]
      ["Tab, ↑ / ↓, Enter" "focus a block, move, expand it"]
+     ["← / →" "fold / unfold the focused block"]
      ["Alt+↑ / Alt+↓" "jump between top-level blocks"]
      ["Alt+g / Alt+G" "first / last block"]
      ["Alt+c / Alt+o" "collapse / expand blocks"]
      ["PgUp / PgDn" "scroll"]
-     ["Ctrl+C" "clear the input or stop; twice: quit"]]]])
+     ["Ctrl+C" "clear the input or stop; twice: quit"]]]
+   ["Transcript (a block focused)"
+    [["j / k, g / G" "next / previous, first / last block"]
+     ["Space, h / l" "toggle, fold / unfold"]
+     ["e / E" "unfold / fold everything"]
+     ["y" "copy the block"]
+     ["q, Esc" "return inline, type in the prompt"]]]])
 
 (defn cmd-show-keys [state]
   (let [w     (reduce max 0 (for [[_ rows] keybindings [k] rows] (count k)))

@@ -212,7 +212,7 @@
                   [(paint :muted "(no output)")])
         rows    (cond-> rows
                   (pos? more) (conj (paint :muted (str "… +" more (if (= 1 more) " line" " lines")
-                                                       " (alt+o to expand)"))))]
+                                                       " (ctrl+o to view)"))))]
     (prefixed rows (str "  " (paint :muted "⎿") " ") "    ")))
 
 (defn- steps-badge [item]
@@ -449,5 +449,30 @@
 
           [])]
     (if (and (:focused? item) (seq lines))
-      (into [(focus-line (first lines))] (rest lines))
+      ;; The first line with something on it: a user message opens on a blank.
+      (let [i (or (first (keep-indexed #(when-not (str/blank? (theme/strip-ansi %2)) %1) lines)) 0)]
+        (assoc (vec lines) i (focus-line (nth lines i))))
       lines)))
+
+(defn copy-text
+  "What copying a block (`y` in the transcript) takes: a message's or
+  thought's text, an edit's diff, a shell call's command and output, another
+  tool call's output (its arguments when it has none). Nil when empty."
+  [item]
+  (not-empty
+    (str/trim
+      (str
+        (case (:type item)
+          (:user :assistant-text :server-note :thinking) (:text item)
+          :hook (:out-text item)
+          :tool-call
+          (cond
+            (:edit item) (get-in item [:edit :diff])
+
+            (and (:shell item) (get-in item [:arguments :command]))
+            (let [out (some-> (shell-result (:out-text item)) shell-output-text)]
+              (str "$ " (strip-cd-prefix (str/trim (str (get-in item [:arguments :command]))))
+                   (when out (str "\n" out))))
+
+            :else (or (not-empty (:out-text item)) (:args-text item)))
+          nil)))))

@@ -201,6 +201,11 @@
                                                                :now now :resized-at resized-at
                                                                :reanchor? reanchor?})]
     (swap! r assoc :retry-at retry-at)
+    ;; A copy (see `eca-cli.clipboard`): written once, whatever is drawn.
+    (when-let [{:keys [id osc]} (:clipboard frame)]
+      (when (not= id (:clipboard-id @r))
+        (swap! r assoc :clipboard-id id)
+        (try (write! terminal osc) (catch Exception _ nil))))
     (when (seq steps)
       (try
         (write! terminal sync-start)
