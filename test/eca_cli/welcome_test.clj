@@ -186,19 +186,23 @@
                                     {:type :eca-tick :msgs [{:method "chat/cleared" :params {:chatId "c1" :messages true}}]})]
       (is (not-any? #(= :welcome (:type %)) (:items s)))))
 
-  (testing "/new opens on a fresh one, without the chat it deleted"
-    (with-redefs [protocol/delete-chat! (fn [& _])
-                  chats/save-chat-id!   (fn [& _])]
-      (let [s0    (-> (base-state)
-                      (assoc :chat-id "c1" :recent-chats [{:id "c1" :title "This one" :ago "just now"}
-                                                          {:id "c2" :title "Older one" :ago "1d ago"}])
-                      (update :items conj {:type :user :text "hello"})
-                      (assoc :input (ti/set-value (ti/text-input) "/new")))
-            [s _] (state/update-state s0 (msg/key-press :enter))]
-        (is (= [:welcome] (mapv :type (:items s))))
-        (is (= ["c2"] (mapv :id (:recent-chats s))))
-        (is (str/includes? (shown s) "Older one"))
-        (is (not (str/includes? (shown s) "This one"))))))
+  (testing "/new opens on a fresh one, the chat it left first among the recent ones"
+    (let [deleted (atom [])]
+      (with-redefs [protocol/delete-chat! (fn [_ chat-id _] (swap! deleted conj chat-id))
+                    chats/save-chat-id!   (fn [& _])]
+        (let [s0    (-> (base-state)
+                        (assoc :chat-id "c1" :chat-title "This one"
+                               :recent-chats [{:id "c2" :title "Older one" :ago "1d ago"}
+                                              {:id "c1" :title "This one" :ago "2h ago"}])
+                        (update :items conj {:type :user :text "hello"})
+                        (assoc :input (ti/set-value (ti/text-input) "/new")))
+              [s _] (state/update-state s0 (msg/key-press :enter))]
+          (is (= [] @deleted) "the chat left isn't deleted")
+          (is (= [:welcome] (mapv :type (:items s))))
+          (is (= ["c1" "c2"] (mapv :id (:recent-chats s))))
+          (is (= "just now" (:ago (first (:recent-chats s)))))
+          (is (str/includes? (shown s) "This one"))
+          (is (str/includes? (shown s) "Older one"))))))
 
   (testing "it isn't a block to focus"
     (let [[s _] (state/update-state (base-state) (msg/key-press :tab))]

@@ -23,6 +23,7 @@
          test        {:doc "Run unit tests"
                       :extra-paths ["test" "build"]
                       :task (do (require '[clojure.test])
+                                (require '[eca-cli.approvals-test])
                                 (require '[eca-cli.at-refs-test])
                                 (require '[eca-cli.chat-test])
                                 (require '[eca-cli.commands-test])
@@ -33,15 +34,18 @@
                                 (require '[eca-cli.history-test])
                                 (require '[eca-cli.jobs-test])
                                 (require '[eca-cli.lifecycle-test])
+                                (require '[eca-cli.login-url-test])
                                 (require '[eca-cli.markdown-test])
                                 (require '[eca-cli.markdown.highlight-test])
                                 (require '[eca-cli.mcp-test])
+                                (require '[eca-cli.new-chat-test])
                                 (require '[eca-cli.panels-test])
                                 (require '[eca-cli.protocol-test])
                                 (require '[eca-cli.question-test])
                                 (require '[eca-cli.quit-test])
                                 (require '[eca-cli.render-test])
                                 (require '[eca-cli.shortcuts-test])
+                                (require '[eca-cli.slash-typing-test])
                                 (require '[eca-cli.startup-test])
                                 (require '[eca-cli.steer-test])
                                 (require '[eca-cli.tasks-test])
@@ -59,7 +63,8 @@
                                 (require '[eca-cli.upgrade-test])
                                 (require '[eca-cli.wrap-test])
                                 (let [{:keys [fail error]}
-                                      (clojure.test/run-tests 'eca-cli.at-refs-test
+                                      (clojure.test/run-tests 'eca-cli.approvals-test
+                                                              'eca-cli.at-refs-test
                                                               'eca-cli.chat-test
                                                               'eca-cli.commands-test
                                                               'eca-cli.core-test
@@ -69,15 +74,18 @@
                                                               'eca-cli.history-test
                                                               'eca-cli.jobs-test
                                                               'eca-cli.lifecycle-test
+                                                              'eca-cli.login-url-test
                                                               'eca-cli.markdown-test
                                                               'eca-cli.markdown.highlight-test
                                                               'eca-cli.mcp-test
+                                                              'eca-cli.new-chat-test
                                                               'eca-cli.panels-test
                                                               'eca-cli.protocol-test
                                                               'eca-cli.question-test
                                                               'eca-cli.quit-test
                                                               'eca-cli.render-test
                                                               'eca-cli.shortcuts-test
+                                                              'eca-cli.slash-typing-test
                                                               'eca-cli.startup-test
                                                               'eca-cli.steer-test
                                                               'eca-cli.tasks-test

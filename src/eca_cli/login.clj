@@ -6,6 +6,8 @@
             [charm.program :as program]
             [charm.components.text-input :as ti]
             [charm.message :as msg]
+            [eca-cli.browser :as browser]
+            [eca-cli.clipboard :as clipboard]
             [eca-cli.protocol :as protocol]
             [eca-cli.chat :as chat]
             [eca-cli.view :as view]))
@@ -100,7 +102,22 @@
 
 ;; --- Runtime msg handlers (called from state/update-state) ---
 
-(defn handle-eca-login-action [state msg]
+(defn- share-cmd
+  "As eca-emacs does for a login: open `url` in the browser, when there's
+  one (`eca-cli.browser`), and copy `text` (the URL, or a device code) with
+  the platform's clipboard tool; the terminal's copy (OSC 52, which also
+  works over SSH) goes with the frame (`clipboard/copy-in`)."
+  [url text]
+  (program/cmd (fn []
+                 (when url (browser/open! url))
+                 (when text (clipboard/copy-with-tool! text))
+                 nil)))
+
+(defn handle-eca-login-action
+  "The server's next login step (`providers/login`): a method to choose, a
+  field to fill, a URL to authorize at (opened in the browser, copied, shown
+  whole), a device code (copied), or done."
+  [state msg]
   (let [{:keys [provider action]} msg
         pending (or (:pending-message msg) (get-in state [:login :pending-message]))]
     (cond
@@ -127,15 +144,23 @@
       (let [needs-input? (or (= "input" (:action action))
                              (and (= "authorize" (:action action))
                                   (seq (:fields action))))
+            url          (when (#{"authorize" "device-code"} (:action action)) (not-empty (:url action)))
+            share        (case (:action action)
+                           "authorize"   url
+                           "device-code" (not-empty (:code action))
+                           nil)
             login-state  {:provider        provider
                           :action          action
                           :field-idx       0
                           :collected       {}
-                          :pending-message pending}]
+                          :pending-message pending
+                          :browser?        (boolean (and url (browser/command url)))
+                          :shared?         (boolean share)}]
         [(-> state
              (assoc :mode :login :login login-state)
+             (cond-> share (clipboard/copy-in share))
              (update :input #(if needs-input? (ti/focus %) (ti/blur %))))
-         nil]))))
+         (when (or url share) (share-cmd url share))]))))
 
 (defn handle-eca-login-complete
   "The login input was accepted. `providers/updated` may have finished the

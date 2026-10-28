@@ -791,7 +791,7 @@
       (is (= :ready (:mode s)))
       (is (nil? cmd))))
 
-  (testing "/new with chat-id clears state and returns delete cmd"
+  (testing "/new with chat-id clears state, keeping the old chat on the server"
     (with-redefs [chats/save-chat-id! (fn [& _] nil)]
       (let [s0 (-> (base-state)
                    (assoc :mode :ready :turn-started-at nil
@@ -803,7 +803,8 @@
         (is (nil? (:chat-id s)))
         (is (nil? (:chat-title s)))
         (is (= [:welcome] (mapv :type (:items s))) "a fresh chat opens on the welcome")
-        (is (some? cmd))))))
+        (is (nil? cmd) "nothing is deleted")
+        (is (= "old-chat" (:id (first (:recent-chats s)))) "the old chat is first to resume")))))
 
 (deftest slash-chats-fires-list-cmd-test
   (testing "/chats in :ready fires chat/list cmd"

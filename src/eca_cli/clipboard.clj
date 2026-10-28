@@ -16,6 +16,14 @@
        (.encodeToString (Base64/getEncoder) (.getBytes (str text) "UTF-8"))
        "\u0007"))
 
+(defn copy-in
+  "`state` copying `text` through the terminal: the renderer writes its OSC 52
+  sequence once, with the next frame (`:clipboard`, a new `:id` per copy).
+  The platform's tool is `copy-with-tool!`, for a cmd."
+  [state text]
+  (assoc state :clipboard {:id  (inc (or (get-in state [:clipboard :id]) 0))
+                           :osc (osc52 text)}))
+
 (defn- tool
   "The clipboard tool to use here, as a command vector, or nil."
   []

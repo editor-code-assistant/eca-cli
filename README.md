@@ -95,7 +95,7 @@ What the agent does goes to stderr when it's a terminal; stdout only gets the an
 
 ### Commands
 
-Type `/` in an empty input to pick one. The picker also lists the ECA server's own commands (`/compact`, `/init`, `/context`, `/costs`, `/fork`, `/resume`, …), your skills and prompts.
+Type `/` in an empty input to pick one, or type its name and a space to give it arguments (`/rename My chat`, `/compact keep the API notes`). The picker also lists the ECA server's own commands (`/compact`, `/init`, `/context`, `/costs`, `/fork`, `/resume`, …), your skills and prompts.
 
 | Command | Action |
 |---|---|
@@ -103,7 +103,7 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `/agent` | Pick an agent |
 | `/variant` | Pick the model's variant (e.g. reasoning effort) |
 | `/rename <title>` | Rename the chat |
-| `/new` | Start a fresh chat |
+| `/new` | Start a fresh chat (also `Ctrl+N`); the current one stays, to resume with `/chats` |
 | `/chats` | Browse and resume previous chats |
 | `/mcp` | MCP servers: status; start, stop, connect, enable, disable, log out |
 | `/providers` | Providers: login state, models, quota; log in or out |
@@ -119,7 +119,7 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `/keys` | Show keyboard shortcuts (also `?` on an empty prompt) |
 | `/quit` | Exit |
 
-`/new`, `/clear` and resuming a chat each start a new current transcript; previously printed terminal history stays. `/clear` only clears the local display, not the chat on the server.
+`/new`, `/clear` and resuming a chat each start a new current transcript; previously printed terminal history stays. `/clear` only clears the local display, not the chat on the server. To delete a chat, use the server's `/delete-chat` (it asks you to confirm).
 
 ### Keybindings
 
@@ -154,6 +154,8 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | `Ctrl+C` | Clear the input, or stop the agent; press twice to quit (`Ctrl+D` on an empty input too) |
 
 The model, agent, variant and trust keys work while the agent works too, and apply from the next prompt. On macOS, `Alt` keys need the terminal to send Option as Meta.
+
+An approval never interrupts typing: arriving while you type a message, it waits above the prompt until you pause. Keys typed as it appears, and pasted text, go to your message instead of answering it.
 
 Inline, only live blocks can be focused; use the transcript to inspect completed ones. Selecting or expanding a live block opens the transcript if it would not fit on screen.
 

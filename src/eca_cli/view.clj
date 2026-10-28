@@ -7,7 +7,8 @@
             [eca-cli.paths :as paths]
             [eca-cli.theme :as theme]
             [eca-cli.view.blocks :as blocks]
-            [eca-cli.view.status :as status]))
+            [eca-cli.view.status :as status]
+            [eca-cli.wrap :as wrap]))
 
 ;; Lazy resolution to break the jobs ↔ view circular require.
 (defn- jobs-fn [sym]
@@ -221,18 +222,23 @@
 (defn approval-gutter
   "`▲ Waiting for your approval`, saying when a sub-agent asks, how many more
   calls wait after this one, and how long the turn has been going (the clock
-  keeps running while it waits, as in eca-emacs)."
+  keeps running while it waits, as in eca-emacs). Above the prompt while the
+  user types a message, it says the approval shows once they stop
+  (`eca-cli.chat/approval-held?`)."
   ([state] (approval-gutter state (System/currentTimeMillis)))
   ([state now]
    (let [{:keys [chat-id]} (:pending-approval state)
          more    (count (:approval-queue state))
          elapsed (some->> (:turn-started-at state) (- now) (max 0) blocks/format-duration)]
      (theme/paint :warning
-                  (str "▲ Waiting for your approval"
-                       (when (and chat-id (:chat-id state) (not= chat-id (:chat-id state)))
-                         " · sub-agent")
-                       (when (pos? more) (str " · " more " more"))
-                       (when elapsed (str " · " elapsed)))))))
+                  (clip (str "▲ Waiting for your approval"
+                             (when (and (:approval-held? state) (#{:ready :chatting} (:mode state)))
+                               " · shows when you stop typing")
+                             (when (and chat-id (:chat-id state) (not= chat-id (:chat-id state)))
+                               " · sub-agent")
+                             (when (pos? more) (str " · " more " more"))
+                             (when elapsed (str " · " elapsed)))
+                        (:width state 80))))))
 
 (def ^:private max-task-rows 10)
 
@@ -576,15 +582,33 @@
       (str (theme/paint :muted "Press ") (theme/paint :bold "Esc")
            (theme/paint :muted " again to roll back")))))
 
+(defn url-rows
+  "URL `u` cut into rows of `width` columns, none indented: a long one (an
+  OAuth URL runs to 400 characters) is seen whole instead of cut at the
+  screen's edge, and copied row by row it only gains line breaks, which
+  browsers drop from a pasted URL."
+  [u width]
+  (mapv #(theme/paint :md-link (apply str %)) (partition-all (max 1 width) (str u))))
+
 (defn render-login [state]
-  (let [{:keys [provider action field-idx pending-message]} (:login state)
+  (let [{:keys [provider action field-idx pending-message browser? shared?]} (:login state)
         action-type (:action action)
+        width       (:width state 80)
         ;; A prompt needed it, or the user asked for it (/login, /providers).
         heading     (str "🔐 " (theme/paint :bold (str (if pending-message "Login required for " "Log in to ")
                                                      provider)))
         cancel      (theme/paint :muted "Esc to cancel")
         field       (nth (:fields action) (or field-idx 0) nil)
-        url         (fn [label u] (str "  " (theme/paint :muted label) (theme/paint :md-link u)))]
+        message     (fn [] (let [m (str (:message action))]
+                             (when-not (str/blank? m)
+                               (mapcat #(wrap/wrap-text % (max 1 width)) (str/split-lines m)))))
+        ;; What was done with the URL (`login/handle-eca-login-action`).
+        url-intro   (fn [copied?]
+                      (theme/paint :muted
+                                   (clip (str (if browser? "Opening your browser. The URL" "Open this URL in a browser")
+                                              (when copied? ", also sent to your clipboard")
+                                              ":")
+                                         width)))]
     (case action-type
       "choose-method"
       (str/join "\n"
@@ -599,18 +623,25 @@
            "Enter " (theme/paint :bold (:label field)) ":")
 
       "authorize"
-      (str heading "\n"
-           (:message action) "\n"
-           (url "URL: " (:url action))
-           (when field
-             (str "\nEnter " (theme/paint :bold (:label field)) " after authorizing:")))
+      (str/join "\n"
+                (concat [(str heading "  " cancel)]
+                        (message)
+                        [(url-intro shared?)]
+                        (url-rows (:url action) width)
+                        [(if field
+                           (str "Enter " (theme/paint :bold (:label field)) " after authorizing:")
+                           (theme/paint :muted "Waiting for authorization…"))]))
 
       "device-code"
-      (str heading "\n"
-           (:message action) "\n"
-           (url "URL:  " (:url action)) "\n"
-           "  " (theme/paint :muted "Code: ") (theme/paint (theme/merge-styles :warning :bold) (:code action)) "\n"
-           (theme/paint :muted "Waiting for authorization… ") cancel)
+      (str/join "\n"
+                (concat [(str heading "  " cancel)]
+                        (message)
+                        [(url-intro false)]
+                        (url-rows (:url action) width)
+                        [(str (theme/paint :muted "Code: ")
+                              (theme/paint (theme/merge-styles :warning :bold) (:code action))
+                              (when shared? (theme/paint :muted "  (sent to your clipboard)")))
+                         (theme/paint :muted "Waiting for authorization…")]))
 
       (str heading "  " cancel))))
 
@@ -669,20 +700,25 @@
 
                      :else
                      (str (task-block state) (prompt-input (:input state) (:width state 80) (input-row-budget state))))
+        ;; An approval held back while the user types (`chat/approval-held?`).
+        held?      (and (:approval-held? state) (:pending-approval state) (#{:ready :chatting} mode))
         gutter     (case mode
                      :connecting (render-connecting state now)
-                     :chatting   (render-working state now)
+                     :chatting   (if held? (approval-gutter state now) (render-working state now))
                      :approving  (approval-gutter state now)
                      :asking     (theme/paint :accent "◆ Waiting for your answer")
                      ;; A picker opened while the agent works (Alt+P…).
                      :picking    (if (:turn-started-at state) (render-working state now) "")
-                     :ready      (or (command-hint state)
+                     :ready      (or (when held? (approval-gutter state now))
+                                     (command-hint state)
                                      (when (:stopping? state) (theme/paint :muted "◌ Stopping…"))
                                      (when-not (fullscreen? state)
                                        (theme/paint :subtle (clip "ctrl+o for transcript" (:width state))))
                                      "")
                      "")
-        rule-role  (case mode :approving :warning :asking :accent :disconnected :error :border)
+        rule-role  (if held?
+                     :warning
+                     (case mode :approving :warning :asking :accent :disconnected :error :border))
         ;; Chat, gutter, rule, input area, rule, status line. Full screen,
         ;; the chat gets what the (possibly multi-line) input area leaves;
         ;; inline, only what isn't in the terminal's history yet.

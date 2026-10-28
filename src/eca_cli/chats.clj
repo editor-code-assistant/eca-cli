@@ -1,6 +1,6 @@
 (ns eca-cli.chats
   "Chat-id persistence (workspace → chatId map) + charm/program cmd builders
-  for the chat list/open/delete protocol calls."
+  for the chat list/open protocol calls."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [charm.program :as program]
@@ -39,13 +39,7 @@
     (io/make-parents f)
     (spit f (pr-str updated))))
 
-;; --- charm/program cmd builders for chat-list/open/delete ---
-
-(defn delete-chat-cmd [srv chat-id]
-  (program/cmd
-    (fn []
-      (protocol/delete-chat! srv chat-id (fn [_] nil))
-      nil)))
+;; --- charm/program cmd builders for chat-list/open ---
 
 (defn open-chat-cmd [srv chat-id]
   (program/cmd

@@ -119,6 +119,9 @@
     "chat/cleared"
     (chat/handle-chat-cleared state notification)
 
+    "chat/deleted"
+    [(chat/handle-chat-deleted state (:params notification)) nil]
+
     "jobs/updated"
     (jobs/handle-jobs-updated state (:params notification))
 
@@ -386,14 +389,7 @@
   (when-let [t0 (:pasting-since state)]
     (< (- (System/currentTimeMillis) t0) 5000)))
 
-(defn- insert-text
-  "`s` typed into `input` at the cursor."
-  [input s]
-  (let [v   (str (ti/value input))
-        pos (min (count v) (max 0 (or (ti/position input) (count v))))]
-    (-> input
-        (ti/set-value (str (subs v 0 pos) s (subs v pos)))
-        (assoc :pos (+ pos (count s))))))
+(def ^:private insert-text chat/insert-text)
 
 (defn- typing-mode? [state]
   (contains? #{:ready :chatting :asking} (:mode state)))
@@ -513,15 +509,20 @@
 
       ;; A pasted newline is part of the text, not Enter (which would send
       ;; the first line and steer with the rest); a pasted tab isn't Tab.
+      ;; Pasted over an approval, it's still a message (`chat/step-aside`).
       (and (msg/key-press? msg) (pasting? state)
            (or (msg/key-match? msg :enter) (msg/key-match? msg :tab)))
-      [(cond-> state
-         (typing-mode? state) (update :input insert-text (if (msg/key-match? msg :enter) "\n" "    ")))
-       nil]
+      (let [state (cond-> state (= :approving (:mode state)) chat/step-aside)]
+        [(cond-> state
+           (typing-mode? state) (update :input insert-text (if (msg/key-match? msg :enter) "\n" "    ")))
+         nil])
 
-      ;; Pasted characters are text too: a leading `/` or `@` doesn't open a picker.
-      (and (pasting? state) (typing-mode? state) (picker/printable-char? msg))
-      (let [[input cmd] (ti/text-input-update (:input state) msg)]
+      ;; Pasted characters are text too: a leading `/` or `@` doesn't open a
+      ;; picker, and a `y` doesn't answer an approval.
+      (and (pasting? state) (or (typing-mode? state) (= :approving (:mode state)))
+           (picker/printable-char? msg))
+      (let [state       (cond-> state (= :approving (:mode state)) chat/step-aside)
+            [input cmd] (ti/text-input-update (:input state) msg)]
         [(assoc state :input input) cmd])
 
       ;; --- Global key bindings (mode-aware but handled at dispatcher level) ---
@@ -631,7 +632,10 @@
           (commands/run-picker-selection
             (-> state (dissoc :picker) (assoc :mode :ready))
             item)
-          [state nil]))
+          ;; Nothing matches what was typed: run it as typed in the input
+          ;; (the server may know it, or it's a message starting with `/`).
+          (commands/dispatch-command (picker/leave-command-picker state "")
+                                     (str "/" (get-in state [:picker :query])))))
 
       ;; Providers panel and MCP server actions.
       (and (msg/key-press? msg) (msg/key-match? msg :enter)
@@ -675,12 +679,41 @@
 
       :else [state nil])))
 
+(defn- typed?
+  "Whether `msg` edited the message being typed: a key that changed the
+  prompt's text or cursor, the prompt being what's on screen after it."
+  [before after msg]
+  (and (msg/key-press? msg)
+       (#{:ready :chatting} (:mode after))
+       (let [b (:input before) a (:input after)]
+         (or (not= (ti/value b) (ti/value a))
+             (not= (ti/position b) (ti/position a))))))
+
+(defn- guard-approvals
+  "The bookkeeping behind `eca-cli.chat`'s approval guard, whatever the
+  message: when the user last typed a message (`:typed-at`; sending or
+  clearing it ends that), an approval held back by typing shown once they
+  pause (ticks come every 50 ms), and when the approval on screen appeared
+  (`:approval-shown-at`), a queue's next one included."
+  [before after msg now]
+  (let [s (cond
+            (not (typed? before after msg))        after
+            (str/blank? (ti/value (:input after))) (dissoc after :typed-at)
+            :else                                  (assoc after :typed-at now))
+        s (chat/show-waiting-approval s now)]
+    (cond-> s
+      (and (= :approving (:mode s))
+           (or (not= :approving (:mode before))
+               (not= (:pending-approval before) (:pending-approval s))))
+      (assoc :approval-shown-at now))))
+
 (defn update-state
   "charm's update fn: `[new-state cmd]` for `msg`. Whatever the message, the
   items that became final go to the terminal's history after it (see
   `eca-cli.transcript`)."
   [state msg]
-  (let [state   (cond-> state
+  (let [now     (System/currentTimeMillis)
+        state   (cond-> state
                   ;; Esc Esc means two Escs in a row.
                   (and (:esc-armed state) (msg/key-press? msg) (not (msg/key-match? msg :escape)))
                   (dissoc :esc-armed)
@@ -690,6 +723,7 @@
         [s cmd] (dispatch state msg)
         s       (cond-> s
                   (and (= :picking (:mode state)) (not= :picking (:mode s))) chat/after-picker)
+        s       (guard-approvals state s msg now)
         s       (transcript/advance s)
         [i]     (:focus-path s)]
     [(if (and i (not (view/fullscreen? s)) (< i (or (:committed s) 0)))

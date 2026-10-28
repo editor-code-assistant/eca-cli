@@ -30,7 +30,7 @@ In-app commands (type in input, press Enter):
 /model      open model picker (Alt+P / Ctrl+L also work)
 /agent      open agent picker (Shift+Tab cycles agents)
 /variant    open variant picker (Alt+T cycles variants)
-/new        start fresh chat (deletes current chat, opens on the welcome; Ctrl+N)
+/new        start fresh chat (the one left stays, to resume with /chats; opens on the welcome; Ctrl+N)
 /chats      browse and resume previous chats
 /keys       keyboard shortcuts (? on an empty prompt)
 ```
@@ -85,7 +85,7 @@ The drain loop starts at init and is self-sustaining: the `:eca-tick` handler re
 - `:connecting` — waiting for the `initialize` response
 - `:ready` — input focused, awaiting user message
 - `:chatting` — LLM active, streaming. The input stays live: Enter steers (`chat/promptSteer`, text in `:steered` until the server echoes it as a user message), Alt+Enter queues (`:queued`); both are sent as the next prompt when the turn ends (`chat/send-pending`), or given back to the input by Esc / ↑ (`take-back-pending`). Only `commands/runs-during-turn?` commands run mid-turn; other `/…` text steers. Alt+Enter arrives as an Alt'ed `"\r"` (ESC CR), see `chat/alt-enter?`.
-- `:approving` — a tool call (main chat or sub-agent) waiting on `y`/`n`/`Y`; more may wait in `:approval-queue`
+- `:approving` — a tool call (main chat or sub-agent) waiting on `y`/`n`/`Y`; more may wait in `:approval-queue`. An approval never takes keys meant as text: one arriving while the user types a message (`chat/composing?`: text in the prompt, typed within `approval-quiet-ms`; sending or clearing it ends that) is held (`:approval-held?`, the mode unchanged, the gutter saying so) until they pause, when `chat/show-waiting-approval` (run by `update-state` after every message, ticks included) shows it. Shown, a key that doesn't answer it goes to the message and the approval steps aside again (`chat/type-past-approval`); `y`/`n`/`Y` answer only once it's been on screen `approval-arm-ms` (`:approval-shown-at`, stamped by `state/guard-approvals`, the queue's next one included), so a word resumed after a pause or a key held over a queue never answers; pasted text never does. Esc stops the turn and drops held approvals (the server rejects them on stop).
 - `:asking` — the server asked a question (`chat/askQuestion`, `question.clj`), answered from the input area; more may wait in `:questions`. Approvals and questions don't interrupt each other: `chat/settle-mode` picks what comes next once one is answered (then `:chatting` while `:turn-started-at` says a turn runs, else `:ready`). A server `progress: running` marks a turn as running even when the server started it.
 - `:picking` — a picker or panel (`:picker`). The model/agent/variant pickers (Alt+P…), `/model`, `/agent`, `/variant` and the history picker open mid-turn too, keeping the draft: approvals and questions arriving meanwhile wait (`request-approval`, `handle-ask-question`), a turn finishing (or a queued message starting one) leaves the picker open, and when a picker closes into `:ready`, `chat/after-picker` (from `update-state`) brings up what waited, else `:chatting` while the turn runs.
 - `:disconnected` — server exited (or failed to spawn / refused `initialize`). The reader thread queues a `:reader-error` whose `:error` is a ready-to-show report (exit code + tail of the server log, `server/exit-report`). Only scrolling and quitting work; quitting skips the protocol `shutdown` (also skipped in `:connecting`).
@@ -169,6 +169,8 @@ On exit, `render/finish!` bypasses the resize debounce, leaves the alternate scr
 - `src/eca_cli/picker.clj` — the pickers (model, agent, variant, chat, prompt history, `@`/`#`): filtering, selection, `at-label`
 - `src/eca_cli/selection.clj` — model / agent / variant: `choose` (pickers and keys alike), Shift+Tab / Alt+T / Ctrl+P·F2 cycling, recent models (picked ones, in the XDG state file `eca-cli-recent-models.edn`)
 - `src/eca_cli/editor.clj` — Ctrl+G: the prompt in `$VISUAL` / `$EDITOR` through `program/external`
+- `src/eca_cli/browser.clj` — opens a login's URL in the browser: `open` on macOS, `xdg-open` in a graphical session only
+- `src/eca_cli/clipboard.clj` — copying: OSC 52 through the renderer (`copy-in`) and the platform's clipboard tool
 - `src/eca_cli/startup.clj` — the command line's prompt, `-f`, `-c`, `--title` and `--model`/`--agent`/`--variant` pins in the TUI
 - `src/eca_cli/headless.clj` — print mode (`-p`), `--list-models`, `--list-chats`
 - `src/eca_cli/mcp.clj` — `:mcps` (`tool/serverUpdated` / `tool/serverRemoved`), the `/mcp` panel and its per-state actions (`actions-for` → `protocol/mcp-server-action!`), the status-line slot
@@ -216,13 +218,13 @@ Same as eca-emacs:
 
 ### Session persistence
 
-eca-cli generates a new chat's id itself (`chat/submit-prompt`, as the protocol recommends) and persists it to `~/.local/state/eca/eca-cli-chats.edn` (`$XDG_STATE_HOME`) keyed by workspace path; tests redirect that file (`test-support/isolated-chats-file`). Each startup begins a fresh session — no auto-resume. Use `/chats` to explicitly resume a previous chat. `/new` deletes the current chat and removes its entry from the chats file.
+eca-cli generates a new chat's id itself (`chat/submit-prompt`, as the protocol recommends) and persists it to `~/.local/state/eca/eca-cli-chats.edn` (`$XDG_STATE_HOME`) keyed by workspace path; tests redirect that file (`test-support/isolated-chats-file`). Each startup begins a fresh session — no auto-resume. Use `/chats` to explicitly resume a previous chat. `/new` (Ctrl+N) leaves the current chat on the server, as the other ECA clients do when a chat is closed, putting it first among the welcome's recent chats, and removes its entry from the chats file; deleting is the server's `/delete-chat` (it asks for `confirm`). `chat/deleted` (that command, another client, the chat retention) drops the chat from the recent ones, and for the chat on screen starts a fresh one (`chat/handle-chat-deleted`): the server tombstones a deleted id.
 
 Chat routing: `chat/contentReceived` is shown only for the chat on screen, or nested under a spawn call for its sub-agents; other chats' messages are dropped. `chat/opened` for another chat (the server forked one off this one: `/fork`, `/btw`) switches the view to it (`chat/switch-to-chat`); the `chat/prompt` response never takes `:chat-id` back. `chat/cleared` only applies to the chat on screen.
 
 ### Slash commands
 
-`commands/dispatch-command` handles Enter on `/…`: eca-cli's registry first (with arguments, a name the server also has goes to the server, e.g. `/model x/y`); otherwise the text is sent as a prompt and the server runs its own command (`/compact`, `/fork`, MCP prompts, skills…). Text that only starts with a slash (a path) is a message. A name neither knows is rejected only once the server's list is loaded. The list comes from `chat/queryCommands` into `:server-commands`: fetched after `initialize` and whenever the `/` picker opens.
+The `/` picker only helps find a command's name: a space leaves it, `/`, the name and the arguments going on in the input (`picker/leave-command-picker`), and Enter on a name nothing matches dispatches what was typed. Test commands by typing them key by key through `update-state`: setting the input and pressing Enter skips the picker. `commands/dispatch-command` handles Enter on `/…`: eca-cli's registry first (with arguments, a name the server also has goes to the server, e.g. `/model x/y`); otherwise the text is sent as a prompt and the server runs its own command (`/compact`, `/fork`, MCP prompts, skills…). Text that only starts with a slash (a path) is a message. A name neither knows is rejected only once the server's list is loaded. The list comes from `chat/queryCommands` into `:server-commands`: fetched after `initialize` and whenever the `/` picker opens.
 
 ### Context references (`@` / `#`)
 
@@ -233,6 +235,8 @@ On send (`chat/start-turn`), the contexts are the picked ones whose `@label` is 
 ### MCP and provider actions
 
 `/mcp`: Enter on a server opens its actions (`mcp/actions-for`, by status); they're notifications and the result comes back as `tool/serverUpdated`. Enable/disable rewrite the user's ECA config file, and log out drops the server's stored OAuth credentials (server-side, global): only start/stop are harmless to try against a real config. `/providers` logs in through the same `:login` flow as a prompt needing login; with no pending message the login ends in `:ready` with a note.
+
+A login step with a URL is made usable as eca-emacs does (`login/handle-eca-login-action`): an `authorize` URL is opened in the browser when there's one (`browser.clj`: `open` on macOS, `xdg-open` only in a graphical session, never a text browser on our terminal), sent to the clipboard (`clipboard/copy-in`'s OSC 52, which works over SSH, plus the platform's tool) and shown whole, cut into unindented rows of the terminal's width (`view/url-rows`): an OAuth URL runs to 400 characters, and JLine cuts a line wider than the terminal. A `device-code` login copies the code and opens the URL.
 
 ### Protocol reference
 

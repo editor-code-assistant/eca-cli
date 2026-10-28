@@ -61,17 +61,23 @@
                 [state nil]))))
 
 (defn cmd-new-chat
-  "A fresh chat, opening on the welcome. The current one is deleted."
+  "A fresh chat, opening on the welcome. The one left stays on the server,
+  first among the welcome's recent chats, to resume with /chats, as the
+  other ECA clients keep a closed chat (the server's /delete-chat deletes
+  one, asking first)."
   [state]
   (let [old-chat-id (:chat-id state)
+        left        (when old-chat-id {:id old-chat-id :title (:chat-title state) :ago "just now"})
         state'      (-> state
                         (assoc :chat-id nil :chat-title nil :scroll-offset 0)
-                        (update :recent-chats (fn [chats] (some->> chats (filterv #(not= old-chat-id (:id %))))))
+                        (cond-> left
+                          (update :recent-chats (fn [chats]
+                                                  (->> chats (remove #(= old-chat-id (:id %))) (cons left) (take 3) vec))))
                         welcome/fresh
                         (update :input #(-> % ti/reset ti/focus)))]
     (when old-chat-id
       (chats/save-chat-id! (get-in state [:opts :workspace]) nil))
-    [state' (when old-chat-id (chats/delete-chat-cmd (:server state) old-chat-id))]))
+    [state' nil]))
 
 (defn cmd-list-chats [state]
   [(update state :input ti/reset) (chats/list-chats-cmd (:server state))])

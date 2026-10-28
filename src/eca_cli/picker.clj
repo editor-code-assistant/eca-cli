@@ -274,6 +274,21 @@
        nil]
       [(-> state (assoc :mode :ready) (dissoc :picker) (update :input ti/focus)) nil])))
 
+(defn- space? [msg]
+  (and (msg/key-press? msg) (not (:ctrl msg)) (not (:alt msg))
+       (contains? #{" " :space} (:key msg))))
+
+(defn leave-command-picker
+  "The `/` picker gives way to the input, holding `/` and what was typed to
+  filter it, then `rest`: a command is typed with its arguments (`/rename My
+  chat`), the picker only helping to find its name."
+  [state rest]
+  (let [text (str "/" (get-in state [:picker :query]) rest)]
+    (-> state
+        (assoc :mode :ready)
+        (dissoc :picker)
+        (update :input #(-> % (ti/set-value text) (assoc :pos (count text)) ti/focus)))))
+
 (defn handle-key
   "Dispatch keypresses while :mode is :picking. Returns [new-state cmd-or-nil].
   Returns the original state unchanged for command-picker Enter — caller
@@ -281,6 +296,10 @@
   [state msg]
   (let [kind (get-in state [:picker :kind])]
     (cond
+      ;; A space after a command's name: its arguments follow, in the input.
+      (and (= :command kind) (space? msg))
+      [(leave-command-picker state " ") nil]
+
       (and (msg/key-press? msg) (msg/key-match? msg :enter))
       (case kind
         (:model :agent :variant) (select-model-or-agent state kind)

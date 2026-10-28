@@ -301,6 +301,76 @@
 ;; and remembered approvals included. Calls can wait in parallel, from the main
 ;; chat or a sub-agent: one is shown (`:pending-approval`), the others wait in
 ;; `:approval-queue`. Each is answered with the chat id it came from.
+;;
+;; An approval never takes keys meant as text. The input stays live while the
+;; agent works (steering), so one can arrive mid-word: it waits, its notice
+;; above the prompt, while the user is typing a message (`composing?`), and
+;; takes over at the first pause (`show-waiting-approval`). Once shown, a key
+;; that doesn't answer it goes to the message, and the approval steps aside
+;; again (`type-past-approval`); y / n / Y answer only after it's been on
+;; screen a moment (`approval-armed?`), so a word resumed after a short pause,
+;; or a key held down over a queue of approvals, never answers one.
+
+(def approval-quiet-ms
+  "How long the user must stop typing a message before a waiting approval
+  takes over the prompt."
+  1500)
+
+(def approval-arm-ms
+  "How long an approval is on screen before y / n / Y answer it: quicker
+  than reading it, they're typing that was already under way."
+  400)
+
+(defn composing?
+  "Whether the user is typing a message: text in the prompt, changed within
+  the last `approval-quiet-ms` (`:typed-at`, kept by `eca-cli.state`)."
+  [state now]
+  (boolean (and (:typed-at state)
+                (< (- now (:typed-at state)) approval-quiet-ms)
+                (not (str/blank? (ti/value (:input state)))))))
+
+(defn approval-armed?
+  "Whether y / n / Y answer the approval on screen: it's been there for
+  `approval-arm-ms` (`:approval-shown-at`, kept by `eca-cli.state`)."
+  [state now]
+  (let [t (:approval-shown-at state)]
+    (or (nil? t) (>= (- now t) approval-arm-ms))))
+
+(defn- typing-mode-for
+  "The mode typing goes back to: :chatting while a turn runs, else :ready."
+  [state]
+  (if (:turn-started-at state) :chatting :ready))
+
+(defn step-aside
+  "The approval on screen gives the prompt back for typing; it shows again
+  when the user pauses (`show-waiting-approval`)."
+  [state]
+  (assoc state :mode (typing-mode-for state) :approval-held? true))
+
+(defn approval-held?
+  "Whether the approval waits for the user to stop typing (`:approval-held?`),
+  the prompt on screen meanwhile."
+  [state]
+  (boolean (and (:approval-held? state)
+                (:pending-approval state)
+                (#{:ready :chatting} (:mode state)))))
+
+(defn show-waiting-approval
+  "An approval held back while the user typed takes over the prompt once
+  they pause (`composing?`)."
+  [state now]
+  (if (and (approval-held? state) (not (composing? state now)))
+    (-> state (assoc :mode :approving) (dissoc :approval-held?))
+    state))
+
+(defn insert-text
+  "`s` typed into `input` at the cursor."
+  [input s]
+  (let [v   (str (ti/value input))
+        pos (min (count v) (max 0 (or (ti/position input) (count v))))]
+    (-> input
+        (ti/set-value (str (subs v 0 pos) s (subs v pos)))
+        (assoc :pos (+ pos (count s))))))
 
 (defn enter-asking
   "Ask the first pending question (`eca-cli.question`): it takes over the
@@ -319,7 +389,7 @@
   [state]
   (cond
     (not (#{:approving :asking} (:mode state))) state
-    (:pending-approval state)                   (assoc state :mode :approving)
+    (:pending-approval state)                   (-> state (assoc :mode :approving) (dissoc :approval-held?))
     (seq (:questions state))                    (enter-asking state)
     :else
     (let [mode (if (:turn-started-at state) :chatting :ready)]
@@ -335,7 +405,7 @@
   [state]
   (if (= :ready (:mode state))
     (cond
-      (:pending-approval state) (assoc state :mode :approving)
+      (:pending-approval state) (-> state (assoc :mode :approving) (dissoc :approval-held?))
       (seq (:questions state))  (enter-asking state)
       (:turn-started-at state)  (assoc state :mode :chatting)
       :else                     state)
@@ -343,17 +413,19 @@
 
 (defn request-approval
   "Ask the user to approve tool call `id` of chat `chat-id`, now or after
-  what's already waiting. A question being answered, or a picker (one can
-  open while the agent works: Alt+P…), isn't interrupted: keys typed to
-  filter it mustn't answer the approval."
+  what's already waiting. A question being answered, a picker (one can
+  open while the agent works: Alt+P…) or a message being typed isn't
+  interrupted: keys typed for them mustn't answer the approval. A message
+  holds it only until the user pauses (`show-waiting-approval`)."
   [state chat-id id]
   (let [req {:chat-id chat-id :tool-call-id id}]
     (cond
       (= id (get-in state [:pending-approval :tool-call-id]))  state
       (some #(= id (:tool-call-id %)) (:approval-queue state)) state
       (:pending-approval state) (update state :approval-queue (fnil conj []) req)
-      :else (cond-> (assoc state :pending-approval req)
-              (not (#{:asking :picking} (:mode state))) (assoc :mode :approving)))))
+      (#{:asking :picking} (:mode state)) (assoc state :pending-approval req)
+      (composing? state (System/currentTimeMillis)) (assoc state :pending-approval req :approval-held? true)
+      :else (assoc state :pending-approval req :mode :approving))))
 
 (defn next-approval
   "The shown approval was answered: show the next waiting one, else whatever
@@ -362,7 +434,7 @@
   (settle-mode
     (if-let [[req & more] (seq (:approval-queue state))]
       (assoc state :pending-approval req :approval-queue (vec more))
-      (assoc state :pending-approval nil :approval-queue []))))
+      (-> state (assoc :pending-approval nil :approval-queue []) (dissoc :approval-held?)))))
 
 (defn- settle-approval
   "Tool call `id` is past its approval (it runs, finished or was rejected,
@@ -373,7 +445,7 @@
     (update state :approval-queue #(vec (remove (fn [req] (= id (:tool-call-id req))) %)))))
 
 (defn clear-approvals [state]
-  (assoc state :pending-approval nil :approval-queue []))
+  (-> state (assoc :pending-approval nil :approval-queue []) (dissoc :approval-held?)))
 
 (defn- track-approval
   "Approval bookkeeping for a tool-call event of chat `chat-id` (the main chat
@@ -846,6 +918,26 @@
        (and messages (this-chat? state chatId)) clear-chat-view)
      nil]))
 
+(defn handle-chat-deleted
+  "ECA `chat/deleted` (the server's /delete-chat, another client, the chat
+  retention): the chat leaves the welcome's recent ones, and if it's the one
+  on screen, a fresh chat takes its place, as with /new: the server won't
+  take the deleted id back."
+  [state {:keys [chatId]}]
+  (let [state (update state :recent-chats #(some->> % (filterv (fn [c] (not= chatId (:id c))))))]
+    (if (and chatId (= chatId (:chat-id state)))
+      (do (chats/save-chat-id! (get-in state [:opts :workspace]) nil)
+          (-> state
+              clear-chat-view
+              (assoc :chat-id nil :chat-title nil :echo-pending false)
+              (dissoc :turn-started-at :stopping? :steered :queued)
+              (cond-> (#{:chatting :approving} (:mode state)) (assoc :mode :ready))
+              welcome/fresh
+              (update :items conj {:type :system :level :info :text "This chat was deleted: a new one starts here."})
+              (update :input ti/focus)
+              view/rebuild-lines))
+      (welcome/refresh state))))
+
 (defn handle-content-received
   "ECA `chat/contentReceived` notification handler.
 
@@ -933,28 +1025,58 @@
 
 ;; --- Approval key dispatch (:approving mode) ---
 
+(defn- typing-key?
+  "A key that edits a message: a character, Backspace, Delete, or a new
+  line (Ctrl+J, Shift+Enter). Not while a transcript block is focused,
+  where letters are the reader's keys."
+  [state msg]
+  (and (msg/key-press? msg)
+       (not (and (:transcript? state) (:focus-path state)))
+       (or (picker/printable-char? msg)
+           (msg/key-match? msg :backspace)
+           (msg/key-match? msg :delete)
+           (msg/key-match? msg "ctrl+j")
+           (and (= :enter (:key msg)) (:shift msg) (not (:alt msg)) (not (:ctrl msg))))))
+
+(defn type-past-approval
+  "A key typed while an approval is shown that isn't an answer to it: it
+  goes to the message, and the approval steps aside until the user pauses
+  (`show-waiting-approval`)."
+  [state msg]
+  (let [state (step-aside state)]
+    (if (or (msg/key-match? msg "ctrl+j") (= :enter (:key msg)))
+      [(update state :input insert-text "\n") nil]
+      (let [[input cmd] (ti/text-input-update (:input state) msg)]
+        [(assoc state :input input) cmd]))))
+
 (defn handle-approval-key
   "y approve · Y approve & remember (server-side, for the chat and its
-  sub-agents; just the listed commands for shell calls) · n reject. Caller
-  guarantees mode = :approving."
+  sub-agents; just the listed commands for shell calls) · n reject, once
+  the approval has been on screen for `approval-arm-ms`. Other typing (and
+  y / n / Y sooner) goes to the message instead (`type-past-approval`).
+  Caller guarantees mode = :approving."
   [state msg]
   (let [{:keys [chat-id tool-call-id]} (:pending-approval state)
-        press? #(and (msg/key-press? msg) (msg/key-match? msg %))]
+        press? #(and (msg/key-press? msg) (msg/key-match? msg %))
+        armed? (approval-armed? state (System/currentTimeMillis))]
     (cond
-      (press? "y")
+      (and armed? (press? "y"))
       (do (protocol/approve-tool! (:server state) chat-id tool-call-id)
           [(next-approval state) nil])
 
       ;; Nothing left to remember (e.g. only always-ask commands): a plain approve.
-      (press? "Y")
+      (and armed? (press? "Y"))
       (let [save (when-not (= [] (blocks/remember-keys (get-in state [:tool-calls tool-call-id])))
                    "session")]
         (protocol/approve-tool! (:server state) chat-id tool-call-id save)
         [(next-approval state) nil])
 
-      (press? "n")
+      (and armed? (press? "n"))
       (do (protocol/reject-tool! (:server state) chat-id tool-call-id)
           [(next-approval state) nil])
+
+      (typing-key? state msg)
+      (type-past-approval state msg)
 
       :else [state nil])))
 
@@ -1064,11 +1186,12 @@
 
 (defn cancel-turn
   "Stop the running prompt (Esc, Ctrl+C); unsent steer and queued text go
-  back to the input rather than being sent."
+  back to the input rather than being sent. Approvals still waiting go too:
+  stopping rejects them on the server."
   [state]
   (when (:chat-id state)
     (protocol/stop-prompt! (:server state) (:chat-id state)))
-  (-> state take-back-pending (assoc :mode :ready) (update :input ti/focus)))
+  (-> state take-back-pending clear-approvals (assoc :mode :ready) (update :input ti/focus)))
 
 (defn- history-prev [state]
   (let [history (:input-history state)
@@ -1225,9 +1348,9 @@
   [state]
   (if-let [text (blocks/copy-text (get-in state (focused-item-path (:focus-path state))))]
     (let [n (count (str/split-lines text))]
-      [(assoc state
-              :clipboard {:id (inc (or (get-in state [:clipboard :id]) 0)) :osc (clipboard/osc52 text)}
-              :flash (str "Copied " n (if (= 1 n) " line" " lines")))
+      [(-> state
+           (clipboard/copy-in text)
+           (assoc :flash (str "Copied " n (if (= 1 n) " line" " lines"))))
        (program/cmd (fn [] (clipboard/copy-with-tool! text) nil))])
     [(assoc state :flash "Nothing to copy") nil]))
 
