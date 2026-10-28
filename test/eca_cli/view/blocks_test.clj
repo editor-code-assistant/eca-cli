@@ -277,6 +277,73 @@
         (is (clojure.string/includes? (first lines) "edit_file  Editing foo.clj +1 −1"))
         (is (= "  /tmp/foo.clj" (second lines)))))))
 
+(def ^:private sh {:commands [{:command "git" :args ["status"] :approval-key "git status"}]})
+
+(defn- shell-item [m]
+  (merge {:type :tool-call :state :called :name "shell_command" :summary "$ git st..." :shell sh} m))
+
+(deftest shell-result-test
+  (is (= {:exit 0 :stderr nil :stdout "a\nb"} (blocks/shell-result "Exit code: 0\nStdout:\na\nb")))
+  (is (= {:exit 1 :stderr "boom" :stdout "ok"} (blocks/shell-result "Exit code: 1\nStderr:\nboom\nStdout:\nok")))
+  (is (= {:exit 0 :stderr nil :stdout nil} (blocks/shell-result "Exit code: 0")))
+  (is (= {:stdout "Command timed out after 10 ms"} (blocks/shell-result "Command timed out after 10 ms")))
+  (is (nil? (blocks/shell-result nil))))
+
+(deftest shell-collapsed-test
+  (testing "the whole command, not the server's cropped summary, then an output preview"
+    (is (= ["✓ $ git status && git log --oneline -5  2s"
+            "  ⎿ one"
+            "    two"
+            "    three"
+            "    … +2 lines (alt+o to expand)"]
+           (plain (blocks/render-item-lines
+                    (shell-item {:arguments {:command "git status && git log --oneline -5"}
+                                 :out-text "Exit code: 0\nStdout:\none\ntwo\nthree\nfour\nfive"
+                                 :total-ms 2300})
+                    80)))))
+  (testing "a `cd <working dir> &&` prefix is dropped"
+    (is (= "✓ $ ls"
+           (first (plain (blocks/render-item-lines
+                           (shell-item {:arguments {:command (str "cd " (System/getProperty "user.dir") " && ls")}
+                                        :out-text "Exit code: 0\nStdout:\na"})
+                           80))))))
+  (testing "a failure says its exit code, its stderr in red"
+    (let [lines (blocks/render-item-lines
+                  (shell-item {:error? true :arguments {:command "bb test"}
+                               :out-text "Exit code: 1\nStderr:\nboom\nStdout:\nok"})
+                  80)]
+      (is (= ["✗ $ bb test  exit 1" "  ⎿ boom" "    ok"] (plain lines)))
+      (is (clojure.string/includes? (second lines) (str ansi-red "boom")))))
+  (testing "no output, running, rejected"
+    (is (= ["✓ $ touch a" "  ⎿ (no output)"]
+           (plain (blocks/render-item-lines (shell-item {:arguments {:command "touch a"} :out-text "Exit code: 0"}) 80))))
+    (is (= ["◌ $ sleep 5" "  ⎿ running…"]
+           (plain (blocks/render-item-lines (shell-item {:state :running :arguments {:command "sleep 5"}}) 80))))
+    (is (= ["✗ $ rm -rf /" "  ⎿ rejected"]
+           (plain (blocks/render-item-lines (shell-item {:state :rejected :arguments {:command "rm -rf /"}}) 80)))))
+  (testing "a long multi-line command keeps its lines, clipped after three rows"
+    (is (= ["◌ $ cat <<'EOF' > x" "    line1" "    line2…  · background" "  ⎿ running…"]
+           (plain (blocks/render-item-lines
+                    (shell-item {:state :running :shell (assoc sh :background? true)
+                                 :arguments {:command "cat <<'EOF' > x\nline1\nline2\nline3\nEOF"}})
+                    40)))))
+  (testing "long output lines are kept to one row"
+    (let [lines (plain (blocks/render-item-lines
+                         (shell-item {:arguments {:command "cat big"}
+                                      :out-text (str "Exit code: 0\nStdout:\n" (apply str (repeat 200 "x")))})
+                         40))]
+      (is (= 2 (count lines)))
+      (is (clojure.string/ends-with? (second lines) "…"))
+      (is (<= (theme/width (second lines)) 40))))
+  (testing "expanded: the output box drops the server's headers"
+    (let [lines (plain (blocks/render-item-lines
+                         (shell-item {:expanded? true :arguments {:command "bb test"}
+                                      :out-text "Exit code: 1\nStderr:\nboom"})
+                         60))]
+      (is (some #(clojure.string/includes? % "Output · exit 1") lines))
+      (is (some #(clojure.string/includes? % "boom") lines))
+      (is (not-any? #(clojure.string/includes? % "Stderr:") lines)))))
+
 (deftest display-path-test
   (let [cwd (System/getProperty "user.dir")]
     (is (= "src/a.clj" (blocks/display-path (str cwd "/src/a.clj"))))

@@ -4,7 +4,8 @@
   thinking, hook, system, link. Each item type maps to a vector of pre-wrapped
   display lines in `render-item-lines`. Message text goes through the
   markdown renderer; colours come from `eca-cli.theme` roles."
-  (:require [clojure.string :as str]
+  (:require [charm.ansi.width :as aw]
+            [clojure.string :as str]
             [eca-cli.markdown :as markdown]
             [eca-cli.paths :as paths]
             [eca-cli.theme :as theme]
@@ -160,9 +161,100 @@
            (when (get-in item [:shell :background?])
              [(str "  " (paint :muted "runs in the background"))])))))
 
+(defn shell-result
+  "A shell call's output split as the server writes it (`Exit code: N`, then
+  `Stderr:` and `Stdout:` sections): `{:exit :stderr :stdout}`. Output in any
+  other form (a timeout, a background job started) is all `:stdout`. Nil when
+  there is none."
+  [text]
+  (when (seq (str text))
+    (if-let [[_ code err out] (re-matches #"(?s)Exit code: (-?\d+)(?:\nStderr:\n(.*?))?(?:\nStdout:\n(.*))?"
+                                          (str text))]
+      {:exit (parse-long code) :stderr err :stdout out}
+      {:stdout (str text)})))
+
+(defn- shell-output-text
+  "A shell call's output without the server's section headers."
+  [{:keys [stderr stdout]}]
+  (not-empty (str/join "\n" (remove str/blank? [stderr stdout]))))
+
+(defn- strip-cd-prefix
+  "`cmd` without a leading `cd <working dir> && `: noise, as the call runs there."
+  [cmd]
+  (let [cwd (System/getProperty "user.dir")]
+    (if-let [[m path] (re-find #"^cd\s+(\S+)\s*(?:&&|;)\s*" cmd)]
+      (if (= path cwd) (subs cmd (count m)) cmd)
+      cmd)))
+
+(def ^:private shell-command-max-lines 3)
+(def ^:private shell-preview-max-lines 3)
+
+(defn- shell-preview-lines
+  "Claude Code style: the first lines of the output under a `⎿`, each kept to
+  one row, then how many more there are. Stderr is red when the call failed."
+  [{:keys [stderr stdout exit]} width]
+  (let [failed? (and exit (not (zero? exit)))
+        clean   (fn [s] (-> (theme/strip-ansi s) (str/replace "\t" "  ") str/trimr))
+        lines   (concat (map (fn [l] [(if failed? :error :muted) l])
+                             (some-> stderr not-empty str/split-lines))
+                        (map (fn [l] [:muted l])
+                             (some-> stdout not-empty str/split-lines)))
+        lines   (vec (drop-while #(str/blank? (second %)) lines))
+        lines   (loop [ls lines] (if (and (seq ls) (str/blank? (second (peek ls)))) (recur (pop ls)) ls))
+        shown   (take shell-preview-max-lines lines)
+        more    (- (count lines) (count shown))
+        inner-w (max 1 (- width 4))
+        rows    (if (seq shown)
+                  (mapv (fn [[role l]]
+                          (let [l (clean l)]
+                            (paint role (if (> (theme/width l) inner-w) (aw/truncate l inner-w :tail "…") l))))
+                        shown)
+                  [(paint :muted "(no output)")])
+        rows    (cond-> rows
+                  (pos? more) (conj (paint :muted (str "… +" more (if (= 1 more) " line" " lines")
+                                                       " (alt+o to expand)"))))]
+    (prefixed rows (str "  " (paint :muted "⎿") " ") "    ")))
+
 (defn- steps-badge [item]
   (when (seq (:sub-items item))
     (paint :muted (str "  ▸ " (count (:sub-items item)) " steps"))))
+
+(defn- shell-collapsed-lines
+  "A collapsed shell call, as Claude Code shows it: the whole command (up to
+  a few rows, its line breaks kept), then a preview of its output. A failed
+  call says its exit code; a background one says so."
+  [item icon duration width]
+  (let [cmd      (strip-cd-prefix (str/trim (str (get-in item [:arguments :command]))))
+        run?     (= :run (:state item))
+        inner-w  (max 1 (- width 4))
+        rows     (mapcat #(wrap/wrap-text % inner-w) (str/split-lines cmd))
+        clipped? (> (count rows) shell-command-max-lines)
+        rows     (cond-> (vec (take shell-command-max-lines rows))
+                   clipped? (update (dec shell-command-max-lines)
+                                    #(let [l (str/trimr %)]
+                                       (str (if (>= (theme/width l) inner-w)
+                                              (aw/truncate l (dec inner-w) :tail "")
+                                              l)
+                                            "…"))))
+        rows     (mapv #(if run? (paint :bold %) %) rows)
+        res      (shell-result (:out-text item))
+        exit     (:exit res)
+        suffix   (str (when (and exit (not (zero? exit))) (paint :error (str "  exit " exit)))
+                      (when (get-in item [:shell :background?]) (paint :muted "  · background"))
+                      (steps-badge item)
+                      (or duration ""))
+        lines    (prefixed rows (str icon " " (paint :muted "$") " ") "    ")
+        last'    (str (peek lines) suffix)
+        lines    (cond
+                   (str/blank? (theme/strip-ansi suffix)) lines
+                   (<= (theme/width last') width)        (conj (pop lines) last')
+                   :else                                 (conj lines (str "    " (str/triml suffix))))]
+    (vec (concat lines
+                 (case (:state item)
+                   :called   (shell-preview-lines res width)
+                   :running  [(str "  " (paint :muted "⎿") " " (paint :muted "running…"))]
+                   :rejected [(str "  " (paint :muted "⎿") " " (paint :muted "rejected"))]
+                   nil)))))
 
 (defn display-path
   "`path` as shown above a diff: relative to the working directory when inside
@@ -204,9 +296,15 @@
                        (render-diff edit width))
 
                      (and (:shell item) (get-in item [:arguments :command]))
-                     (concat (shell-lines item width)
-                             (when (:out-text item)
-                               (render-box "Output" (:out-text item) width)))
+                     (let [res  (shell-result (:out-text item))
+                           exit (:exit res)]
+                       (concat (shell-lines item width)
+                               (when res
+                                 (render-box (if (and exit (not (zero? exit)))
+                                               (str "Output · exit " exit)
+                                               "Output")
+                                             (or (shell-output-text res) "(no output)")
+                                             width))))
 
                      :else
                      (concat
@@ -219,15 +317,17 @@
                                (map #(str "  " %) (render-item-lines sub (- width 2))))
                              (:sub-items item)))]
         (vec (concat [header] body subs)))
-      (let [badge  (edit-label edit)
-            ;; A question it asked the user (ask_user), answered.
-            answer (cond
-                     (:cancelled? item)   (paint :muted "  ✗ cancelled")
-                     (some? (:answer item)) (str "  " (paint :success "→") " "
-                                                 (let [a (str/replace (str (:answer item)) #"\s+" " ")]
-                                                   (if (> (count a) 60) (str (subs a 0 59) "…") a))))
-            label  (if (= :run (:state item)) (paint :bold summary) summary)]
-        [(str icon " " label (or badge "") (or answer "") (steps-badge item) (or duration ""))]))))
+      (if (and (:shell item) (get-in item [:arguments :command]))
+        (shell-collapsed-lines item icon duration width)
+        (let [badge  (edit-label edit)
+              ;; A question it asked the user (ask_user), answered.
+              answer (cond
+                       (:cancelled? item)   (paint :muted "  ✗ cancelled")
+                       (some? (:answer item)) (str "  " (paint :success "→") " "
+                                                   (let [a (str/replace (str (:answer item)) #"\s+" " ")]
+                                                     (if (> (count a) 60) (str (subs a 0 59) "…") a))))
+              label  (if (= :run (:state item)) (paint :bold summary) summary)]
+          [(str icon " " label (or badge "") (or answer "") (steps-badge item) (or duration ""))])))))
 
 (defn- thinking-lines [item width]
   (let [label   (if (= :thought (:status item))
