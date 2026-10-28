@@ -181,6 +181,7 @@
   "[keys what] rows for `?` and /keys, by group."
   [["Prompt"
     [["Enter" "send; while the agent works, steer it"]
+     ["Ctrl+J" "new line (also Shift+Enter where the terminal allows, or \\ then Enter)"]
      ["Alt+Enter" "while the agent works, queue a message for when it's done"]
      ["↑ / ↓" "prompt history (↑ on an empty input mid-turn: take back the steer)"]
      ["Ctrl+R" "search the prompt history"]

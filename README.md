@@ -56,10 +56,42 @@ Press `Ctrl+O` to open the full-screen transcript: inspect, expand and scroll th
 ## Usage
 
 ```
-eca-cli [--workspace <path>] [--model <model>] [--agent <agent>] [--trust] [--fullscreen] [--eca <path>]
+eca-cli [options] [prompt]
 ```
 
-Run `eca-cli --help` for details.
+```bash
+eca-cli                                  # chat in the current directory
+eca-cli "explain this project"           # start the chat with a prompt
+eca-cli -c                               # continue the workspace's latest chat
+eca-cli -f src/core.clj "what's wrong?"  # attach files (repeatable)
+eca-cli --model anthropic/claude-sonnet-4-6 --agent plan --variant high
+```
+
+Run `eca-cli --help` for all the options.
+
+### Scripting
+
+With `-p` (and whenever stdin or stdout isn't a terminal), eca-cli runs the prompt, prints the answer and exits:
+
+```bash
+eca-cli -p "what does src/main.clj do?"
+git diff | eca-cli -p "review this change"        # piped input is context for the prompt
+echo "list the TODOs" | eca-cli                   # ...or the prompt itself
+eca-cli -p -c "now add tests for it" --trust       # continue the latest chat
+eca-cli -p "summarize the changes" --output-format json --ephemeral
+```
+
+| Option | Action |
+|---|---|
+| `--output-format text\|json\|stream-json` | `text`: the answer. `json`: one result object (`chatId`, `result`, `isError`, `error`, `model`, `usage`, `durationMs`, `rejectedToolCalls`). `stream-json`: an `init` line, the server's chat events as they come (`{"type":"chat/contentReceived","params":…}`, see ECA's protocol), then the result |
+| `-o, --output-last-message <file>` | Also write the answer to a file |
+| `--ephemeral` | Delete the chat afterwards |
+| `--title <title>` | Name the chat (also in the TUI) |
+| `--trust` | Approve the tool calls that would ask. Without it, eca-cli rejects them (saying so on stderr): nobody is there to approve |
+| `--list-models`, `--list-chats` | List the models, or the workspace's chats; `--json` for JSON |
+| `--log-level`, `--verbose`, `--config-file` | Passed to the ECA server: its log level, protocol logging, a config file replacing the global and project ones |
+
+What the agent does goes to stderr when it's a terminal; stdout only gets the answer. Exit codes: `0`, `1` when the turn fails (a provider error, a login needed, the server gone), `2` for bad options, `130` on Ctrl+C. Piped input must start coming within a second (eca-cli won't wait on a stdin left open with nothing to say); for a slow command, save its output first.
 
 ### Commands
 
@@ -94,6 +126,7 @@ Type `/` in an empty input to pick one. The picker also lists the ECA server's o
 | Key | Action |
 |---|---|
 | `Enter` | Send message / toggle the focused block; while the agent works, steer it |
+| `Ctrl+J` | New line (also `Shift+Enter` where the terminal tells it from `Enter`, or `\` then `Enter`) |
 | `@` / `#` | Add a context / insert a path (at the start of a word) |
 | `Alt+Enter` | While the agent works, queue a message for when it's done |
 | `↑` on an empty input | While the agent works, take back what you steered or queued |

@@ -59,21 +59,24 @@
   "Make `value` the `kind` (:model, :agent or :variant, nil for none) of the
   next prompts. The server hears of a model or agent; a variant is sent with
   each prompt. A new model drops the variant: the server says which applies
-  (`config/updated`)."
+  (`config/updated`). The user's pick ends the command line's (`:pins`)."
   [state kind value]
   (case kind
     :model   (do (protocol/selected-model-changed! (:server state) value)
                  (-> state
                      (assoc :selected-model value :selected-variant nil)
                      (assoc-in [:opts :model] value)
-                     (update :opts dissoc :variant)))
+                     (update :opts dissoc :variant)
+                     (update :pins (fnil disj #{}) :model :variant)))
     :agent   (do (protocol/selected-agent-changed! (:server state) value)
                  (-> state
                      (assoc :selected-agent value)
-                     (assoc-in [:opts :agent] value)))
+                     (assoc-in [:opts :agent] value)
+                     (update :pins (fnil disj #{}) :agent)))
     :variant (-> state
                  (assoc :selected-variant value)
-                 (assoc-in [:opts :variant] value))))
+                 (assoc-in [:opts :variant] value)
+                 (update :pins (fnil disj #{}) :variant))))
 
 ;; --- Cycling ---
 

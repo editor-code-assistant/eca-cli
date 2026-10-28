@@ -12,6 +12,9 @@ bb run --eca /path/to/eca     # specify ECA binary explicitly
 bb run --workspace /path      # set workspace root (default: cwd)
 bb run --model <model>        # specify model
 bb run --agent <agent>        # specify agent
+bb run "prompt"               # start the chat with a prompt (-c: in the latest chat; -f <file>: attach)
+bb run -p "prompt"            # print mode: the answer on stdout, then exit (see headless.clj)
+bb run --list-models          # or --list-chats; --json
 bb run --version / --help     # what the release binary answers as `eca-cli --version` / `--help`
 bb nrepl                      # start nREPL for development
 bb upgrade-eca [--force]      # check for / install the latest ECA server now (automatic on `bb run`)
@@ -60,7 +63,7 @@ Requests *from* the server (an `:id` and a `:method`, e.g. `chat/askQuestion`) a
 
 ### Startup
 
-`core/parse-args` handles `--help`, `--version` and invalid options (unknown flags and stray arguments exit 1 with a hint) without touching the workspace or the server. Otherwise `core/-main` resolves the ECA binary *before* the TUI takes over the terminal (`upgrade/resolve-binary!`, which may download/update the managed binary with progress on stderr; fatal errors print and exit 1), sends the terminal's `enacs` sequence (`terminal/enable-alt-charset!`, see below), then starts `program/run` with `:init`, `:update` and `:frame view/frame`. Inline is the default; `--fullscreen` opts into the previous alternate-screen layout.
+`core/parse-args` (its own tokenizer, not babashka.cli's parser: options may follow the prompt, `-f` takes one value per use, short flags group) handles `--help`, `--version` and invalid options (exit 2 with a hint) without touching the workspace or the server; the words left over are the prompt (`:prompt`). `core/start!` then picks the mode: `--list-models` / `--list-chats`, print mode (`-p`, or stdin or stdout not a terminal, `terminal/tty?`), else the TUI. Print mode reads piped stdin if it starts within a second (`terminal/read-stdin`: a caller may leave stdin open with nothing to say), as the prompt's `text` context or as the prompt. `--log-level`, `--verbose` and `--config-file` become `eca server`'s args (`core/server-args`, `server/spawn!`'s `:args`). Otherwise `core/-main` resolves the ECA binary *before* the TUI takes over the terminal (`upgrade/resolve-binary!`, which may download/update the managed binary with progress on stderr; fatal errors print and exit 1), sends the terminal's `enacs` sequence (`terminal/enable-alt-charset!`, see below), then starts `program/run` with `:init`, `:update` and `:frame view/frame`. Inline is the default; `--fullscreen` opts into the previous alternate-screen layout.
 
 ### Event loop (adapted from charm.clj)
 
@@ -128,6 +131,12 @@ JLine receives **hard-delimited rows**: each attributed line ends with a newline
 
 Normal inline resizing uses native terminal history reflow and JLine live-region reflow, with a **150 ms debounce** after the last resize (`render/due?` retries even without input). Full-screen geometry changes reset only the alternate screen. The sole inline reanchor case is when the old live region, measured after reflow, exceeds the viewport and its origin is lost: clear only the visible live screen and establish a new origin. This condition stays latched across subsequent resizes, even while the transcript hides the normal screen. **Never clear terminal scrollback**, on resize, transcript toggles or epoch changes.
 
+### Command-line startup and print mode
+
+`startup.clj` carries out what the command line asks of the TUI: `startup/init` (merged into the initial state) pins `--model`/`--agent`/`--variant` (`:pins`: `chat/handle-config-updated` doesn't let the server's `select*` replace them; `selection/choose` unpins) and keeps the prompt, `-f`'s contexts and `-c` in `:startup`. `on-ready` (initialize answered) sends `selectedAgentChanged`/`selectedModelChanged` (so the server offers that model's variants) and, for `-c`, lists the chats; `handle-continue` opens the latest (its `chat/open` response goes onto the server queue, behind the replay, as `:startup-continued`). `startup/tick`, run at the end of every `:eca-tick` (empty ones too), sends the prompt once `server-ready?`: models in, no `$/progress` task running, none started for `quiet-ms` (a prompt sent before models sync fails "No available model found"). `after-turn` applies `--title` once the first turn is over: the server's generated title for a new chat would replace an earlier one.
+
+`headless.clj` is print mode and the lists, without charm: the same `server.clj`/`protocol.clj`, a loop over the server queue (`handle-message` / `handle-content`), initialize without the `askQuestion` capability, `await-ready` as above, then one `chat/prompt` (`prompt-params`: `@path`s spelled out like the TUI's, `-f` contexts, stdin as a `text` context). It rejects calls with `manualApproval` (never approves: the server already applied trust and the user's rules), cancels questions, and finishes on the chat's `progress: finished`, whose `error` (servers ≥ 0.169) makes the exit code 1. The answer (`final-text`) is the assistant text after the last tool call, else before it, else the server's notes (command output). stdout only gets the answer or JSON; warnings go to stderr, progress too when it's a terminal. Tests run it against `test/eca_cli/fixtures/headless_eca.clj`, a scripted server recording what it receives.
+
 ### Welcome screen
 
 A new chat opens on a `:welcome` item, the first of `:items`: `welcome.clj` builds it from the state, `view/welcome.clj` draws it (a box titled with the versions; logo | greeting, model, agent, workspace | tips and recent chats, folding into fewer columns as the width shrinks). `make-init` and `/new` put it in (`welcome/fresh`); `welcome/refresh` rebuilds it in place as the facts arrive after startup:
@@ -160,6 +169,8 @@ On exit, `render/finish!` bypasses the resize debounce, leaves the alternate scr
 - `src/eca_cli/picker.clj` — the pickers (model, agent, variant, chat, prompt history, `@`/`#`): filtering, selection, `at-label`
 - `src/eca_cli/selection.clj` — model / agent / variant: `choose` (pickers and keys alike), Shift+Tab / Alt+T / Ctrl+P·F2 cycling, recent models (picked ones, in the XDG state file `eca-cli-recent-models.edn`)
 - `src/eca_cli/editor.clj` — Ctrl+G: the prompt in `$VISUAL` / `$EDITOR` through `program/external`
+- `src/eca_cli/startup.clj` — the command line's prompt, `-f`, `-c`, `--title` and `--model`/`--agent`/`--variant` pins in the TUI
+- `src/eca_cli/headless.clj` — print mode (`-p`), `--list-models`, `--list-chats`
 - `src/eca_cli/mcp.clj` — `:mcps` (`tool/serverUpdated` / `tool/serverRemoved`), the `/mcp` panel and its per-state actions (`actions-for` → `protocol/mcp-server-action!`), the status-line slot
 - `src/eca_cli/providers.clj` — `/providers`: the `providers/list` panel (login state, source, expiry, models, quota), log in through `login.clj`'s flow, `providers/logout`
 - `src/eca_cli/history.clj` — `/rollback`, `/flag`, `/flags` (jump / fork / remove), `/timeline`: two-step pickers over the chat's `:user` items (`:content-id` from the server's echo) and `:flag` items. Rollback and add-flag make the server clear the chat and replay it.

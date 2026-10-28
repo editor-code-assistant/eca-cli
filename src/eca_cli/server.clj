@@ -25,11 +25,12 @@
     f))
 
 (defn spawn!
-  "Spawns the ECA server process. Returns a map with :process, :reader,
-  :writer, :queue, :alive? and :log-file (where the server's stderr goes, nil
-  when inherited)."
+  "Spawns the ECA server process (`eca server`, then `args`: --log-level,
+  --verbose, --config-file). Returns a map with :process, :reader, :writer,
+  :queue, :alive? and :log-file (where the server's stderr goes, nil when
+  inherited)."
   ([] (spawn! {}))
-  ([{:keys [path log-file]}]
+  ([{:keys [path log-file args]}]
    (let [binary    (or path (find-eca-binary))
          _         (when-not binary
                      (throw (ex-info
@@ -41,7 +42,7 @@
          err       (or log
                        (do (.println System/err (str "eca-cli: warning: could not create " (.getParent candidate) " — ECA logs will appear in terminal"))
                            :inherit))
-         p         (proc/process [binary "server"]
+         p         (proc/process (into [binary "server"] args)
                                  {:err err :shutdown proc/destroy-tree})
          reader    (BufferedInputStream. (:out p))
          writer    (BufferedWriter. (OutputStreamWriter. (:in p) "UTF-8"))

@@ -8,8 +8,8 @@
   - The renderer (`eca-cli.render`): inline, with the chat in the
     terminal's history, or full screen, frame by frame.
 
-  - The input loop knows Shift+Tab and can pause, for Ctrl+G's editor
-    (see `external`).
+  - The input loop knows Shift+Tab, Ctrl+J and Shift+Enter, and can pause,
+    for Ctrl+G's editor (see `external`).
 
   Adapted from `charm.program/run` (de.timokramer/charm.clj 0.2.71, MIT
   License); its command execution and resize check are reused as they are.
@@ -31,11 +31,30 @@
 (def ^:private read-timeout-ms 100)
 
 (defn- keymap
-  "charm's keymap, plus Shift+Tab (CSI Z, terminfo's `kcbt`), which charm
-  doesn't know: it would arrive as an :unknown key."
+  "charm's keymap, plus keys it doesn't know (they'd arrive as :unknown):
+  Shift+Tab (CSI Z, terminfo's `kcbt`), and Shift+Enter where the terminal
+  tells it from Enter (kitty's CSI 13;2u, xterm's modifyOtherKeys
+  CSI 27;2;13~)."
   [terminal]
   (doto ^KeyMap (km/create-keymap terminal)
-    (.bind {:type :tab :shift true} "[Z")))
+    (.bind {:type :tab :shift true} "[Z")
+    (.bind {:type :enter :shift true} "[13;2u")
+    (.bind {:type :enter :shift true} "[27;2;13~")))
+
+(def ^:private read-escape-sequence @#'input/read-escape-sequence)
+
+(defn- read-event
+  "The next input event, or nil after `read-timeout-ms`: charm's
+  `read-event`, except that LF is Ctrl+J. charm reads it as Enter, but in
+  raw mode Enter sends CR, so Ctrl+J can insert a newline instead."
+  [^Terminal terminal km]
+  (let [reader (.reader terminal)
+        c      (try (.read reader (long read-timeout-ms)) (catch java.io.IOException _ -1))]
+    (cond
+      (neg? c)  nil
+      (= 27 c)  (input/parse-input c (read-escape-sequence reader read-timeout-ms) km)
+      (= 10 c)  {:type :runes :runes "j" :ctrl true}
+      :else     (input/parse-input c))))
 
 (defn- event->msg
   "A charm input event as a message, as `charm.program`'s input loop does."
@@ -65,7 +84,7 @@
                      (try
                        (if @paused?
                          (Thread/sleep 20)
-                         (when-let [event (input/read-event terminal :timeout-ms read-timeout-ms :keymap km)]
+                         (when-let [event (read-event terminal km)]
                            (a/put! msg-chan (event->msg event))))
                        (catch InterruptedException _
                          (reset! running? false))

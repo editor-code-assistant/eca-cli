@@ -46,16 +46,19 @@
 
 (defn initialize-params
   "Builds the initialize request params. `processId` lets the server exit on
-  its own if eca-cli dies without a clean shutdown (e.g. SIGKILL)."
-  [workspace-path]
-  (let [name (.getName (java.io.File. workspace-path))]
-    {:processId (.pid (java.lang.ProcessHandle/current))
-     :clientInfo {:name "eca-cli" :version version/version}
-     :capabilities {:codeAssistant {:chat             true
-                                    ;; chat/askQuestion: the ask_user tool, /login choices
-                                    :chatCapabilities {:askQuestion true}}}
-     :workspaceFolders [{:uri (str "file://" workspace-path)
-                         :name name}]}))
+  its own if eca-cli dies without a clean shutdown (e.g. SIGKILL). Without
+  `ask-question?` (a headless run: nobody to answer), the server doesn't ask
+  questions (the ask_user tool is off)."
+  ([workspace-path] (initialize-params workspace-path {:ask-question? true}))
+  ([workspace-path {:keys [ask-question?]}]
+   (let [name (.getName (java.io.File. workspace-path))]
+     {:processId (.pid (java.lang.ProcessHandle/current))
+      :clientInfo {:name "eca-cli" :version version/version}
+      :capabilities {:codeAssistant {:chat             true
+                                     ;; chat/askQuestion: the ask_user tool, /login choices
+                                     :chatCapabilities {:askQuestion (boolean ask-question?)}}}
+      :workspaceFolders [{:uri (str "file://" workspace-path)
+                          :name name}]})))
 
 (defn chat-prompt-params
   "Builds chat/prompt request params."
@@ -110,9 +113,12 @@
   "Sends the initialize request; `callback` receives the raw response. Not
   bounded by a timeout: the server may legitimately take a while (e.g. config
   commands fetching provider tokens), and a server that dies instead is
-  reported by the reader thread. Send `initialized!` once the response is in."
-  [srv workspace-path callback]
-  (send-request! srv "initialize" (initialize-params workspace-path) callback))
+  reported by the reader thread. Send `initialized!` once the response is in.
+  `opts`: see `initialize-params`."
+  ([srv workspace-path callback]
+   (initialize! srv workspace-path {:ask-question? true} callback))
+  ([srv workspace-path opts callback]
+   (send-request! srv "initialize" (initialize-params workspace-path opts) callback)))
 
 (defn initialized! [srv]
   (send-notification! srv "initialized" {}))
@@ -200,8 +206,12 @@
                    chat-id (assoc :chatId chat-id))
                  callback))
 
-(defn list-chats! [srv callback]
-  (send-request! srv "chat/list" {:limit 20} callback))
+(defn list-chats!
+  "chat/list: the workspace's chats, most recently updated first (20 by
+  default; `limit` 0: all)."
+  ([srv callback] (list-chats! srv 20 callback))
+  ([srv limit callback]
+   (send-request! srv "chat/list" {:limit limit :sortBy "updatedAt"} callback)))
 
 (defn open-chat! [srv chat-id callback]
   (send-request! srv "chat/open" {:chatId chat-id} callback))

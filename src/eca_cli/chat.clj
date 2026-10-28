@@ -423,7 +423,7 @@
     (when-let [path (existing-path token workspace)]
       {:type (if (.isDirectory (io/file path)) "directory" "file") :path path})))
 
-(defn- contexts-for-text
+(defn contexts-for-text
   "The contexts `text` refers to: the picked ones (`contexts`) whose `@label`
   (see `picker/at-label`) it still has, so the ones deleted from the
   message are dropped, then the workspace files and directories it names
@@ -437,7 +437,7 @@
          typed   (keep #(when-not (labels %) (typed-context % workspace)) tokens)]
      (vec (distinct (concat picked typed))))))
 
-(defn- expand-refs
+(defn expand-refs
   "`text` as sent: the `@label`s of files and directories (`contexts`, or
   typed by hand) spelled out as `@/full/path`, `#path`s that exist as the
   bare full path. Anything else stays as typed."
@@ -768,15 +768,18 @@
   (let [{:keys [chat chatId]} (:params notification)
         ;; Per-chat fields scoped to another chat don't concern this one.
         mine? (or (nil? chatId) (nil? (:chat-id state)) (= chatId (:chat-id state)))
+        ;; What the command line asked for (--model…) wins until the user
+        ;; picks another (`eca-cli.startup`, `selection/choose`).
+        takes (fn [kind k] (and mine? (contains? chat k) (not (contains? (:pins state) kind))))
         own-welcome (when (welcome/custom-message? (:welcomeMessage chat)) (:welcomeMessage chat))
         s'    (cond-> state
                 (:models chat)                  (assoc :available-models (:models chat))
                 (:agents chat)                  (assoc :available-agents (:agents chat))
-                (and mine? (contains? chat :selectModel))   (assoc :selected-model (:selectModel chat))
-                (and mine? (contains? chat :selectAgent))   (assoc :selected-agent (:selectAgent chat))
+                (takes :model :selectModel)     (assoc :selected-model (:selectModel chat))
+                (takes :agent :selectAgent)     (assoc :selected-agent (:selectAgent chat))
                 (contains? chat :variants)      (assoc :available-variants (:variants chat))
-                (and mine? (contains? chat :selectVariant)) (-> (assoc :selected-variant (:selectVariant chat))
-                                                                (assoc-in [:opts :variant] (:selectVariant chat)))
+                (takes :variant :selectVariant) (-> (assoc :selected-variant (:selectVariant chat))
+                                                    (assoc-in [:opts :variant] (:selectVariant chat)))
                 (and mine? (contains? chat :selectTrust))   (-> (assoc :trust (true? (:selectTrust chat)))
                                                                 (assoc-in [:opts :trust] (true? (:selectTrust chat))))
                 own-welcome                     (update :items conj {:type :assistant-text :text own-welcome})
@@ -1004,6 +1007,26 @@
                       :backward (if (nil? cur-idx) (last paths)  (nth paths (mod (dec cur-idx) n))))]
         [(-> state (assoc :focus-path next) sync-focus view/rebuild-lines ensure-focus-visible) nil]))))
 
+(defn- escaped-enter?
+  "Enter right after a `\\`: Claude Code's way to type a newline in a
+  terminal that can't send Shift+Enter (Ctrl+J always works)."
+  [state]
+  (let [input (:input state)
+        v     (str (ti/value input))
+        pos   (min (count v) (max 0 (or (ti/position input) (count v))))]
+    (and (pos? pos) (= \\ (.charAt v (dec pos))))))
+
+(defn- backslash->newline
+  "The `\\` before the cursor becomes a newline."
+  [state]
+  (update state :input
+          (fn [input]
+            (let [v   (str (ti/value input))
+                  pos (min (count v) (max 0 (or (ti/position input) (count v))))]
+              (-> input
+                  (ti/set-value (str (subs v 0 (dec pos)) "\n" (subs v pos)))
+                  (assoc :pos pos))))))
+
 (defn- enter-submit-prompt [state]
   (let [text (str/trim (ti/value (:input state)))]
     (if (seq text)
@@ -1159,6 +1182,11 @@
     (let [[i j] (:focus-path state)
           item-path (if j [:items i :sub-items j] [:items i])]
       [(-> state (update-in item-path update :expanded? not) view/rebuild-lines ensure-focus-visible) nil])
+
+    ;; --- `\` then Enter: a newline instead of sending or steering ---
+    (and (msg/key-press? msg) (msg/key-match? msg :enter) (not (alt-enter? msg))
+         (#{:ready :chatting} (:mode state)) (escaped-enter? state))
+    [(backslash->newline state) nil]
 
     ;; --- Enter in :ready: non-slash text submission. State.clj handles slash dispatch. ---
     (and (or (and (msg/key-press? msg) (msg/key-match? msg :enter)) (alt-enter? msg))

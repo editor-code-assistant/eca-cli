@@ -19,7 +19,8 @@
             [eca-cli.transcript :as transcript]
             [eca-cli.commands :as commands]
             [eca-cli.editor :as editor]
-            [eca-cli.selection :as selection]))
+            [eca-cli.selection :as selection]
+            [eca-cli.startup :as startup]))
 
 ;; Expose last-known state for nREPL inspection
 (def debug-state (atom nil))
@@ -91,11 +92,13 @@
     (login/handle-providers-updated state (:params notification))
 
     "$/progress"
-    (let [{:keys [type taskId title]} (:params notification)]
+    (let [{:keys [type taskId title]} (:params notification)
+          ;; When a task last started or ended: see `startup/server-ready?`.
+          stamp #(assoc % :init-tasks-at (System/currentTimeMillis))]
       [(case type
-         "start"  (assoc-in state [:init-tasks taskId] {:title title :done? false})
+         "start"  (stamp (assoc-in state [:init-tasks taskId] {:title title :done? false}))
          "finish" (if (contains? (:init-tasks state) taskId)
-                    (assoc-in state [:init-tasks taskId :done?] true)
+                    (stamp (assoc-in state [:init-tasks taskId :done?] true))
                     state)
          state)
        nil])
@@ -193,13 +196,21 @@
                           [(disconnect s (:error m)) cmd]
 
                           (= :eca-initialize-response (:type m))
-                          (let [s' (handle-initialize-response s (:response m))]
+                          (let [s'    (handle-initialize-response s (:response m))
+                                ready? (and (= :connecting (:mode s)) (= :ready (:mode s')))
+                                [s' startup-cmd] (if ready? (startup/on-ready s') [s' nil])]
                             ;; Ready: fetch the server's commands for the `/`
-                            ;; picker, the recent chats for the welcome.
+                            ;; picker, the recent chats for the welcome, and
+                            ;; what the command line asked for.
                             [s' (cond-> cmd
-                                  (and (= :connecting (:mode s)) (= :ready (:mode s')))
+                                  ready?
                                   (program/batch (commands/query-commands-cmd (:server s') nil)
-                                                 (welcome/recent-chats-cmd (:server s'))))])
+                                                 (welcome/recent-chats-cmd (:server s'))
+                                                 startup-cmd))])
+
+                          ;; -c's chat is open, its replay applied (it came first).
+                          (= :startup-continued (:type m))
+                          [(startup/handle-continued s) cmd]
 
                           (= :eca-prompt-response (:type m))
                           ;; The chat id is ours (submit-prompt); the response
@@ -218,11 +229,14 @@
 
                           :else [s cmd]))
                       [state nil]
-                      msgs))]
-    [(if @rebuild? (view/rebuild-lines s') s') cmd]))
+                      msgs))
+        ;; Every tick (empty ones too): the command line's prompt, once the
+        ;; server is ready; --title, once the first turn is over.
+        [s' startup-cmd] (startup/tick (startup/after-turn s') (System/currentTimeMillis))]
+    [(if @rebuild? (view/rebuild-lines s') s') (if startup-cmd (program/batch cmd startup-cmd) cmd)]))
 
 
-(defn- initial-state [srv opts]
+(defn- base-state [srv opts]
   {:mode                  :connecting
    :connecting-since      (System/currentTimeMillis)
    :server                srv
@@ -266,6 +280,10 @@
    :mcps                  {}
    :model                 nil
    :usage                 nil})
+
+(defn- initial-state [srv opts]
+  ;; The command line's prompt, files, -c, --model… (`eca-cli.startup`).
+  (merge (base-state srv opts) (startup/init opts)))
 
 (defn- add-notices
   "Append startup notices (e.g. an update check skipped while offline) as
@@ -383,6 +401,20 @@
 (defn- key? [msg k]
   (and (msg/key-press? msg) (msg/key-match? msg k)))
 
+(defn- newline-key?
+  "Ctrl+J, as in Claude Code (`program/read-event` tells it from Enter), or
+  Shift+Enter where the terminal tells it from Enter."
+  [msg]
+  (and (msg/key-press? msg)
+       (or (msg/key-match? msg "ctrl+j")
+           (and (= :enter (:key msg)) (:shift msg) (not (:alt msg)) (not (:ctrl msg))))))
+
+(defn- newline-mode?
+  "Typing a message, or a free answer to a question."
+  [state]
+  (or (contains? #{:ready :chatting} (:mode state))
+      (and (= :asking (:mode state)) (:allow-freeform? (first (:questions state))))))
+
 (defn- shift-tab? [msg]
   (and (msg/key-press? msg) (= :tab (:key msg)) (:shift msg) (not (:alt msg)) (not (:ctrl msg))))
 
@@ -436,6 +468,7 @@
       (= :eca-jobs-output (:type msg))     (jobs/handle-jobs-output state msg)
       (= :quit-hint-expired (:type msg))   [(commands/quit-hint-expired state msg) nil]
       (= :esc-hint-expired (:type msg))    [(commands/esc-hint-expired state msg) nil]
+      (= :startup-continue (:type msg))    (startup/handle-continue state (:chat-id msg))
       (= :editor-done (:type msg))         [(editor/handle-done state msg) nil]
       (= :recent-chats-loaded (:type msg)) [(welcome/handle-recent-chats state (:chats msg)) nil]
       (= :server-version (:type msg))      [(welcome/handle-server-version state (:version msg)) nil]
@@ -505,6 +538,10 @@
 
       (and (msg/key-press? msg) (msg/key-match? msg "ctrl+o"))
       [(chat/toggle-transcript state) nil]
+
+      ;; A new line in what's typed; Enter sends (or steers).
+      (and (newline-mode? state) (newline-key? msg))
+      [(update state :input insert-text "\n") nil]
 
       ;; Transcript inspection must not submit the draft, approve a tool,
       ;; answer a question or select a picker entry when Enter unfolds a block.

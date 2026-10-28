@@ -148,8 +148,8 @@ jobs:
           tar -xzf "dist/eca-cli-$PLATFORM.tar.gz"
           ./eca-cli --help
           test "$(./eca-cli --version)" = "eca-cli $VERSION"
-          # Startup up to the ECA server lookup, which fails before the TUI starts.
-          if ./eca-cli --eca /nonexistent/eca 2> err.txt; then
+          # Startup (print mode) up to the ECA server lookup, which fails first.
+          if ./eca-cli -p hi --eca /nonexistent/eca < /dev/null 2> err.txt; then
             echo "::error::expected a missing --eca binary to fail"
             exit 1
           fi

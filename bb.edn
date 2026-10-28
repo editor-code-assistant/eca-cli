@@ -29,6 +29,7 @@
                                 (require '[eca-cli.core-test])
                                 (require '[eca-cli.dist-test])
                                 (require '[eca-cli.extras-test])
+                                (require '[eca-cli.headless-test])
                                 (require '[eca-cli.history-test])
                                 (require '[eca-cli.jobs-test])
                                 (require '[eca-cli.lifecycle-test])
@@ -41,6 +42,7 @@
                                 (require '[eca-cli.quit-test])
                                 (require '[eca-cli.render-test])
                                 (require '[eca-cli.shortcuts-test])
+                                (require '[eca-cli.startup-test])
                                 (require '[eca-cli.steer-test])
                                 (require '[eca-cli.tasks-test])
                                 (require '[eca-cli.transcript-test])
@@ -63,6 +65,7 @@
                                                               'eca-cli.core-test
                                                               'eca-cli.dist-test
                                                               'eca-cli.extras-test
+                                                              'eca-cli.headless-test
                                                               'eca-cli.history-test
                                                               'eca-cli.jobs-test
                                                               'eca-cli.lifecycle-test
@@ -75,6 +78,7 @@
                                                               'eca-cli.quit-test
                                                               'eca-cli.render-test
                                                               'eca-cli.shortcuts-test
+                                                              'eca-cli.startup-test
                                                               'eca-cli.steer-test
                                                               'eca-cli.tasks-test
                                                               'eca-cli.transcript-test

@@ -89,6 +89,53 @@
       (is (= [0] (:focus-path (press s (msg/key-press :tab)))))
       (is (nil? (:focus-path (press s shift-tab)))))))
 
+;; --- New lines ---
+
+(deftest newline-keys-parse-test
+  (let [km (#'program/keymap nil)]
+    (testing "Shift+Enter, in the terminals that tell it from Enter"
+      (is (= {:type :enter :shift true} (input/parse-input 27 "[13;2u" km)))
+      (is (= {:type :enter :shift true} (input/parse-input 27 "[27;2;13~" km))))))
+
+(deftest newline-keys-test
+  (let [ctrl-j      (msg/key-press "j" :ctrl true)
+        shift-enter (msg/key-press :enter :shift true)]
+    (doseq [k [ctrl-j shift-enter]]
+      (testing (str k " inserts a newline at the cursor, sending nothing")
+        (let [[s cmd] (state/update-state (typed (base-state) "first") k)]
+          (is (nil? cmd))
+          (is (= "first\n" (ti/value (:input s))))
+          (is (= :ready (:mode s)))
+          (is (empty? (:items s)))))
+      (testing (str k " while the agent works: a newline, not a steer")
+        (let [sent (atom [])
+              s    (with-redefs [protocol/steer-prompt! (fn [& args] (swap! sent conj args))]
+                     (press (chatting (typed (base-state) "wait")) k))]
+          (is (= "wait\n" (ti/value (:input s))))
+          (is (empty? @sent))
+          (is (nil? (:steered s))))))
+    (testing "in a free answer to a question too"
+      (let [s (-> (base-state)
+                  (assoc :mode :asking :questions [{:request-id 1 :question "?" :options [] :allow-freeform? true}])
+                  (typed "line one"))]
+        (is (= "line one\n" (ti/value (:input (press s ctrl-j))))))))
+  (testing "`\\` then Enter: the backslash becomes a newline"
+    (let [[s cmd] (state/update-state (typed (base-state) "first \\") enter)]
+      (is (nil? cmd))
+      (is (= "first \n" (ti/value (:input s))))
+      (is (empty? (:items s)) "nothing sent"))
+    (let [sent (atom [])
+          s    (with-redefs [protocol/steer-prompt! (fn [& args] (swap! sent conj args))]
+                 (press (chatting (typed (base-state) "more\\")) enter))]
+      (is (= "more\n" (ti/value (:input s))))
+      (is (empty? @sent) "no steer")))
+  (testing "Enter still steers while the agent works"
+    (let [sent (atom [])
+          s    (with-redefs [protocol/steer-prompt! (fn [_ _ text] (swap! sent conj text))]
+                 (press (chatting (typed (base-state) "go left")) enter))]
+      (is (= ["go left"] @sent))
+      (is (= "" (ti/value (:input s)))))))
+
 ;; --- Agent, variant, model ---
 
 (deftest shift-tab-cycles-agents-test
