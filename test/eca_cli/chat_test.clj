@@ -194,6 +194,38 @@
         (is (= {"sub-9" 0} (:subagent-chats s)))
         (is (= "found" (get-in s [:items 0 :sub-items 0 :text])))))))
 
+(deftest turn-usage-content-test
+  (let [usage   {:type "turnUsage" :model "anthropic/claude-sonnet-4-5" :totalTimeMs 9800
+                 :outputTokens 412 :inputTokens 45200 :cost "0.03"}
+        receive (fn [s params] (first (chat/handle-content-received s {:method "chat/contentReceived"
+                                                                       :params params})))]
+    (testing "the end of a turn: a line under its answer, the text still streaming flushed first"
+      (let [s (receive (assoc (base-state) :current-text "Done.")
+                       {:chatId "chat1" :role "system" :content usage})]
+        (is (= [{:type :assistant-text :text "Done."}
+                {:type :turn-usage :model "anthropic/claude-sonnet-4-5" :total-ms 9800
+                 :output-tokens 412 :input-tokens 45200 :cost "0.03"}]
+               (:items s)))
+        (is (= "" (:current-text s)))
+        (is (some #(str/includes? % "claude-sonnet-4-5 · 9.8s · 412 output tokens · $0.03") (:chat-lines s)))))
+    (testing "a replayed chat (/chats, rollback) gets it after each turn's answer"
+      (let [s (reduce receive (assoc (base-state) :mode :ready)
+                      [{:chatId "chat1" :role "user" :content {:type "text" :text "hi" :contentId "u1"}}
+                       {:chatId "chat1" :role "assistant" :content {:type "text" :text "Hello"}}
+                       {:chatId "chat1" :role "system" :content usage}
+                       {:chatId "chat1" :role "user" :content {:type "text" :text "next" :contentId "u2"}}])]
+        (is (= [:user :assistant-text :turn-usage :user] (mapv :type (:items s))))))
+    (testing "a sub-agent's turn gets none, in its spawn call or in the chat"
+      (let [s0 (assoc (base-state) :items [{:type :tool-call :id "sp" :name "spawn_agent" :server "eca"
+                                            :state :running :sub-items [] :subagent-chat-id "sub-1"}]
+                                   :subagent-chats {"sub-1" 0})
+            s  (receive s0 {:chatId "sub-1" :parentChatId "chat1" :role "system" :content usage})]
+        (is (= [] (get-in s [:items 0 :sub-items])))
+        (is (= 1 (count (:items s))))))
+    (testing "nothing to tell: no line"
+      (is (= [] (:items (receive (base-state) {:chatId "chat1" :role "system"
+                                               :content {:type "turnUsage"}})))))))
+
 (deftest chat-cleared-handler-test
   (testing "chat/cleared with messages:true clears items and scroll"
     (let [s0 (assoc (base-state)

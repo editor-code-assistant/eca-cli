@@ -124,7 +124,20 @@
                             [{:type :thinking :id "r" :status :thought :text "hmm" :expanded? true}
                              {:type :tool-call :id "b" :state :called :summary "two"}]
                             "" 80)]
-      (is (= "" (nth lines 2))))))
+      (is (= "" (nth lines 2)))))
+
+  (testing "what a turn used sits right under the end of the turn, then the usual blank line"
+    (let [usage {:type :turn-usage :model "m" :total-ms 1000 :output-tokens 5}]
+      (is (= ["" "┃ hi" "" "◆ done" "  m · 1.0s · 5 output tokens" "" "" "┃ again" ""]
+             (mapv theme/strip-ansi (:lines (view/rebuild-chat-lines
+                                              [{:type :user :text "hi"} {:type :assistant-text :text "done"}
+                                               usage {:type :user :text "again"}]
+                                              "" 80)))))
+      (is (= ["✓ one" "  m · 1.0s · 5 output tokens" ""]
+             (mapv theme/strip-ansi (:lines (view/rebuild-chat-lines
+                                              [{:type :tool-call :id "a" :state :called :summary "one"} usage]
+                                              "" 80))))
+          "a turn ending on a tool call"))))
 
 (deftest rebuild-lines-deferred-test
   (let [state {:items [{:type :assistant-text :text "hi"}] :current-text "" :width 40 :chat-lines []}]
@@ -140,12 +153,13 @@
 
 (def ^:private mixed-items
   "Every spacing rule: user messages, stacked compact rows, an expanded one,
-  text, notes."
+  text, what a turn used, notes."
   [{:type :user :text "hi"}
    {:type :thinking :id "r1" :status :thought :text "hmm"}
    {:type :tool-call :id "a" :state :called :summary "one"}
    {:type :tool-call :id "b" :state :called :summary "two"}
    {:type :assistant-text :text "done"}
+   {:type :turn-usage :model "m" :total-ms 1000 :output-tokens 5}
    {:type :tool-call :id "c" :state :called :summary "three" :expanded? true :args-text "{}"}
    {:type :hook :id "h" :name "lint" :status :ok}
    {:type :system :text "note"}

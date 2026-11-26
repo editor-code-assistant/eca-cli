@@ -57,7 +57,9 @@
         (let [rendered (render-item item width)
               next-it  (get all (inc idx))
               block    (if (or (= :user (:type item))
-                               (and (compact? item) next-it (compact? next-it)))
+                               (and (compact? item) next-it (compact? next-it))
+                               ;; what the turn used goes right under its end
+                               (= :turn-usage (:type next-it)))
                          rendered
                          (conj (vec rendered) ""))
               start    (count lines)
@@ -77,7 +79,8 @@
   [prev item]
   (boolean (and prev
                 (not= :user (:type prev))
-                (not (and (compact? prev) (compact? item))))))
+                (not (and (compact? prev) (compact? item)))
+                (not= :turn-usage (:type item)))))
 
 (defn- unfocused
   "`item` without the focus highlight: the history keeps no selection."

@@ -714,6 +714,20 @@
           flush-current-text
           (update :items conj {:type :server-note :text text})))))
 
+(defn content->turn-usage
+  "A `turnUsage` content, what a whole turn used (sent right before its
+  `progress: finished`, and after its last message when the chat is
+  replayed), as a :turn-usage item: the line under its answer. Nil when it
+  has nothing to show."
+  [{:keys [model totalTimeMs outputTokens inputTokens cost]}]
+  (let [item (cond-> {:type :turn-usage}
+               model        (assoc :model model)
+               totalTimeMs  (assoc :total-ms totalTimeMs)
+               outputTokens (assoc :output-tokens outputTokens)
+               inputTokens  (assoc :input-tokens inputTokens)
+               cost         (assoc :cost cost))]
+    (when (blocks/turn-usage-text item) item)))
+
 (defn handle-content [state params]
   (let [content (:content params)]
     (case (:type content)
@@ -842,6 +856,16 @@
 
       "usage"
       (assoc state :usage content)
+
+      ;; The turn ended (or a replayed one did): what it used, under its
+      ;; answer. A sub-agent's turns get none, `add-sub-content` drops them.
+      "turnUsage"
+      (if-let [item (content->turn-usage content)]
+        (-> state
+            flush-current-text
+            (update :items conj item)
+            view/rebuild-lines)
+        state)
 
       state)))
 

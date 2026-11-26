@@ -21,17 +21,9 @@
 
 ;; --- Numbers ---
 
-(defn friendly-number
-  "52900 → \"52.9K\", 1000000 → \"1M\", 999 → \"999\". Locale-independent."
-  [n]
-  (when (number? n)
-    (let [fmt (fn [x suffix]
-                (let [s (str (/ (Math/round (* 10.0 x)) 10.0))]
-                  (str (if (str/ends-with? s ".0") (subs s 0 (- (count s) 2)) s) suffix)))]
-      (cond
-        (>= (abs n) 1000000) (fmt (/ n 1000000.0) "M")
-        (>= (abs n) 1000)    (fmt (/ n 1000.0) "K")
-        :else                (str (long n))))))
+(def friendly-number
+  "52900 → \"52.9K\", see `eca-cli.view.blocks/friendly-number`."
+  blocks/friendly-number)
 
 (defn- money [s]
   (when (seq (str s))

@@ -1,9 +1,9 @@
 (ns eca-cli.view.blocks
   "Per-item block renderers for the chat area: assistant text, user message,
   tool call (collapsed + expanded with arguments / output / sub-items),
-  thinking, hook, system, link. Each item type maps to a vector of pre-wrapped
-  display lines in `render-item-lines`. Message text goes through the
-  markdown renderer; colours come from `eca-cli.theme` roles."
+  thinking, hook, system, link, what a turn used. Each item type maps to a
+  vector of pre-wrapped display lines in `render-item-lines`. Message text
+  goes through the markdown renderer; colours come from `eca-cli.theme` roles."
   (:require [charm.ansi.width :as aw]
             [clojure.string :as str]
             [eca-cli.markdown :as markdown]
@@ -22,6 +22,45 @@
       (if (< secs 60)
         (str secs "s")
         (str (quot secs 60) "m" (when (pos? (mod secs 60)) (str " " (mod secs 60) "s")))))))
+
+(defn friendly-number
+  "52900 → \"52.9K\", 1000000 → \"1M\", 999 → \"999\". Locale-independent."
+  [n]
+  (when (number? n)
+    (let [fmt (fn [x suffix]
+                (let [s (str (/ (Math/round (* 10.0 x)) 10.0))]
+                  (str (if (str/ends-with? s ".0") (subs s 0 (- (count s) 2)) s) suffix)))]
+      (cond
+        (>= (abs n) 1000000) (fmt (/ n 1000000.0) "M")
+        (>= (abs n) 1000)    (fmt (/ n 1000.0) "K")
+        :else                (str (long n))))))
+
+(defn turn-time
+  "How long a turn took, `ms`: `9.8s` under a minute, then `1m 12s`, `1m`,
+  `1h 5m`, as eca-emacs tells it."
+  [ms]
+  (if (< ms 59950)
+    (format "%.1fs" (/ ms 1000.0))
+    (let [secs (Math/round (/ (double ms) 1000))
+          h    (quot secs 3600)
+          m    (quot (mod secs 3600) 60)
+          s    (mod secs 60)]
+      (if (zero? h)
+        (str m "m" (when (pos? s) (str " " s "s")))
+        (str h "h" (when (pos? m) (str " " m "m")))))))
+
+(defn turn-usage-text
+  "The line telling what a turn used (a `:turn-usage` item), what it has of
+  its model, how long it took, the tokens the model generated and its cost:
+  `claude-sonnet-4-5 · 9.8s · 412 output tokens · $0.03`. Nil when none."
+  [{:keys [model total-ms output-tokens cost]}]
+  (not-empty
+    (str/join " · " (remove nil? [(some-> model (str/split #"/") last)
+                                  (when (number? total-ms) (turn-time total-ms))
+                                  (when (number? output-tokens)
+                                    (str (friendly-number output-tokens) " output token"
+                                         (when (not= 1 output-tokens) "s")))
+                                  (some->> cost str not-empty (str "$"))]))))
 
 (defn- render-box [label text width]
   (let [box-w   (max 4 (- width 2))
@@ -423,6 +462,13 @@
           ;; aligned columns stay as laid out.
           (prefixed (markdown/render (:text item) (max 1 (- width 2)) {:base :server-note})
                     (str (paint :server-note "•") " ") "  ")
+
+          :turn-usage
+          ;; What the turn used, right under its answer (see
+          ;; `eca-cli.view/separated?`): muted, aligned with the answer's text.
+          (if-let [text (turn-usage-text item)]
+            (mapv #(str "  " (paint :muted %)) (wrap/wrap-text text (max 1 (- width 2))))
+            [])
 
           :tool-call (tool-call-lines item width)
           :thinking  (thinking-lines item width)

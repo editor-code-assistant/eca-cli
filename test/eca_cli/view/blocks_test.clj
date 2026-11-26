@@ -119,6 +119,37 @@
   (is (= "2m" (blocks/format-duration 120000)))
   (is (= "2m 5s" (blocks/format-duration 125000))))
 
+(deftest turn-time-test
+  (is (= "9.8s" (blocks/turn-time 9800)))
+  (is (= "0.0s" (blocks/turn-time 0)))
+  (is (= "59.9s" (blocks/turn-time 59949)))
+  (is (= "1m" (blocks/turn-time 59960)) "a minute, not 60.0s")
+  (is (= "1m 12s" (blocks/turn-time 72400)))
+  (is (= "1h 5m" (blocks/turn-time 3900000)))
+  (is (= "2h" (blocks/turn-time 7200000))))
+
+(deftest turn-usage-lines-test
+  (let [item  {:type :turn-usage :model "anthropic/claude-sonnet-4-5" :total-ms 9800
+               :output-tokens 412 :input-tokens 45200 :cost "0.03"}
+        lines (fn [item width] (plain (blocks/render-item-lines item width)))]
+    (testing "the model, the time, the output tokens and the cost, aligned with the answer's text"
+      (is (= ["  claude-sonnet-4-5 · 9.8s · 412 output tokens · $0.03"] (lines item 80)))
+      (is (clojure.string/includes? (first (blocks/render-item-lines item 80)) (theme/sgr :muted))))
+    (testing "minutes, thousands of tokens, a model behind two providers"
+      (is (= ["  claude-opus-4-5 · 1m 12s · 2.4K output tokens · $1.20"]
+             (lines {:type :turn-usage :model "openrouter/anthropic/claude-opus-4-5" :total-ms 72400
+                     :output-tokens 2400 :cost "1.20"} 80))))
+    (testing "what it lacks is left out, like the cost with a subscription; one token"
+      (is (= ["  gpt-5.2 · 0.4s · 1 output token"]
+             (lines {:type :turn-usage :model "openai/gpt-5.2" :total-ms 400 :output-tokens 1} 80))))
+    (testing "wrapped to a narrow terminal rather than cut, which loses the colours"
+      (let [narrow (lines item 24)]
+        (is (< 1 (count narrow)))
+        (is (every? #(<= (theme/width %) 24) narrow))
+        (is (every? #(clojure.string/starts-with? % "  ") narrow))))
+    (testing "nothing to tell: no line"
+      (is (= [] (blocks/render-item-lines {:type :turn-usage} 80))))))
+
 (deftest activity-details-test
   (testing "a finished tool call shows how long it took"
     (is (= ["✓ $ bb test  12s"]
