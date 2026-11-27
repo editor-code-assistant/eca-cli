@@ -10,6 +10,7 @@
             [eca-cli.chat :as chat]
             [eca-cli.chats :as chats]
             [eca-cli.protocol :as protocol]
+            [eca-cli.state :as state]
             [eca-cli.view :as view]))
 
 (use-fixtures :each support/isolated-chats-file)
@@ -196,7 +197,7 @@
 
 (deftest turn-usage-content-test
   (let [usage   {:type "turnUsage" :model "anthropic/claude-sonnet-4-5" :totalTimeMs 9800
-                 :outputTokens 412 :inputTokens 45200 :cost "0.03"}
+                 :outputTokens 412 :outputTps 87 :inputTokens 45200 :cost "0.03"}
         receive (fn [s params] (first (chat/handle-content-received s {:method "chat/contentReceived"
                                                                        :params params})))]
     (testing "the end of a turn: a line under its answer, the text still streaming flushed first"
@@ -204,9 +205,14 @@
                        {:chatId "chat1" :role "system" :content usage})]
         (is (= [{:type :assistant-text :text "Done."}
                 {:type :turn-usage :model "anthropic/claude-sonnet-4-5" :total-ms 9800
-                 :output-tokens 412 :input-tokens 45200 :cost "0.03"}]
+                 :output-tokens 412 :tps 87 :input-tokens 45200 :cost "0.03"}]
                (:items s)))
         (is (= "" (:current-text s)))
+        (is (some #(str/includes? % "claude-sonnet-4-5 · 9.8s · 412 output tokens · 87 tok/s · $0.03")
+                  (:chat-lines s)))
+        (is (:turn-usage-shown? s) "it takes the turn's time and speed from the status line")))
+    (testing "no speed from servers up to 0.175.0"
+      (let [s (receive (base-state) {:chatId "chat1" :role "system" :content (dissoc usage :outputTps)})]
         (is (some #(str/includes? % "claude-sonnet-4-5 · 9.8s · 412 output tokens · $0.03") (:chat-lines s)))))
     (testing "a replayed chat (/chats, rollback) gets it after each turn's answer"
       (let [s (reduce receive (assoc (base-state) :mode :ready)
@@ -225,6 +231,44 @@
     (testing "nothing to tell: no line"
       (is (= [] (:items (receive (base-state) {:chatId "chat1" :role "system"
                                                :content {:type "turnUsage"}})))))))
+
+(deftest turn-time-and-speed-test
+  (let [receive (fn [s content]
+                  (first (chat/handle-content-received s {:method "chat/contentReceived"
+                                                          :params {:chatId "chat1" :role "system"
+                                                                   :content content}})))
+        usage   {:type "turnUsage" :model "anthropic/claude-sonnet-4-5" :totalTimeMs 9800
+                 :outputTokens 412 :outputTps 87 :inputTokens 45200}
+        running (assoc (base-state) :turn-started-at 1 :pending-contexts []
+                       :usage {:sessionTokens 1000 :messageOutputTps 112})
+        ;; As the server ends a turn: what it used, then `finished`.
+        ended   (-> running (receive usage) (receive {:type "progress" :state "finished"}))
+        fresh?  (fn [s]
+                  (is (number? (:turn-started-at s)))
+                  (is (not (:turn-usage-shown? s)))
+                  (is (nil? (get-in s [:usage :messageOutputTps])) "not the previous turn's speed")
+                  (is (= 1000 (get-in s [:usage :sessionTokens]))))]
+    (testing "the line under the answer of a turn takes its time and speed from the status line"
+      (is (:turn-usage-shown? ended))
+      (is (nil? (:turn-started-at ended)))
+      (is (number? (:last-turn-ms ended))))
+    (testing "not a line telling neither"
+      (is (not (:turn-usage-shown? (receive running {:type "turnUsage" :model "openai/gpt-5.2"
+                                                     :outputTokens 3 :inputTokens 5})))))
+    (testing "the next turn tells them again: one the server starts"
+      (fresh? (receive ended {:type "progress" :state "running" :text "Waiting model"}))
+      (fresh? (chat/handle-status-changed ended {:chatId "chat1" :status "running"})))
+    (testing "a running turn keeps telling its speed"
+      (let [s (receive running {:type "progress" :state "running" :text "Generating"})]
+        (is (= 112 (get-in s [:usage :messageOutputTps])))
+        (is (= 112 (get-in (chat/handle-status-changed s {:chatId "chat1" :status "running"})
+                           [:usage :messageOutputTps])))))
+    (testing "the next turn tells them again: one the user starts"
+      (with-redefs [protocol/chat-prompt! (fn [& _])]
+        (let [[s _] (state/update-state (assoc ended :input (ti/set-value (ti/focus (ti/text-input)) "next"))
+                                        (msg/key-press :enter))]
+          (is (= :chatting (:mode s)))
+          (fresh? s))))))
 
 (deftest chat-cleared-handler-test
   (testing "chat/cleared with messages:true clears items and scroll"

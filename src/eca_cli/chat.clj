@@ -558,6 +558,17 @@
              :model   (:model result)
              :status  (:status result)}))))
 
+(defn- begin-turn
+  "A turn starts, at `now`: it runs from then on. The status line tells its
+  time and speed again, until the line under its answer does (the
+  `turnUsage` content), never the speed of the previous turn's last
+  response."
+  [state now]
+  (-> state
+      (assoc :turn-started-at now)
+      (dissoc :turn-usage-shown?)
+      (update :usage dissoc :messageOutputTps)))
+
 (defn- start-turn
   "Send `text` as the user's next message and show it; the input is left
   alone. A new chat gets its id here, as the protocol recommends, so this
@@ -583,8 +594,8 @@
         flush-current-text
         (assoc :chat-id chat-id)
         (update :items conj {:type :user :text text})
-        (assoc :pending-message message :echo-pending true
-               :turn-started-at (System/currentTimeMillis))
+        (assoc :pending-message message :echo-pending true)
+        (begin-turn (System/currentTimeMillis))
         ;; A queued message sent while a picker is open: it stays open.
         (cond-> (not= :picking (:mode state)) (assoc :mode :chatting))
         (assoc :pending-contexts [])
@@ -685,7 +696,7 @@
     state
     (case status
       "running"  (cond-> (dissoc state :stopping?)
-                   (nil? (:turn-started-at state)) (assoc :turn-started-at (System/currentTimeMillis))
+                   (nil? (:turn-started-at state)) (begin-turn (System/currentTimeMillis))
                    (= :ready (:mode state))        (assoc :mode :chatting))
       "stopping" (assoc state :stopping? true)
       "idle"     (dissoc state :stopping?)
@@ -718,12 +729,13 @@
   "A `turnUsage` content, what a whole turn used (sent right before its
   `progress: finished`, and after its last message when the chat is
   replayed), as a :turn-usage item: the line under its answer. Nil when it
-  has nothing to show."
-  [{:keys [model totalTimeMs outputTokens inputTokens cost]}]
+  has nothing to show. Its speed, `outputTps`, comes from ECA 0.175.1 on."
+  [{:keys [model totalTimeMs outputTokens outputTps inputTokens cost]}]
   (let [item (cond-> {:type :turn-usage}
                model        (assoc :model model)
                totalTimeMs  (assoc :total-ms totalTimeMs)
                outputTokens (assoc :output-tokens outputTokens)
+               outputTps    (assoc :tps outputTps)
                inputTokens  (assoc :input-tokens inputTokens)
                cost         (assoc :cost cost))]
     (when (blocks/turn-usage-text item) item)))
@@ -760,7 +772,7 @@
         ;; for /btw): show it as running.
         "running"
         (cond-> state
-          (nil? (:turn-started-at state)) (assoc :turn-started-at (System/currentTimeMillis))
+          (nil? (:turn-started-at state)) (begin-turn (System/currentTimeMillis))
           (= :ready (:mode state))        (assoc :mode :chatting))
 
         state)
@@ -859,11 +871,14 @@
 
       ;; The turn ended (or a replayed one did): what it used, under its
       ;; answer. A sub-agent's turns get none, `add-sub-content` drops them.
+      ;; Telling the turn's time or speed, the line takes them from the
+      ;; status line until the next turn (`begin-turn`).
       "turnUsage"
       (if-let [item (content->turn-usage content)]
         (-> state
             flush-current-text
             (update :items conj item)
+            (cond-> (or (:total-ms item) (:tps item)) (assoc :turn-usage-shown? true))
             view/rebuild-lines)
         state)
 

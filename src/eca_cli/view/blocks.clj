@@ -51,15 +51,18 @@
 
 (defn turn-usage-text
   "The line telling what a turn used (a `:turn-usage` item), what it has of
-  its model, how long it took, the tokens the model generated and its cost:
-  `claude-sonnet-4-5 · 9.8s · 412 output tokens · $0.03`. Nil when none."
-  [{:keys [model total-ms output-tokens cost]}]
+  its model, how long it took, the tokens the model generated, how fast it
+  generated them over the turn and its cost:
+  `claude-sonnet-4-5 · 9.8s · 412 output tokens · 87 tok/s · $0.03`. Nil
+  when none."
+  [{:keys [model total-ms output-tokens tps cost]}]
   (not-empty
     (str/join " · " (remove nil? [(some-> model (str/split #"/") last)
                                   (when (number? total-ms) (turn-time total-ms))
                                   (when (number? output-tokens)
                                     (str (friendly-number output-tokens) " output token"
                                          (when (not= 1 output-tokens) "s")))
+                                  (when (number? tps) (str (long tps) " tok/s"))
                                   (some->> cost str not-empty (str "$"))]))))
 
 (defn- render-box [label text width]

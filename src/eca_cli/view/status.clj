@@ -133,14 +133,18 @@
                                (some->> (first pending) :title (str " ")))))))
 
 (defn- turn-text
-  "How long the last turn took and how fast the model wrote, `14s · 48 tok/s`."
+  "How long the last turn took and how fast the model wrote, `14s · 48 tok/s`.
+  While a turn runs, how fast it writes (the working line tells for how
+  long). Nothing once the line under the answer of the turn tells them
+  (`:turn-usage-shown?`), until the next turn starts, as in eca-emacs."
   [state]
-  (let [took (:last-turn-ms state)
-        tps  (get-in state [:usage :messageOutputTps])]
-    (when (or (number? took) (number? tps))
-      (theme/paint :muted
-                   (str/join " · " (remove nil? [(when (number? took) (or (blocks/format-duration took) "<1s"))
-                                                 (when (number? tps) (str tps " tok/s"))]))))))
+  (when-not (:turn-usage-shown? state)
+    (let [took (when-not (:turn-started-at state) (:last-turn-ms state))
+          tps  (get-in state [:usage :messageOutputTps])]
+      (when (or (number? took) (number? tps))
+        (theme/paint :muted
+                     (str/join " · " (remove nil? [(when (number? took) (or (blocks/format-duration took) "<1s"))
+                                                   (when (number? tps) (str tps " tok/s"))])))))))
 
 (defn segments
   "[left right] segment vectors for `state`, before fitting."

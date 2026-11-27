@@ -92,7 +92,19 @@
     (is (str/includes? (theme/strip-ansi (status/render (state 200 :last-turn-ms 14200
                                                                :usage (assoc usage :messageOutputTps 48))
                                                         0))
-                       "14s · 48 tok/s"))))
+                       "14s · 48 tok/s")))
+  (testing "while a turn runs, its speed only: the working line tells for how long"
+    (let [line (theme/strip-ansi (status/render (state 200 :turn-started-at 1 :last-turn-ms 14200
+                                                       :usage (assoc usage :messageOutputTps 90))
+                                                0))]
+      (is (str/includes? line "90 tok/s"))
+      (is (not (str/includes? line "14s")))))
+  (testing "nothing once the line under the answer of the turn tells them"
+    (let [line (theme/strip-ansi (status/render (state 200 :last-turn-ms 14200 :turn-usage-shown? true
+                                                       :usage (assoc usage :messageOutputTps 48))
+                                                0))]
+      (is (not (str/includes? line "tok/s")))
+      (is (not (str/includes? line "14s"))))))
 
 (deftest fit-test
   (let [s (fn [id prio w] {:id id :prio prio :w w :text (apply str (repeat w "x"))})]
